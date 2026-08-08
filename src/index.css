@@ -1,0 +1,8 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand-maroon: #581c28;
+  --color-brand-gold: #c59b27;
+  --color-brand-dark: #3a1019;
+  --font-sans: "Plus Jakarta Sans", sans-serif;
+}
