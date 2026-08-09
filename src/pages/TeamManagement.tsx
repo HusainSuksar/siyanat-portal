@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { Users, Shield, UserCog, Save, CheckCircle2 } from 'lucide-react';
+import { Users, Shield, UserCog,  } from 'lucide-react';
 
 export default function TeamManagement() {
   const [team, setTeam] = useState<any[]>([]);

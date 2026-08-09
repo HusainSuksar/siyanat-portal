@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { BarChart3, Download, FileSpreadsheet, Activity } from 'lucide-react';
+import { BarChart3, Download, FileSpreadsheet } from 'lucide-react';
 
 export default function Reports() {
   const [workOrders, setWorkOrders] = useState<any[]>([]);

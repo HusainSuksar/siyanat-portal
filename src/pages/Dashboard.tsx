@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { FileText, Clock, Truck, CheckCircle2, AlertTriangle, RefreshCw, MessageSquare } from 'lucide-react';
+import { FileText, Clock, Truck, AlertTriangle, RefreshCw, MessageSquare } from 'lucide-react';
 import BatchDetailsModal from '../components/BatchDetailsModal';
 import { useNavigate } from 'react-router-dom';
 
