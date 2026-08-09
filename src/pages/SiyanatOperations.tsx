@@ -1,24 +1,32 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { RefreshCw, Printer, CheckCircle, XCircle } from 'lucide-react';
+import { RefreshCw, Printer, CheckCircle, XCircle, MessageSquare, Truck } from 'lucide-react';
+import BatchDetailsModal from '../components/BatchDetailsModal';
 
 export default function SiyanatOperations() {
   const [batches, setBatches] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState<string | null>(null);
+  
+  // Chat Modal State
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [activeBatch, setActiveBatch] = useState<any>(null);
+  const [isChatOpen, setIsChatOpen] = useState(false);
 
   const fetchQueue = async () => {
     setLoading(true);
-    // Fetch work orders and their nested items (joining inventory_items for the name)
+    // Updated query to pull inventory_id and physical_stock for deduction logic
     const { data, error } = await supabase
       .from('work_orders')
       .select(`
         *,
+        logs:work_order_logs(author_id),
         items:work_order_items (
           requested_qty,
           item_type,
           custom_item_name,
-          inventory:inventory_items(name)
+          inventory_id,
+          inventory:inventory_items(id, name, physical_stock)
         )
       `)
       .order('created_at', { ascending: false });
@@ -31,44 +39,102 @@ export default function SiyanatOperations() {
 
   useEffect(() => {
     fetchQueue();
+    supabase.auth.getUser().then(({ data }) => setCurrentUser(data.user));
   }, []);
 
-  const dispatchBatch = async (id: string) => {
-    if (!confirm('Confirm material dispatch for this batch?')) return;
+  // STEP 1: APPROVAL LOGIC
+  // STEP 1: APPROVAL LOGIC
+  const approveBatch = async (id: string, batch_id_name: string) => {
+    if (!confirm('Approve this requisition?')) return;
     setProcessingId(id);
 
     const { error } = await supabase
       .from('work_orders')
-      .update({ dispatch_status: 'Dispatched' })
+      .update({ approval_status: 'Approved' })
       .eq('id', id);
 
     if (!error) {
-      alert('Batch dispatched successfully!');
+      // 🟢 INJECT AUDIT LOG HERE
+      await supabase.from('system_logs').insert({
+        action_type: 'BATCH_APPROVED',
+        description: `Approved material requisition for ${batch_id_name}.`,
+        user_email: currentUser?.email || 'Admin'
+      });
       fetchQueue();
     } else {
-      alert('Error updating dispatch status.');
+      alert('Error updating approval status.');
     }
     setProcessingId(null);
   };
 
-  const releaseBatch = async (id: string) => {
-    if (!confirm('Are you sure you want to cancel and release this batch?')) return;
+  const rejectBatch = async (id: string, batch_id_name: string) => {
+    if (!confirm('Are you sure you want to REJECT this batch?')) return;
     setProcessingId(id);
 
     const { error } = await supabase
       .from('work_orders')
-      .update({ approval_status: 'Cancelled', dispatch_status: 'Released' })
+      .update({ approval_status: 'Rejected', dispatch_status: 'Cancelled' })
       .eq('id', id);
 
     if (!error) {
-      alert('Batch cancelled and stock unreserved.');
+      // 🔴 INJECT AUDIT LOG HERE
+      await supabase.from('system_logs').insert({
+        action_type: 'BATCH_REJECTED',
+        description: `Rejected and cancelled requisition for ${batch_id_name}.`,
+        user_email: currentUser?.email || 'Admin'
+      });
       fetchQueue();
     }
     setProcessingId(null);
+  };
+
+  // STEP 2: DISPATCH & INVENTORY DEDUCTION LOGIC
+  const dispatchBatch = async (batch: any) => {
+    if (!confirm('Confirm material dispatch? This will permanently deduct items from the warehouse inventory.')) return;
+    setProcessingId(batch.id);
+
+    try {
+      const catalogItems = batch.items.filter((i: any) => i.item_type === 'Catalog');
+
+      for (const item of catalogItems) {
+        if (!item.inventory_id) continue;
+        const { data: invData, error: invError } = await supabase
+          .from('inventory_items').select('physical_stock, name').eq('id', item.inventory_id).single();
+
+        if (invError) throw new Error(`Could not verify stock for ${item.inventory.name}`);
+        if (invData.physical_stock < item.requested_qty) {
+          throw new Error(`Insufficient stock for ${invData.name}. Available: ${invData.physical_stock}, Requested: ${item.requested_qty}`);
+        }
+
+        const newStock = invData.physical_stock - item.requested_qty;
+        const { error: updateError } = await supabase
+          .from('inventory_items').update({ physical_stock: newStock }).eq('id', item.inventory_id);
+
+        if (updateError) throw new Error(`Failed to deduct stock for ${invData.name}`);
+      }
+
+      const { error: dispatchError } = await supabase
+        .from('work_orders').update({ dispatch_status: 'Dispatched' }).eq('id', batch.id);
+
+      if (dispatchError) throw dispatchError;
+
+      // 🔵 INJECT AUDIT LOG HERE
+      await supabase.from('system_logs').insert({
+        action_type: 'STOCK_DISPATCHED',
+        description: `Dispatched ${batch.batch_id} and deducted corresponding physical inventory.`,
+        user_email: currentUser?.email || 'Admin'
+      });
+
+      alert('Batch dispatched and inventory updated successfully!');
+      fetchQueue();
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setProcessingId(null);
+    }
   };
 
   const printBatchSlip = (batch: any) => {
-    // Generate an HTML string for the printable gate pass
     const itemsHtml = batch.items.map((item: any) => {
       const itemName = item.item_type === 'Catalog' && item.inventory 
         ? item.inventory.name 
@@ -119,6 +185,11 @@ export default function SiyanatOperations() {
     slipWindow.document.close();
   };
 
+  const openChat = (batch: any) => {
+    setActiveBatch(batch);
+    setIsChatOpen(true);
+  };
+
   return (
     <div className="space-y-6">
       <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 space-y-4">
@@ -154,11 +225,13 @@ export default function SiyanatOperations() {
                 </tr>
               ) : (
                 batches.map(b => {
-                  // Summarize items for the column
                   const itemSummary = b.items?.map((i: any) => {
                     const name = i.item_type === 'Catalog' && i.inventory ? i.inventory.name : i.custom_item_name;
                     return `${name} (x${i.requested_qty})`;
                   }).join(', ');
+
+                  const logs = b.logs || [];
+                  const hasUnread = logs.length > 0 && logs[logs.length - 1].author_id !== currentUser?.id;
 
                   return (
                     <tr key={b.id} className="hover:bg-slate-50">
@@ -169,42 +242,79 @@ export default function SiyanatOperations() {
                         {itemSummary}
                       </td>
                       <td className="p-3">
-                        <span className={`px-2 py-0.5 rounded font-bold ${
-                          b.dispatch_status === 'Dispatched' ? 'bg-emerald-100 text-emerald-800' :
-                          b.dispatch_status === 'Released' ? 'bg-red-100 text-red-800' :
-                          'bg-amber-100 text-amber-800'
-                        }`}>
-                          {b.dispatch_status}
-                        </span>
+                        <div className="flex flex-col space-y-1 items-start">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            b.approval_status === 'Approved' ? 'bg-emerald-100 text-emerald-800' :
+                            b.approval_status === 'Rejected' ? 'bg-red-100 text-red-800' :
+                            'bg-amber-100 text-amber-800'
+                          }`}>
+                            {b.approval_status}
+                          </span>
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            b.dispatch_status === 'Dispatched' ? 'bg-emerald-100 text-emerald-800' :
+                            b.dispatch_status === 'Cancelled' ? 'bg-slate-200 text-slate-600' :
+                            'bg-slate-100 text-slate-700'
+                          }`}>
+                            {b.dispatch_status}
+                          </span>
+                        </div>
                       </td>
                       <td className="p-3 text-right">
                         <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
-                          {b.dispatch_status !== 'Dispatched' && b.dispatch_status !== 'Released' && (
+                          
+                          {/* STEP 1: APPROVAL BUTTONS */}
+                          {b.approval_status === 'Pending Approval' && (
                             <>
                               <button 
-                                onClick={() => dispatchBatch(b.id)}
+                                onClick={() => approveBatch(b.id, b.batch_id)}
                                 disabled={processingId === b.id}
-                                className="px-2.5 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-lg text-[11px] shadow-sm transition flex items-center space-x-1 disabled:opacity-50"
+                                className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-[11px] shadow-sm transition flex items-center space-x-1 disabled:opacity-50"
                               >
                                 <CheckCircle className="w-3 h-3" />
-                                <span>Process</span>
+                                <span className="hidden sm:inline">Approve</span>
                               </button>
                               <button 
-                                onClick={() => releaseBatch(b.id)}
+                                onClick={() => rejectBatch(b.id, b.batch_id)}
                                 disabled={processingId === b.id}
-                                className="px-2.5 py-1.5 bg-red-700 hover:bg-red-800 text-white font-bold rounded-lg text-[11px] shadow-sm transition flex items-center space-x-1 disabled:opacity-50"
+                                className="px-2.5 py-1.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg text-[11px] shadow-sm transition flex items-center space-x-1 disabled:opacity-50"
                               >
                                 <XCircle className="w-3 h-3" />
-                                <span>Release</span>
+                                <span className="hidden sm:inline">Reject</span>
                               </button>
                             </>
                           )}
+
+                          {/* STEP 2: DISPATCH BUTTON (Only shows if Approved and Not Dispatched) */}
+                          {b.approval_status === 'Approved' && b.dispatch_status === 'Pending' && (
+                            <button 
+                              onClick={() => dispatchBatch(b)}
+                              disabled={processingId === b.id}
+                              className="px-2.5 py-1.5 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-lg text-[11px] shadow-sm transition flex items-center space-x-1 disabled:opacity-50"
+                            >
+                              <Truck className="w-3 h-3" />
+                              <span className="hidden sm:inline">Dispatch</span>
+                            </button>
+                          )}
+
+                          <button 
+                            onClick={() => openChat(b)}
+                            className="relative px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg text-[11px] shadow-sm transition flex items-center space-x-1"
+                          >
+                            {hasUnread && (
+                              <span className="absolute -top-1.5 -right-1.5 flex h-3.5 w-3.5">
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                                <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-red-500 border-2 border-white"></span>
+                              </span>
+                            )}
+                            <MessageSquare className="w-3 h-3" />
+                            <span className="hidden sm:inline">Chat</span>
+                          </button>
                           <button 
                             onClick={() => printBatchSlip(b)}
                             className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded-lg text-[11px] shadow-sm transition flex items-center space-x-1"
                           >
                             <Printer className="w-3 h-3" />
-                            <span>Slip</span>
+                            <span className="hidden sm:inline">Slip</span>
                           </button>
                         </div>
                       </td>
@@ -216,6 +326,21 @@ export default function SiyanatOperations() {
           </table>
         </div>
       </div>
+
+      {/* Slide-out Chat Modal */}
+      {activeBatch && currentUser && (
+        <BatchDetailsModal
+          batchId={activeBatch.batch_id}
+          workOrderId={activeBatch.id}
+          isOpen={isChatOpen}
+          onClose={() => {
+            setIsChatOpen(false);
+            setActiveBatch(null);
+            fetchQueue(); // Refresh logs to clear notification dot
+          }}
+          currentUser={currentUser}
+        />
+      )}
     </div>
   );
 }

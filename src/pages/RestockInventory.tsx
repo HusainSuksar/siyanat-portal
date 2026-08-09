@@ -1,18 +1,16 @@
 import { useState, useEffect } from 'react';
 import { supabase, type InventoryItem } from '../lib/supabase';
-import { Warehouse, Plus, Trash2, Save } from 'lucide-react';
+import { Warehouse, Plus, Trash2, Save, Search, PackageSearch } from 'lucide-react';
 
-// Define the structure for a single row in our dynamic restock grid
 type RestockRow = {
   id: string;
   type: 'EXISTING' | 'NEW';
-  itemId: string; // Used if type === 'EXISTING'
-  name: string;   // Used if type === 'NEW'
+  itemId: string;
+  name: string;
   category: string;
   qty: number;
 };
 
-// Common categories from your legacy script
 const CATEGORIES = [
   "Electrical & Lighting", "Plumbing & Sanitary", "HVAC & AC Maintenance", 
   "Civil & Masonry", "Carpentry & Hardware", "Painting & Finishes", 
@@ -25,6 +23,7 @@ export default function RestockInventory() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [rows, setRows] = useState<RestockRow[]>([]);
+  const [searchTerm, setSearchTerm] = useState(''); // New state for searching inventory
 
   useEffect(() => {
     fetchCatalog();
@@ -39,7 +38,6 @@ export default function RestockInventory() {
       
     if (data && !error) {
       setCatalog(data);
-      // Initialize with one empty row if catalog loaded successfully
       if (rows.length === 0) {
         addRow(data);
       }
@@ -75,21 +73,23 @@ export default function RestockInventory() {
     setSubmitting(true);
 
     try {
-      // Process rows individually (or could be batched via RPC in a more advanced setup)
+      // Fetch the user so we know who is restocking
+      const { data: authData } = await supabase.auth.getUser();
+      let totalItemsRestocked = 0;
+
       for (const row of rows) {
         if (row.type === 'NEW') {
-          // Insert brand new item
           const { error } = await supabase.from('inventory_items').insert({
-            item_id: `CAT-${Math.floor(10000 + Math.random() * 90000)}`, // Generate random ID like legacy script
+            item_id: `CAT-${Math.floor(10000 + Math.random() * 90000)}`,
             name: row.name,
             category: row.category,
             physical_stock: row.qty,
             freezed_stock: 0,
-            unit: 'Pcs' // Defaulting to Pcs for now
+            unit: 'Pcs'
           });
           if (error) throw error;
+          totalItemsRestocked += row.qty;
         } else if (row.type === 'EXISTING' && row.itemId) {
-          // Update existing item by fetching current stock first, then adding
           const item = catalog.find(i => i.id === row.itemId);
           if (item) {
             const newStock = item.physical_stock + row.qty;
@@ -98,13 +98,21 @@ export default function RestockInventory() {
               .update({ physical_stock: newStock })
               .eq('id', row.itemId);
             if (error) throw error;
+            totalItemsRestocked += row.qty;
           }
         }
       }
 
+      // 🟡 INJECT AUDIT LOG HERE
+      await supabase.from('system_logs').insert({
+        action_type: 'INVENTORY_RESTOCK',
+        description: `Processed bulk restock adding a total of ${totalItemsRestocked} items across ${rows.length} categories/entries.`,
+        user_email: authData.user?.email || 'System Admin'
+      });
+
       alert("Inventory Restocked Successfully!");
       setRows([]);
-      fetchCatalog(); // Refresh catalog to get new items and updated quantities
+      fetchCatalog();
     } catch (err: any) {
       alert("Error processing restock: " + err.message);
     } finally {
@@ -112,13 +120,85 @@ export default function RestockInventory() {
     }
   };
 
+  // Filter catalog for the new Master Inventory Table
+  const filteredCatalog = catalog.filter(item => 
+    item.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+    item.category.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
   return (
     <div className="space-y-6">
+      
+      {/* NEW FEATURE: Master Live Inventory Table */}
+      <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 space-y-4 max-w-5xl mx-auto">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b pb-3">
+          <div className="flex items-center space-x-2">
+            <PackageSearch className="w-5 h-5 text-brand-maroon" />
+            <h2 className="font-extrabold text-sm uppercase text-slate-800">Master Live Inventory</h2>
+          </div>
+          <div className="relative w-full sm:w-64">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+            <input 
+              type="text" 
+              placeholder="Search items or categories..." 
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs font-semibold focus:ring-2 focus:ring-brand-maroon outline-none"
+            />
+          </div>
+        </div>
+
+        <div className="overflow-x-auto max-h-[400px] overflow-y-auto rounded-lg border border-slate-200">
+          <table className="w-full text-left text-xs border-collapse relative">
+            <thead className="bg-slate-100 text-slate-700 uppercase font-bold sticky top-0 shadow-sm">
+              <tr>
+                <th className="p-3 border-b border-slate-200">Item Name</th>
+                <th className="p-3 border-b border-slate-200">Category</th>
+                <th className="p-3 border-b border-slate-200 text-center">Unit</th>
+                <th className="p-3 border-b border-slate-200 text-right">Physical Stock</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {loading ? (
+                <tr>
+                  <td colSpan={4} className="p-6 text-center text-slate-500 font-medium">Fetching warehouse data...</td>
+                </tr>
+              ) : filteredCatalog.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="p-6 text-center text-slate-500 font-medium italic">No items match your search.</td>
+                </tr>
+              ) : (
+                filteredCatalog.map(item => {
+                  const isLowStock = item.physical_stock <= 5;
+                  return (
+                    <tr key={item.id} className="hover:bg-slate-50 transition">
+                      <td className="p-3 font-bold text-slate-800">{item.name}</td>
+                      <td className="p-3 text-slate-500">{item.category}</td>
+                      <td className="p-3 text-center">
+                        <span className="px-2 py-0.5 bg-slate-100 text-slate-600 border border-slate-200 rounded text-[10px] font-bold uppercase">
+                          {item.unit}
+                        </span>
+                      </td>
+                      <td className="p-3 text-right">
+                        <span className={`px-2 py-1 rounded-lg text-xs font-extrabold ${isLowStock ? 'bg-red-100 text-red-700' : 'text-slate-800'}`}>
+                          {item.physical_stock}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* EXISTING FEATURE: Bulk Restock Grid */}
       <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 space-y-4 max-w-5xl mx-auto">
         <div className="flex justify-between items-center border-b pb-3">
           <div className="flex items-center space-x-2">
             <Warehouse className="w-5 h-5 text-brand-maroon" />
-            <h2 className="font-extrabold text-sm uppercase text-slate-800">Bulk Restock & Add New Stock</h2>
+            <h2 className="font-extrabold text-sm uppercase text-slate-800">Process Incoming Shipments (Restock)</h2>
           </div>
           <button 
             onClick={() => addRow()}

@@ -78,13 +78,12 @@ export default function NewRequisition() {
       if (!userData.user) throw new Error("Not authenticated");
 
       // 1. Insert Work Order
-      const batchId = `BATCH-${Math.floor(10000 + Math.random() * 90000)}`;
+      // 1. Insert Work Order (Let Postgres generate the batch_id)
       const { data: orderData, error: orderError } = await supabase
         .from('work_orders')
         .insert({
-          batch_id: batchId,
           requester_id: userData.user.id,
-          department: 'Maintenance', // In a full app, pull this from the profile
+          department: 'Maintenance', 
           location,
           urgency,
           reason,
@@ -122,7 +121,7 @@ export default function NewRequisition() {
         if (itemsError) throw itemsError;
       }
 
-      alert(`Requisition Submitted Successfully!\nBatch Reference: ${batchId}`);
+      alert(`Requisition Submitted Successfully!\nBatch Reference: ${orderData.id}`);
       
       // Reset Form
       setCart({});

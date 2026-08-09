@@ -6,3 +6,10 @@
   --color-brand-dark: #3a1019;
   --font-sans: "Plus Jakarta Sans", sans-serif;
 }
+
+@keyframes ring {
+  0%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(15deg); }
+  50% { transform: rotate(-15deg); }
+  75% { transform: rotate(5deg); }
+}
