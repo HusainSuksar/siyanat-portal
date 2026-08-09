@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { ShieldCheck } from 'lucide-react';
 
 export default function Login() {
-  const [email, setEmail] = useState('electrical@jameasaifiyah.edu');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
