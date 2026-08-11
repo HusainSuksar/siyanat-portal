@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { ShieldCheck } from 'lucide-react';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -26,18 +25,32 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-4 bg-brand-maroon">
-      <div className="bg-white rounded-2xl shadow-2xl p-6 md:p-8 max-w-md w-full border-2 border-brand-gold/40 text-center">
-        <div className="inline-block bg-amber-50 text-amber-900 text-xs font-extrabold px-4 py-1.5 rounded-full border border-amber-200 tracking-widest uppercase mb-4">
+    <div className="min-h-screen flex flex-col items-center justify-center p-4 relative bg-brand">
+      {/* Background Image Layer with Opacity */}
+      <div 
+        className="absolute inset-0 z-0 bg-cover bg-center bg-no-repeat opacity-30 mix-blend-overlay"
+        style={{ backgroundImage: "url('/BG_img.jpeg')" }}
+      />
+      
+      {/* Login Card */}
+      <div className="relative z-10 bg-white/95 backdrop-blur-sm rounded-2xl shadow-2xl p-6 md:p-8 max-w-md w-full border-2 border-brand-gold/40 text-center">
+        
+        <div className="inline-block bg-amber-50 text-amber-900 text-[10px] font-extrabold px-3 py-1 rounded-full border border-amber-200 tracking-widest uppercase mb-6">
           Al Jamea tus Saifiyah, Siddhpur
         </div>
         
-        <div className="flex justify-center mb-2">
-          <ShieldCheck className="w-10 h-10 text-brand-maroon" />
+        {/* New Big Logo Image */}
+        <div className="flex justify-center mb-4">
+          <img 
+            src="/login_card_img.jpeg" 
+            alt="Tanzeem and Siyanat Offices" 
+            className="w-full max-w-[340px] h-auto object-contain drop-shadow-sm"
+          />
         </div>
         
-        <h2 className="text-xl font-extrabold text-brand-maroon mb-1">Tanzeem / Siyanat Portal</h2>
-        <p className="text-xs text-slate-500 mb-6">Material Requisition & Management System</p>
+        <p className="text-xs text-slate-500 mb-6 font-semibold uppercase tracking-wider">
+          Material Requisition & Management System
+        </p>
         
         <form onSubmit={handleLogin} className="space-y-4 text-left">
           <div>
@@ -72,7 +85,7 @@ export default function Login() {
           <button 
             type="submit" 
             disabled={loading}
-            className="w-full py-3 bg-brand-maroon hover:bg-brand-dark text-white font-bold rounded-lg shadow-lg transition disabled:opacity-70"
+            className="w-full py-3 mt-2 bg-brand-maroon hover:bg-brand-dark text-white font-bold rounded-lg shadow-lg transition disabled:opacity-70"
           >
             {loading ? 'Authenticating...' : 'Login to Portal'}
           </button>
