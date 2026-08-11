@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { RefreshCw, CalendarCheck, Car, CheckCircle, XCircle, MapPin, Users, Clock, Send, X } from 'lucide-react';
+import { RefreshCw, CalendarCheck, Car, CheckCircle, XCircle, MapPin, Clock, Send, X } from 'lucide-react';
 
 export default function TanzeemCommandCenter() {
   const [activeTab, setActiveTab] = useState<'events' | 'fleet'>('events');
@@ -63,7 +63,7 @@ export default function TanzeemCommandCenter() {
     setProcessingId(null);
   };
 
-  const rejectEvent = async (id: string, title: string) => {
+  const rejectEvent = async (id: string) => {
     const reason = prompt('Please enter the reason for non-confirmation (This will be sent to the requester):');
     if (!reason) return alert('A reason is mandatory.');
     
@@ -99,7 +99,7 @@ export default function TanzeemCommandCenter() {
     setProcessingId(null);
   };
 
-  const rejectVehicle = async (id: string, destination: string) => {
+  const rejectVehicle = async (id: string) => {
     const reason = prompt('Reason for rejection (e.g., Cars unavailable for requested time slot):');
     if (!reason) return alert('A reason is mandatory.');
     
@@ -190,7 +190,7 @@ export default function TanzeemCommandCenter() {
                       <button onClick={() => approveEvent(e.id, e.event_title)} disabled={processingId === e.id} className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-[11px] shadow-sm flex items-center disabled:opacity-50">
                         <CheckCircle className="w-3 h-3 mr-1"/> Confirm
                       </button>
-                      <button onClick={() => rejectEvent(e.id, e.event_title)} disabled={processingId === e.id} className="px-2.5 py-1.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg text-[11px] shadow-sm flex items-center disabled:opacity-50">
+                      <button onClick={() => rejectEvent(e.id)} disabled={processingId === e.id} className="px-2.5 py-1.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg text-[11px] shadow-sm flex items-center disabled:opacity-50">
                         <XCircle className="w-3 h-3 mr-1"/> Decline
                       </button>
                     </div>
@@ -239,7 +239,7 @@ export default function TanzeemCommandCenter() {
                       <button onClick={() => { setSelectedReq(v); setFleetModalOpen(true); }} className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg text-[11px] shadow-sm flex items-center gap-1">
                         <Car className="w-3 h-3" /> Assign Fleet
                       </button>
-                      <button onClick={() => rejectVehicle(v.id, v.destination)} disabled={processingId === v.id} className="p-1.5 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg transition disabled:opacity-50">
+                      <button onClick={() => rejectVehicle(v.id)} disabled={processingId === v.id} className="p-1.5 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg transition disabled:opacity-50">
                         <XCircle className="w-4 h-4" />
                       </button>
                     </div>
