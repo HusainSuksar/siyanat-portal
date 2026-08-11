@@ -1,345 +1,394 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { RefreshCw, Printer, CheckCircle, XCircle, MessageSquare, Truck } from 'lucide-react';
+import { RefreshCw, MessageSquare, Truck, UserPlus, X, SplitSquareHorizontal } from 'lucide-react';
 import BatchDetailsModal from '../components/BatchDetailsModal';
 
 export default function SiyanatOperations() {
-  const [batches, setBatches] = useState<any[]>([]);
+  const [activeTab, setActiveTab] = useState<'materials' | 'maintenance'>('materials');
   const [loading, setLoading] = useState(true);
+  const [currentUser, setCurrentUser] = useState<any>(null);
   const [processingId, setProcessingId] = useState<string | null>(null);
   
-  // Chat Modal State
-  const [currentUser, setCurrentUser] = useState<any>(null);
+  // Material State
+  const [batches, setBatches] = useState<any[]>([]);
   const [activeBatch, setActiveBatch] = useState<any>(null);
   const [isChatOpen, setIsChatOpen] = useState(false);
+  
+  // Batch Splitting Modal State
+  const [reviewModalOpen, setReviewModalOpen] = useState(false);
+  const [reviewBatch, setReviewBatch] = useState<any>(null);
+  const [itemDecisions, setItemDecisions] = useState<any>({});
 
-  const fetchQueue = async () => {
+  // Maintenance State
+  const [complaints, setComplaints] = useState<any[]>([]);
+  const [technicians, setTechnicians] = useState<any[]>([]);
+  const [assignModalOpen, setAssignModalOpen] = useState(false);
+  const [selectedComplaint, setSelectedComplaint] = useState<any>(null);
+  const [selectedTechId, setSelectedTechId] = useState('');
+
+  const fetchData = async () => {
     setLoading(true);
-    // Updated query to pull inventory_id and physical_stock for deduction logic
-    const { data, error } = await supabase
+    
+    const { data: batchData } = await supabase
       .from('work_orders')
-      .select(`
-        *,
-        logs:work_order_logs(author_id),
-        items:work_order_items (
-          requested_qty,
-          item_type,
-          custom_item_name,
-          inventory_id,
-          inventory:inventory_items(id, name, physical_stock)
-        )
-      `)
+      .select(`*, logs:work_order_logs(author_id), items:work_order_items(id, requested_qty, item_type, custom_item_name, status, eta_days, inventory_id, inventory:inventory_items(id, name, physical_stock, freezed_stock))`)
       .order('created_at', { ascending: false });
 
-    if (data && !error) {
-      setBatches(data);
-    }
+    if (batchData) setBatches(batchData);
+
+    const { data: complaintData } = await supabase
+      .from('complaints')
+      .select(`*, requester:profiles(full_name, department), assignments:technician_assignments(status, technician:profiles(full_name, trade))`)
+      .in('status', ['Approved by Supervisor', 'Assigned', 'Waiting for Material', 'Completed'])
+      .order('created_at', { ascending: false });
+
+    if (complaintData) setComplaints(complaintData);
+
+    const { data: techData } = await supabase.from('profiles').select('id, full_name, trade').eq('role', 'TECHNICIAN');
+    if (techData) setTechnicians(techData);
+
     setLoading(false);
   };
 
   useEffect(() => {
-    fetchQueue();
+    fetchData();
     supabase.auth.getUser().then(({ data }) => setCurrentUser(data.user));
   }, []);
 
-  // STEP 1: APPROVAL LOGIC
-  // STEP 1: APPROVAL LOGIC
-  const approveBatch = async (id: string, batch_id_name: string) => {
-    if (!confirm('Approve this requisition?')) return;
-    setProcessingId(id);
-
-    const { error } = await supabase
-      .from('work_orders')
-      .update({ approval_status: 'Approved' })
-      .eq('id', id);
-
-    if (!error) {
-      // 🟢 INJECT AUDIT LOG HERE
-      await supabase.from('system_logs').insert({
-        action_type: 'BATCH_APPROVED',
-        description: `Approved material requisition for ${batch_id_name}.`,
-        user_email: currentUser?.email || 'Admin'
-      });
-      fetchQueue();
-    } else {
-      alert('Error updating approval status.');
-    }
-    setProcessingId(null);
+  // --- MATERIAL LOGIC: BATCH SPLITTING ENGINE ---
+  const openReviewModal = (batch: any) => {
+    setReviewBatch(batch);
+    const initialDecisions: any = {};
+    batch.items.forEach((item: any) => {
+      initialDecisions[item.id] = { status: 'Available', eta: 0 };
+    });
+    setItemDecisions(initialDecisions);
+    setReviewModalOpen(true);
   };
 
-  const rejectBatch = async (id: string, batch_id_name: string) => {
-    if (!confirm('Are you sure you want to REJECT this batch?')) return;
-    setProcessingId(id);
-
-    const { error } = await supabase
-      .from('work_orders')
-      .update({ approval_status: 'Rejected', dispatch_status: 'Cancelled' })
-      .eq('id', id);
-
-    if (!error) {
-      // 🔴 INJECT AUDIT LOG HERE
-      await supabase.from('system_logs').insert({
-        action_type: 'BATCH_REJECTED',
-        description: `Rejected and cancelled requisition for ${batch_id_name}.`,
-        user_email: currentUser?.email || 'Admin'
-      });
-      fetchQueue();
-    }
-    setProcessingId(null);
+  const updateDecision = (itemId: string, field: string, value: any) => {
+    setItemDecisions((prev: any) => ({
+      ...prev,
+      [itemId]: { ...prev[itemId], [field]: value }
+    }));
   };
 
-  // STEP 2: DISPATCH & INVENTORY DEDUCTION LOGIC
-  const dispatchBatch = async (batch: any) => {
-    if (!confirm('Confirm material dispatch? This will permanently deduct items from the warehouse inventory.')) return;
-    setProcessingId(batch.id);
+  const handleReviewSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setProcessingId(reviewBatch.id);
 
     try {
-      const catalogItems = batch.items.filter((i: any) => i.item_type === 'Catalog');
+      let hasAvailableItems = false;
 
-      for (const item of catalogItems) {
-        if (!item.inventory_id) continue;
-        const { data: invData, error: invError } = await supabase
-          .from('inventory_items').select('physical_stock, name').eq('id', item.inventory_id).single();
+      // 1. Process each item individually
+      for (const item of reviewBatch.items) {
+        const decision = itemDecisions[item.id];
 
-        if (invError) throw new Error(`Could not verify stock for ${item.inventory.name}`);
-        if (invData.physical_stock < item.requested_qty) {
-          throw new Error(`Insufficient stock for ${invData.name}. Available: ${invData.physical_stock}, Requested: ${item.requested_qty}`);
+        // Update item level status & ETA
+        await supabase.from('work_order_items').update({
+          status: decision.status,
+          eta_days: decision.eta
+        }).eq('id', item.id);
+
+        // FREEZE STOCK logic: If available, reserve it but DO NOT deduct physical stock
+        if (decision.status === 'Available' && item.item_type === 'Catalog' && item.inventory_id) {
+          const inv = item.inventory;
+          const newFreezedStock = (inv.freezed_stock || 0) + item.requested_qty;
+          
+          await supabase.from('inventory_items')
+            .update({ freezed_stock: newFreezedStock })
+            .eq('id', item.inventory_id);
+            
+          hasAvailableItems = true;
         }
-
-        const newStock = invData.physical_stock - item.requested_qty;
-        const { error: updateError } = await supabase
-          .from('inventory_items').update({ physical_stock: newStock }).eq('id', item.inventory_id);
-
-        if (updateError) throw new Error(`Failed to deduct stock for ${invData.name}`);
       }
 
-      const { error: dispatchError } = await supabase
-        .from('work_orders').update({ dispatch_status: 'Dispatched' }).eq('id', batch.id);
+      // 2. Update parent batch status
+      await supabase.from('work_orders').update({
+        approval_status: 'Approved',
+        dispatch_status: hasAvailableItems ? 'Pending' : 'Awaiting Stock'
+      }).eq('id', reviewBatch.id);
 
-      if (dispatchError) throw dispatchError;
-
-      // 🔵 INJECT AUDIT LOG HERE
+      // 3. Audit Log
       await supabase.from('system_logs').insert({
-        action_type: 'STOCK_DISPATCHED',
-        description: `Dispatched ${batch.batch_id} and deducted corresponding physical inventory.`,
+        action_type: 'BATCH_REVIEWED',
+        description: `Split and processed material batch ${reviewBatch.batch_id}. Frozen available stock.`,
         user_email: currentUser?.email || 'Admin'
       });
 
-      alert('Batch dispatched and inventory updated successfully!');
-      fetchQueue();
+      alert('Batch processed and stock frozen successfully!');
+      setReviewModalOpen(false);
+      fetchData();
     } catch (err: any) {
-      alert(err.message);
+      alert("Error processing batch: " + err.message);
     } finally {
       setProcessingId(null);
     }
   };
 
-  const printBatchSlip = (batch: any) => {
-    const itemsHtml = batch.items.map((item: any) => {
-      const itemName = item.item_type === 'Catalog' && item.inventory 
-        ? item.inventory.name 
-        : item.custom_item_name;
-      return `<tr>
-        <td style="padding: 8px; border: 1px solid #000;">${itemName}</td>
-        <td style="padding: 8px; border: 1px solid #000; font-weight: bold; text-align: center;">${item.requested_qty}</td>
-      </tr>`;
-    }).join("");
+  const dispatchBatch = async (batch: any) => {
+    if (!confirm('Dispatch available items? Stock will remain frozen until the requester confirms receipt.')) return;
+    setProcessingId(batch.id);
+    
+    try {
+      // ONLY update the dispatch status. Stock was already frozen during approval.
+      await supabase.from('work_orders').update({ dispatch_status: 'Dispatched' }).eq('id', batch.id);
 
-    const slipWindow = window.open('', '_blank');
-    if (!slipWindow) return;
+      await supabase.from('system_logs').insert({
+        action_type: 'STOCK_DISPATCHED',
+        description: `Dispatched ${batch.batch_id} to location. Stock remains frozen pending receipt.`,
+        user_email: currentUser?.email || 'Admin'
+      });
 
-    slipWindow.document.write(`
-      <html>
-        <head>
-          <title>Delivery Slip - ${batch.batch_id}</title>
-          <style>
-            body { font-family: Arial, sans-serif; padding: 20px; color: #000; }
-            .header { text-align: center; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 20px; }
-            table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-            th { border: 1px solid #000; padding: 8px; text-align: left; background: #f0f0f0; }
-            .signatures { display: flex; justify-content: space-between; margin-top: 80px; }
-            .sig-box { border-top: 1px solid #000; width: 40%; text-align: center; padding-top: 5px; font-weight: bold; font-size: 12px; }
-          </style>
-        </head>
-        <body onload="window.print();">
-          <div class="header">
-            <h2 style="margin: 0; color: #581c28;">SIYANAT UL MUMTALEKAAT</h2>
-            <h3 style="margin: 5px 0;">Al Jamea tus Saifiyah - Siddhpur</h3>
-            <h4 style="margin: 5px 0; text-decoration: underline;">MATERIAL GATE PASS</h4>
-          </div>
-          <p><strong>Batch Reference:</strong> ${batch.batch_id}</p>
-          <p><strong>Department:</strong> ${batch.department}</p>
-          <p><strong>Delivery Location:</strong> ${batch.location}</p>
-          <p><strong>Date:</strong> ${new Date(batch.created_at).toLocaleDateString()}</p>
-          <table>
-            <thead><tr><th>Item Description</th><th style="text-align: center;">Qty Issued</th></tr></thead>
-            <tbody>${itemsHtml}</tbody>
-          </table>
-          <div class="signatures">
-            <div class="sig-box">Store Keeper / Issuer Sign</div>
-            <div class="sig-box">Receiver Sign</div>
-          </div>
-        </body>
-      </html>
-    `);
-    slipWindow.document.close();
+      fetchData();
+    } catch (err: any) {
+      alert(err.message);
+    }
+    setProcessingId(null);
   };
 
-  const openChat = (batch: any) => {
-    setActiveBatch(batch);
-    setIsChatOpen(true);
+  // --- MAINTENANCE LOGIC ---
+  const handleAssignTechnician = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedTechId || !selectedComplaint) return;
+    setProcessingId(selectedComplaint.id);
+
+    await supabase.from('technician_assignments').insert({
+      complaint_id: selectedComplaint.id,
+      technician_id: selectedTechId,
+      assigned_by: currentUser?.id
+    });
+    await supabase.from('complaints').update({ status: 'Assigned' }).eq('id', selectedComplaint.id);
+    await supabase.from('system_logs').insert({
+      action_type: 'TECHNICIAN_ASSIGNED',
+      description: `Assigned complaint ${selectedComplaint.complaint_id} to technician.`,
+      user_email: currentUser?.email || 'Admin'
+    });
+
+    setAssignModalOpen(false);
+    setSelectedTechId('');
+    fetchData();
+    setProcessingId(null);
   };
 
   return (
-    <div className="space-y-6">
-      <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 space-y-4">
-        <div className="flex justify-between items-center border-b pb-3">
-          <h2 className="font-extrabold text-sm uppercase text-slate-800">Active Dispatch Queue</h2>
-          <button 
-            onClick={fetchQueue}
-            className="text-xs text-brand-maroon font-bold flex items-center space-x-1 hover:text-brand-dark transition"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-            <span>Refresh Queue</span>
-          </button>
+    <div className="space-y-6 pb-24">
+      {/* Header & Tabs */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div>
+          <h2 className="text-xl font-extrabold text-brand-maroon flex items-center gap-2">
+            <Truck className="w-6 h-6" />
+            Siyanat Operations Control
+          </h2>
+          <p className="text-xs text-slate-500 mt-1">Manage material dispatches and maintenance task assignments.</p>
         </div>
+        <button onClick={fetchData} className="text-xs text-brand-maroon font-bold flex items-center space-x-1 hover:text-brand-dark">
+          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+          <span>Refresh Data</span>
+        </button>
+      </div>
 
-        <div className="overflow-x-auto">
+      <div className="flex space-x-2 border-b border-slate-200">
+        <button 
+          onClick={() => setActiveTab('materials')}
+          className={`px-4 py-2 text-sm font-bold border-b-2 transition ${activeTab === 'materials' ? 'border-brand-maroon text-brand-maroon' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+        >
+          Material Dispatch
+        </button>
+        <button 
+          onClick={() => setActiveTab('maintenance')}
+          className={`px-4 py-2 text-sm font-bold border-b-2 transition ${activeTab === 'maintenance' ? 'border-brand-maroon text-brand-maroon' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+        >
+          Maintenance Routing
+        </button>
+      </div>
+
+      {/* --- TAB 1: MATERIAL DISPATCH --- */}
+      {activeTab === 'materials' && (
+        <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-100 text-slate-700 uppercase font-bold">
               <tr>
                 <th className="p-3">Batch ID</th>
                 <th className="p-3">Department</th>
-                <th className="p-3">Location</th>
-                <th className="p-3">Items Summary</th>
-                <th className="p-3">Dispatch Status</th>
-                <th className="p-3 text-right">Batch Actions</th>
+                <th className="p-3">Status</th>
+                <th className="p-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
-              {batches.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="p-4 text-center text-slate-500">
-                    {loading ? 'Loading queue...' : 'No active batches in queue.'}
+              {loading ? (<tr><td colSpan={4} className="p-4 text-center">Loading...</td></tr>) : batches.length === 0 ? (<tr><td colSpan={4} className="p-4 text-center">No active batches.</td></tr>) : batches.map(b => (
+                <tr key={b.id} className="hover:bg-slate-50">
+                  <td className="p-3 font-bold text-brand-maroon">{b.batch_id}</td>
+                  <td className="p-3 font-semibold">{b.department}<div className="text-[10px] text-slate-500">{b.location}</div></td>
+                  <td className="p-3">
+                    <div className="flex flex-col gap-1 items-start">
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${b.approval_status === 'Approved' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>{b.approval_status}</span>
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">{b.dispatch_status}</span>
+                    </div>
+                  </td>
+                  <td className="p-3 text-right">
+                    <div className="flex items-center justify-end gap-1.5">
+                      {b.approval_status === 'Pending Approval' && (
+                        <button 
+                          onClick={() => openReviewModal(b)} 
+                          className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-[11px] shadow-sm flex items-center"
+                        >
+                          <SplitSquareHorizontal className="w-3 h-3 mr-1"/> Review & Split
+                        </button>
+                      )}
+                      {b.approval_status === 'Approved' && b.dispatch_status === 'Pending' && (
+                        <button 
+                          onClick={() => dispatchBatch(b)} 
+                          disabled={processingId === b.id}
+                          className="px-2.5 py-1.5 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-lg text-[11px] shadow-sm flex items-center disabled:opacity-50"
+                        >
+                          <Truck className="w-3 h-3 mr-1"/> Dispatch
+                        </button>
+                      )}
+                      <button onClick={() => { setActiveBatch(b); setIsChatOpen(true); }} className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg text-[11px] flex items-center"><MessageSquare className="w-3 h-3 mr-1"/>Chat</button>
+                    </div>
                   </td>
                 </tr>
-              ) : (
-                batches.map(b => {
-                  const itemSummary = b.items?.map((i: any) => {
-                    const name = i.item_type === 'Catalog' && i.inventory ? i.inventory.name : i.custom_item_name;
-                    return `${name} (x${i.requested_qty})`;
-                  }).join(', ');
-
-                  const logs = b.logs || [];
-                  const hasUnread = logs.length > 0 && logs[logs.length - 1].author_id !== currentUser?.id;
-
-                  return (
-                    <tr key={b.id} className="hover:bg-slate-50">
-                      <td className="p-3 font-bold text-brand-maroon">{b.batch_id}</td>
-                      <td className="p-3 font-semibold text-slate-800">{b.department}</td>
-                      <td className="p-3 text-slate-600">{b.location}</td>
-                      <td className="p-3 text-slate-600 font-medium max-w-xs truncate" title={itemSummary}>
-                        {itemSummary}
-                      </td>
-                      <td className="p-3">
-                        <div className="flex flex-col space-y-1 items-start">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                            b.approval_status === 'Approved' ? 'bg-emerald-100 text-emerald-800' :
-                            b.approval_status === 'Rejected' ? 'bg-red-100 text-red-800' :
-                            'bg-amber-100 text-amber-800'
-                          }`}>
-                            {b.approval_status}
-                          </span>
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                            b.dispatch_status === 'Dispatched' ? 'bg-emerald-100 text-emerald-800' :
-                            b.dispatch_status === 'Cancelled' ? 'bg-slate-200 text-slate-600' :
-                            'bg-slate-100 text-slate-700'
-                          }`}>
-                            {b.dispatch_status}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="p-3 text-right">
-                        <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
-                          
-                          {/* STEP 1: APPROVAL BUTTONS */}
-                          {b.approval_status === 'Pending Approval' && (
-                            <>
-                              <button 
-                                onClick={() => approveBatch(b.id, b.batch_id)}
-                                disabled={processingId === b.id}
-                                className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-[11px] shadow-sm transition flex items-center space-x-1 disabled:opacity-50"
-                              >
-                                <CheckCircle className="w-3 h-3" />
-                                <span className="hidden sm:inline">Approve</span>
-                              </button>
-                              <button 
-                                onClick={() => rejectBatch(b.id, b.batch_id)}
-                                disabled={processingId === b.id}
-                                className="px-2.5 py-1.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg text-[11px] shadow-sm transition flex items-center space-x-1 disabled:opacity-50"
-                              >
-                                <XCircle className="w-3 h-3" />
-                                <span className="hidden sm:inline">Reject</span>
-                              </button>
-                            </>
-                          )}
-
-                          {/* STEP 2: DISPATCH BUTTON (Only shows if Approved and Not Dispatched) */}
-                          {b.approval_status === 'Approved' && b.dispatch_status === 'Pending' && (
-                            <button 
-                              onClick={() => dispatchBatch(b)}
-                              disabled={processingId === b.id}
-                              className="px-2.5 py-1.5 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-lg text-[11px] shadow-sm transition flex items-center space-x-1 disabled:opacity-50"
-                            >
-                              <Truck className="w-3 h-3" />
-                              <span className="hidden sm:inline">Dispatch</span>
-                            </button>
-                          )}
-
-                          <button 
-                            onClick={() => openChat(b)}
-                            className="relative px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg text-[11px] shadow-sm transition flex items-center space-x-1"
-                          >
-                            {hasUnread && (
-                              <span className="absolute -top-1.5 -right-1.5 flex h-3.5 w-3.5">
-                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                                <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-red-500 border-2 border-white"></span>
-                              </span>
-                            )}
-                            <MessageSquare className="w-3 h-3" />
-                            <span className="hidden sm:inline">Chat</span>
-                          </button>
-                          <button 
-                            onClick={() => printBatchSlip(b)}
-                            className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded-lg text-[11px] shadow-sm transition flex items-center space-x-1"
-                          >
-                            <Printer className="w-3 h-3" />
-                            <span className="hidden sm:inline">Slip</span>
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
+              ))}
             </tbody>
           </table>
         </div>
-      </div>
+      )}
 
-      {/* Slide-out Chat Modal */}
+      {/* --- TAB 2: MAINTENANCE ROUTING --- */}
+      {activeTab === 'maintenance' && (
+        <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 overflow-x-auto">
+          <table className="w-full text-left text-xs">
+            <thead className="bg-slate-100 text-slate-700 uppercase font-bold">
+              <tr>
+                <th className="p-3">Complaint ID</th>
+                <th className="p-3">Location & Issue</th>
+                <th className="p-3">Current Status</th>
+                <th className="p-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200">
+              {loading ? (<tr><td colSpan={4} className="p-4 text-center">Loading...</td></tr>) : complaints.length === 0 ? (<tr><td colSpan={4} className="p-4 text-center">No maintenance tasks pending assignment.</td></tr>) : complaints.map(c => {
+                const isAssigned = c.assignments && c.assignments.length > 0;
+                return (
+                  <tr key={c.id} className="hover:bg-slate-50">
+                    <td className="p-3 font-bold text-brand-maroon">{c.complaint_id}<div className="text-[10px] text-slate-500 mt-0.5">{c.requester?.full_name}</div></td>
+                    <td className="p-3"><div className="font-semibold">{c.category}</div><div className="text-[10px] text-slate-600">{c.zone} - {c.venue}</div></td>
+                    <td className="p-3">
+                      <div className="flex flex-col gap-1 items-start">
+                        <span className="px-2 py-0.5 bg-slate-200 text-slate-800 rounded font-bold text-[10px]">{c.status}</span>
+                        {isAssigned && <span className="text-[9px] font-bold text-indigo-600 uppercase">Tech: {c.assignments[0].technician.full_name}</span>}
+                      </div>
+                    </td>
+                    <td className="p-3 text-right">
+                      {c.status === 'Approved by Supervisor' && (
+                        <button onClick={() => { setSelectedComplaint(c); setAssignModalOpen(true); }} className="px-2.5 py-1.5 bg-indigo-600 text-white font-bold rounded-lg text-[11px] shadow-sm flex items-center gap-1 ml-auto"><UserPlus className="w-3 h-3" /> Assign</button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* --- BATCH REVIEW & SPLIT MODAL --- */}
+      {reviewModalOpen && reviewBatch && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex justify-center items-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden">
+            <div className="bg-brand-maroon p-4 flex justify-between items-center text-white">
+              <h3 className="font-extrabold text-sm uppercase">Review & Split Batch: {reviewBatch.batch_id}</h3>
+              <button onClick={() => setReviewModalOpen(false)}><X className="w-5 h-5 hover:text-red-300" /></button>
+            </div>
+            <form onSubmit={handleReviewSubmit} className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
+              <p className="text-xs text-slate-500 font-bold mb-4">Determine availability for each requested item. Available items will be frozen in inventory.</p>
+              
+              {reviewBatch.items.map((item: any) => {
+                const itemName = item.item_type === 'Catalog' && item.inventory ? item.inventory.name : item.custom_item_name;
+                const physicalStock = item.inventory?.physical_stock || 0;
+                const frozenStock = item.inventory?.freezed_stock || 0;
+                const availableStock = Math.max(0, physicalStock - frozenStock);
+                
+                return (
+                  <div key={item.id} className="p-3 border border-slate-200 rounded-xl bg-slate-50 grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
+                    <div className="md:col-span-4">
+                      <div className="font-bold text-slate-800 text-xs">{itemName}</div>
+                      <div className="text-[10px] text-slate-500">Requested: <span className="font-bold text-brand-maroon">{item.requested_qty}</span></div>
+                      {item.item_type === 'Catalog' && (
+                        <div className="text-[10px] text-emerald-600 font-bold mt-1">Avail Stock: {availableStock}</div>
+                      )}
+                    </div>
+                    
+                    <div className="md:col-span-5">
+                      <select 
+                        value={itemDecisions[item.id]?.status || 'Available'}
+                        onChange={(e) => updateDecision(item.id, 'status', e.target.value)}
+                        className="w-full p-2 bg-white border border-slate-300 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-brand-maroon"
+                      >
+                        <option value="Available">Available (Freeze Stock)</option>
+                        <option value="Pending">Pending (Requires ETA)</option>
+                        <option value="Not Provided">Not Provided (Reject)</option>
+                      </select>
+                    </div>
+
+                    <div className="md:col-span-3">
+                      {itemDecisions[item.id]?.status === 'Pending' && (
+                        <div>
+                          <label className="block text-[9px] font-bold text-slate-500 uppercase">ETA (Days)</label>
+                          <input 
+                            type="number" 
+                            min="1" 
+                            required
+                            value={itemDecisions[item.id]?.eta || ''}
+                            onChange={(e) => updateDecision(item.id, 'eta', parseInt(e.target.value) || 0)}
+                            className="w-full p-1.5 bg-white border border-slate-300 rounded text-xs font-bold outline-none text-center focus:ring-2 focus:ring-amber-500"
+                            placeholder="e.g. 5"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+
+              <button 
+                type="submit" 
+                disabled={processingId === reviewBatch.id}
+                className="w-full py-3 mt-4 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs uppercase rounded-xl shadow-md transition disabled:opacity-50"
+              >
+                Confirm Split & Freeze Stock
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* --- MAINTENANCE ASSIGN MODAL --- */}
+      {assignModalOpen && selectedComplaint && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex justify-center items-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden">
+            <div className="bg-brand-maroon p-4 flex justify-between items-center text-white">
+              <h3 className="font-extrabold text-sm uppercase">Assign Technician</h3>
+              <button onClick={() => setAssignModalOpen(false)}><X className="w-5 h-5 hover:text-red-300" /></button>
+            </div>
+            <form onSubmit={handleAssignTechnician} className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Select Tradesman *</label>
+                <select required value={selectedTechId} onChange={e => setSelectedTechId(e.target.value)} className="w-full p-2.5 border border-slate-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-brand-maroon">
+                  <option value="" disabled>-- Choose Tradesman --</option>
+                  {technicians.map(t => <option key={t.id} value={t.id}>{t.full_name} ({t.trade || 'General'})</option>)}
+                </select>
+              </div>
+              <button type="submit" disabled={processingId === selectedComplaint.id} className="w-full py-3 mt-2 bg-indigo-600 text-white font-extrabold text-xs uppercase rounded-xl disabled:opacity-50">Dispatch</button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Chat Modal */}
       {activeBatch && currentUser && (
-        <BatchDetailsModal
-          batchId={activeBatch.batch_id}
-          workOrderId={activeBatch.id}
-          isOpen={isChatOpen}
-          onClose={() => {
-            setIsChatOpen(false);
-            setActiveBatch(null);
-            fetchQueue(); // Refresh logs to clear notification dot
-          }}
-          currentUser={currentUser}
-        />
+        <BatchDetailsModal batchId={activeBatch.batch_id} workOrderId={activeBatch.id} isOpen={isChatOpen} onClose={() => { setIsChatOpen(false); setActiveBatch(null); }} currentUser={currentUser} />
       )}
     </div>
   );
