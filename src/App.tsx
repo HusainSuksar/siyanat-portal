@@ -28,6 +28,7 @@ import {
   Calendar,
   Car,
   CalendarCheck,
+  ShoppingCart,
 } from "lucide-react";
 import SupervisorQueue from "./pages/SupervisorQueue";
 import Login from "./pages/Login";
@@ -41,9 +42,10 @@ import AuditLogs from "./pages/AuditLogs";
 import TeamManagement from "./pages/TeamManagement";
 import NewComplaint from "./pages/NewComplaint";
 import TechnicianPortal from "./pages/TechnicianPortal";
-import BookEvent from './pages/BookEvent';
-import BookVehicle from './pages/BookVehicle';
-import TanzeemCommandCenter from './pages/TanzeemCommandCenter';
+import BookEvent from "./pages/BookEvent";
+import BookVehicle from "./pages/BookVehicle";
+import TanzeemCommandCenter from "./pages/TanzeemCommandCenter";
+import RequestToOrder from "./pages/RequestToOrder";
 
 // --- NOTIFICATION MANAGER ---
 const NotificationManager = ({
@@ -156,12 +158,18 @@ const DesktopNavigation = ({ userRole }: { userRole: string | null }) => {
           <PlusCircle className="w-4 h-4" />
           <span>New Requisition</span>
         </Link>
-        <Link to="/book-event" className={getTabClass('/book-event')}><Calendar className="w-4 h-4" /><span>Book Event</span></Link>
+        <Link to="/book-event" className={getTabClass("/book-event")}>
+          <Calendar className="w-4 h-4" />
+          <span>Book Event</span>
+        </Link>
         <Link to="/new-complaint" className={getTabClass("/new-complaint")}>
           <Wrench className="w-4 h-4" />
           <span>File Complaint</span>
         </Link>
-        <Link to="/book-vehicle" className={getTabClass('/book-vehicle')}><Car className="w-4 h-4" /><span>Book Vehicle</span></Link>
+        <Link to="/book-vehicle" className={getTabClass("/book-vehicle")}>
+          <Car className="w-4 h-4" />
+          <span>Book Vehicle</span>
+        </Link>
 
         {userRole === "ADMIN" && (
           <>
@@ -175,6 +183,10 @@ const DesktopNavigation = ({ userRole }: { userRole: string | null }) => {
             <Link to="/restock" className={getTabClass("/restock")}>
               <Warehouse className="w-4 h-4" />
               <span>Stock</span>
+            </Link>
+            <Link to="/rto" className={getTabClass("/rto")}>
+              <ShoppingCart className="w-4 h-4" />
+              <span>RTO Queue</span>
             </Link>
             <Link to="/reports" className={getTabClass("/reports")}>
               <PieChart className="w-4 h-4" />
@@ -192,7 +204,10 @@ const DesktopNavigation = ({ userRole }: { userRole: string | null }) => {
               <Users className="w-4 h-4" />
               <span>Team</span>
             </Link>
-            <Link to="/tanzeem" className={getTabClass('/tanzeem')}><CalendarCheck className="w-4 h-4" /><span>Tanzeem Center</span></Link>
+            <Link to="/tanzeem" className={getTabClass("/tanzeem")}>
+              <CalendarCheck className="w-4 h-4" />
+              <span>Tanzeem Center</span>
+            </Link>
           </>
         )}
         {(userRole === "ADMIN" || userRole === "SUPERVISOR") && (
@@ -266,8 +281,8 @@ const MobileDrawerNavigation = ({
           {navItem("/", LayoutDashboard, "Dashboard")}
           {navItem("/new-requisition", PlusCircle, "New Requisition")}
           {navItem("/new-complaint", Wrench, "File Complaint")}
-          {navItem('/book-event', Calendar, 'Book Event')}
-          {navItem('/book-vehicle', Car, 'Book Vehicle')}
+          {navItem("/book-event", Calendar, "Book Event")}
+          {navItem("/book-vehicle", Car, "Book Vehicle")}
 
           {userRole === "ADMIN" && (
             <>
@@ -276,11 +291,12 @@ const MobileDrawerNavigation = ({
               </div>
               {navItem("/siyanat-operations", Truck, "Dispatch Queue")}
               {navItem("/restock", Warehouse, "Restock Inventory")}
+              {navItem("/rto", ShoppingCart, "Request-to-Order Queue")}
               {navItem("/reports", PieChart, "Analytics & Reports")}
               {navItem("/assets", Server, "Asset Register")}
               {navItem("/audit", ShieldAlert, "Audit Trail")}
               {navItem("/team", Users, "Team Management")}
-              {navItem('/tanzeem', CalendarCheck, 'Tanzeem Command Center')}
+              {navItem("/tanzeem", CalendarCheck, "Tanzeem Command Center")}
             </>
           )}
           {(userRole === "ADMIN" || userRole === "SUPERVISOR") && (
@@ -487,6 +503,18 @@ export default function App() {
           }
         />
         <Route
+          path="/rto"
+          element={
+            session && userRole === "ADMIN" ? (
+              <PortalLayout userRole={userRole} userId={session.user.id}>
+                <RequestToOrder />
+              </PortalLayout>
+            ) : (
+              <Navigate to="/" />
+            )
+          }
+        />
+        <Route
           path="/reports"
           element={
             session && userRole === "ADMIN" ? (
@@ -534,7 +562,18 @@ export default function App() {
             )
           }
         />
-        <Route path="/tanzeem" element={session && userRole === 'ADMIN' ? <PortalLayout userRole={userRole} userId={session.user.id}><TanzeemCommandCenter /></PortalLayout> : <Navigate to="/" />} />
+        <Route
+          path="/tanzeem"
+          element={
+            session && userRole === "ADMIN" ? (
+              <PortalLayout userRole={userRole} userId={session.user.id}>
+                <TanzeemCommandCenter />
+              </PortalLayout>
+            ) : (
+              <Navigate to="/" />
+            )
+          }
+        />
         <Route
           path="/new-complaint"
           element={
@@ -571,8 +610,30 @@ export default function App() {
             )
           }
         />
-        <Route path="/book-event" element={session ? <PortalLayout userRole={userRole} userId={session.user.id}><BookEvent /></PortalLayout> : <Navigate to="/login" />} />
-        <Route path="/book-vehicle" element={session ? <PortalLayout userRole={userRole} userId={session.user.id}><BookVehicle /></PortalLayout> : <Navigate to="/login" />} />
+        <Route
+          path="/book-event"
+          element={
+            session ? (
+              <PortalLayout userRole={userRole} userId={session.user.id}>
+                <BookEvent />
+              </PortalLayout>
+            ) : (
+              <Navigate to="/login" />
+            )
+          }
+        />
+        <Route
+          path="/book-vehicle"
+          element={
+            session ? (
+              <PortalLayout userRole={userRole} userId={session.user.id}>
+                <BookVehicle />
+              </PortalLayout>
+            ) : (
+              <Navigate to="/login" />
+            )
+          }
+        />
       </Routes>
     </Router>
   );

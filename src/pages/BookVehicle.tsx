@@ -15,7 +15,7 @@ export default function BookVehicle() {
   const [releaseTime, setReleaseTime] = useState('');
   
   // Headcount
-  const [darajah, setDarajah] = useState('Mutawassitah');
+  const [darajah, setDarajah] = useState('1');
   const [maleCount, setMaleCount] = useState(0);
   const [femaleCount, setFemaleCount] = useState(0);
 
@@ -136,11 +136,16 @@ export default function BookVehicle() {
             <div>
               <label className="block text-[11px] font-extrabold text-slate-500 uppercase mb-1">Darajah / Category</label>
               <select value={darajah} onChange={e => setDarajah(e.target.value)} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold focus:ring-2 focus:ring-brand-maroon outline-none">
-                <option>Mutawassitah</option>
-                <option>Sanawiyyah</option>
-                <option>Aaliyah</option>
+                <option>1</option>
+                <option>2</option>
+                <option>3</option><option>4</option>
+                <option>5</option>
+                <option>6</option><option>7</option>
+                <option>8</option>
+                <option>9</option><option>10</option>
+                <option>11</option>
+                <option>Random</option>
                 <option>Faculty / Staff</option>
-                <option>Guests</option>
               </select>
             </div>
             
