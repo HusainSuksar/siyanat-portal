@@ -1,15 +1,20 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { Users, Shield, UserCog, Edit, Trash2, X, Save } from 'lucide-react';
+import { Users, Shield, UserCog, Edit, Trash2, X, Save, UserPlus } from 'lucide-react';
 
 export default function TeamManagement() {
   const [team, setTeam] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState<string | null>(null);
   
-  // Edit Modal State
+  // Modal States
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<any>(null);
+  
+  const [addModalOpen, setAddModalOpen] = useState(false);
+  const [newUser, setNewUser] = useState({
+    full_name: '', email: '', department: '', its_number: '', role: 'REQUESTER', zone: '', trade: ''
+  });
 
   useEffect(() => {
     fetchTeam();
@@ -20,13 +25,79 @@ export default function TeamManagement() {
     const { data, error } = await supabase
       .from('profiles')
       .select('*')
-      .order('role', { ascending: true }) // Group Admins first
+      .order('role', { ascending: true })
       .order('full_name', { ascending: true });
 
     if (data && !error) setTeam(data);
     setLoading(false);
   };
 
+  // --- ADD NEW MEMBER LOGIC ---
+  const handleAddUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setProcessingId('new-user');
+
+    try {
+      // 1. Create the user in Supabase Auth with the requested default password
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email: newUser.email,
+        password: '786110', // Default password per instruction
+        options: {
+          data: {
+            full_name: newUser.full_name,
+          }
+        }
+      });
+
+      if (authError) throw authError;
+
+      // 2. Wait a moment for Supabase triggers to create the profile row, then update it
+      if (authData.user) {
+        const payload = {
+          full_name: newUser.full_name,
+          department: newUser.department,
+          its_number: newUser.its_number,
+          role: newUser.role,
+          zone: newUser.role === 'SUPERVISOR' ? newUser.zone : null,
+          trade: newUser.role === 'TECHNICIAN' ? newUser.trade : null,
+        };
+
+        // Retry logic to ensure the trigger has finished
+        let attempts = 0;
+        let updateSuccess = false;
+        while (attempts < 3 && !updateSuccess) {
+          const { error: updateError } = await supabase.from('profiles').update(payload).eq('id', authData.user.id);
+          if (!updateError) {
+            updateSuccess = true;
+          } else {
+            attempts++;
+            await new Promise(res => setTimeout(res, 500)); // wait half a second
+          }
+        }
+
+        if (!updateSuccess) throw new Error("Could not apply profile data after account creation.");
+
+        // 3. Log the action
+        const { data: adminData } = await supabase.auth.getUser();
+        await supabase.from('system_logs').insert({
+          action_type: 'USER_CREATED',
+          description: `Admin created new team member: ${newUser.full_name} (${newUser.role}).`,
+          user_email: adminData.user?.email || 'System Admin'
+        });
+
+        alert(`Team member added successfully!\n\nEmail: ${newUser.email}\nDefault Password: 786110`);
+        setAddModalOpen(false);
+        setNewUser({ full_name: '', email: '', department: '', its_number: '', role: 'REQUESTER', zone: '', trade: '' });
+        fetchTeam();
+      }
+    } catch (err: any) {
+      alert("Error adding user: " + err.message);
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  // --- EDIT & DELETE LOGIC ---
   const openEditModal = (user: any) => {
     setEditingUser({ ...user });
     setEditModalOpen(true);
@@ -37,7 +108,6 @@ export default function TeamManagement() {
     if (!editingUser) return;
     setProcessingId(editingUser.id);
 
-    // Clean up fields based on role (e.g., standard requesters shouldn't have a zone)
     const payload = {
       full_name: editingUser.full_name,
       department: editingUser.department,
@@ -47,10 +117,7 @@ export default function TeamManagement() {
       trade: editingUser.role === 'TECHNICIAN' ? editingUser.trade : null,
     };
 
-    const { error } = await supabase
-      .from('profiles')
-      .update(payload)
-      .eq('id', editingUser.id);
+    const { error } = await supabase.from('profiles').update(payload).eq('id', editingUser.id);
 
     if (!error) {
       const { data: authData } = await supabase.auth.getUser();
@@ -86,7 +153,7 @@ export default function TeamManagement() {
       alert('User deleted successfully.');
       fetchTeam();
     } else {
-      alert("Cannot delete user. They likely have existing complaints or work orders tied to their account (Foreign Key Constraint). Demote them to 'REQUESTER' instead.");
+      alert("Cannot delete user. They likely have existing complaints or work orders tied to their account. Demote them to 'REQUESTER' instead.");
     }
     setProcessingId(null);
   };
@@ -101,6 +168,13 @@ export default function TeamManagement() {
           </h2>
           <p className="text-xs text-slate-500 mt-1">Manage personnel, assign trades/zones, and control portal access levels.</p>
         </div>
+        <button 
+          onClick={() => setAddModalOpen(true)}
+          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs uppercase tracking-wider rounded-lg shadow-sm transition flex items-center space-x-2"
+        >
+          <UserPlus className="w-4 h-4" />
+          <span>Add New Member</span>
+        </button>
       </div>
 
       <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 space-y-4">
@@ -182,6 +256,100 @@ export default function TeamManagement() {
           </table>
         </div>
       </div>
+
+      {/* --- ADD NEW MEMBER MODAL --- */}
+      {addModalOpen && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex justify-center items-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden">
+            <div className="bg-brand-maroon p-4 flex justify-between items-center text-white">
+              <h3 className="font-extrabold text-sm uppercase">Register New Team Member</h3>
+              <button onClick={() => setAddModalOpen(false)}><X className="w-5 h-5 hover:text-red-300" /></button>
+            </div>
+            
+            <form onSubmit={handleAddUser} className="p-5 space-y-4 max-h-[80vh] overflow-y-auto">
+              <div className="bg-amber-50 border border-amber-200 p-3 rounded-lg text-[10px] text-amber-800 font-bold mb-4">
+                Note: The user will be created with the default password <span className="bg-amber-200 px-1 rounded">786110</span>. They can use this to login immediately.
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="col-span-2">
+                  <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">Full Name *</label>
+                  <input required type="text" value={newUser.full_name} onChange={e => setNewUser({...newUser, full_name: e.target.value})} className="w-full p-2 border border-slate-300 rounded-lg text-xs outline-none focus:ring-2 focus:ring-brand-maroon"/>
+                </div>
+                
+                <div className="col-span-2">
+                  <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">Email Address (Login ID) *</label>
+                  <input required type="email" value={newUser.email} onChange={e => setNewUser({...newUser, email: e.target.value})} className="w-full p-2 border border-slate-300 rounded-lg text-xs outline-none focus:ring-2 focus:ring-brand-maroon"/>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">Department</label>
+                  <input type="text" value={newUser.department} onChange={e => setNewUser({...newUser, department: e.target.value})} className="w-full p-2 border border-slate-300 rounded-lg text-xs outline-none focus:ring-2 focus:ring-brand-maroon"/>
+                </div>
+                
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">ITS Number</label>
+                  <input type="text" value={newUser.its_number} onChange={e => setNewUser({...newUser, its_number: e.target.value})} className="w-full p-2 border border-slate-300 rounded-lg text-xs outline-none focus:ring-2 focus:ring-brand-maroon"/>
+                </div>
+              </div>
+
+              <div className="pt-4 border-t border-slate-100">
+                <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1 flex items-center gap-1">
+                  <Shield className="w-3 h-3 text-brand-maroon" /> System Role *
+                </label>
+                <select 
+                  required
+                  value={newUser.role} 
+                  onChange={e => setNewUser({...newUser, role: e.target.value})} 
+                  className="w-full p-2 border border-slate-300 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-brand-maroon"
+                >
+                  <option value="REQUESTER">Standard Requester</option>
+                  <option value="SUPERVISOR">Zone Supervisor</option>
+                  <option value="TECHNICIAN">Technician</option>
+                  <option value="ADMIN">System Administrator</option>
+                </select>
+              </div>
+
+              {newUser.role === 'SUPERVISOR' && (
+                <div className="bg-indigo-50 p-3 rounded-lg border border-indigo-100">
+                  <label className="block text-[11px] font-bold text-indigo-900 uppercase mb-1">Assigned Zone *</label>
+                  <select required value={newUser.zone} onChange={e => setNewUser({...newUser, zone: e.target.value})} className="w-full p-2 border border-indigo-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-indigo-500">
+                    <option value="" disabled>-- Select Zone --</option>
+                    <option value="Main Jamea Complex">Main Jamea Complex</option>
+                    <option value="Rabwat">Rabwat</option>
+                    <option value="Masakin">Masakin</option>
+                    <option value="Mawaid">Mawaid</option>
+                  </select>
+                </div>
+              )}
+
+              {newUser.role === 'TECHNICIAN' && (
+                <div className="bg-emerald-50 p-3 rounded-lg border border-emerald-100">
+                  <label className="block text-[11px] font-bold text-emerald-900 uppercase mb-1">Technician Trade *</label>
+                  <select required value={newUser.trade} onChange={e => setNewUser({...newUser, trade: e.target.value})} className="w-full p-2 border border-emerald-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-emerald-500">
+                    <option value="" disabled>-- Select Trade --</option>
+                    <option value="Plumbing">Plumbing</option>
+                    <option value="Electrical">Electrical</option>
+                    <option value="Carpentry">Carpentry</option>
+                    <option value="Civil">Civil</option>
+                    <option value="HVAC / AC">HVAC / AC</option>
+                    <option value="Cleaning">Cleaning</option>
+                    <option value="General">General</option>
+                  </select>
+                </div>
+              )}
+
+              <button 
+                type="submit" 
+                disabled={processingId === 'new-user'}
+                className="w-full py-3 mt-4 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs uppercase rounded-xl shadow-md transition disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {processingId === 'new-user' ? 'Creating Account...' : <><UserPlus className="w-4 h-4" /> Register User</>}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* --- EDIT USER MODAL --- */}
       {editModalOpen && editingUser && (
