@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { RefreshCw, MessageSquare, Truck, UserPlus, X, SplitSquareHorizontal } from 'lucide-react';
+import { RefreshCw, MessageSquare, Truck, UserPlus, X, SplitSquareHorizontal, Archive, Trash2 } from 'lucide-react';
 import BatchDetailsModal from '../components/BatchDetailsModal';
 
 export default function SiyanatOperations() {
@@ -29,6 +29,7 @@ export default function SiyanatOperations() {
   const fetchData = async () => {
     setLoading(true);
     
+    // Fetch Materials
     const { data: batchData } = await supabase
       .from('work_orders')
       .select(`*, logs:work_order_logs(author_id), items:work_order_items(id, requested_qty, item_type, custom_item_name, status, eta_days, inventory_id, inventory:inventory_items(id, name, physical_stock, freezed_stock))`)
@@ -36,14 +37,16 @@ export default function SiyanatOperations() {
 
     if (batchData) setBatches(batchData);
 
+    // Fetch Maintenance (Expanded to include 'Verified' and 'Complaint Reopened')
     const { data: complaintData } = await supabase
       .from('complaints')
       .select(`*, requester:profiles(full_name, department), assignments:technician_assignments(status, technician:profiles(full_name, trade))`)
-      .in('status', ['Approved by Supervisor', 'Assigned', 'Waiting for Material', 'Completed'])
+      .in('status', ['Approved by Supervisor', 'Assigned', 'Waiting for Material', 'Completed', 'Verified', 'Complaint Reopened'])
       .order('created_at', { ascending: false });
 
     if (complaintData) setComplaints(complaintData);
 
+    // Fetch Technicians
     const { data: techData } = await supabase.from('profiles').select('id, full_name, trade').eq('role', 'TECHNICIAN');
     if (techData) setTechnicians(techData);
 
@@ -55,7 +58,7 @@ export default function SiyanatOperations() {
     supabase.auth.getUser().then(({ data }) => setCurrentUser(data.user));
   }, []);
 
-  // --- MATERIAL LOGIC: BATCH SPLITTING ENGINE ---
+  // --- MATERIAL LOGIC ---
   const openReviewModal = (batch: any) => {
     setReviewBatch(batch);
     const initialDecisions: any = {};
@@ -79,37 +82,23 @@ export default function SiyanatOperations() {
 
     try {
       let hasAvailableItems = false;
-
-      // 1. Process each item individually
       for (const item of reviewBatch.items) {
         const decision = itemDecisions[item.id];
+        await supabase.from('work_order_items').update({ status: decision.status, eta_days: decision.eta }).eq('id', item.id);
 
-        // Update item level status & ETA
-        await supabase.from('work_order_items').update({
-          status: decision.status,
-          eta_days: decision.eta
-        }).eq('id', item.id);
-
-        // FREEZE STOCK logic: If available, reserve it but DO NOT deduct physical stock
         if (decision.status === 'Available' && item.item_type === 'Catalog' && item.inventory_id) {
           const inv = item.inventory;
           const newFreezedStock = (inv.freezed_stock || 0) + item.requested_qty;
-          
-          await supabase.from('inventory_items')
-            .update({ freezed_stock: newFreezedStock })
-            .eq('id', item.inventory_id);
-            
+          await supabase.from('inventory_items').update({ freezed_stock: newFreezedStock }).eq('id', item.inventory_id);
           hasAvailableItems = true;
         }
       }
 
-      // 2. Update parent batch status
       await supabase.from('work_orders').update({
         approval_status: 'Approved',
         dispatch_status: hasAvailableItems ? 'Pending' : 'Awaiting Stock'
       }).eq('id', reviewBatch.id);
 
-      // 3. Audit Log
       await supabase.from('system_logs').insert({
         action_type: 'BATCH_REVIEWED',
         description: `Split and processed material batch ${reviewBatch.batch_id}. Frozen available stock.`,
@@ -131,19 +120,30 @@ export default function SiyanatOperations() {
     setProcessingId(batch.id);
     
     try {
-      // ONLY update the dispatch status. Stock was already frozen during approval.
       await supabase.from('work_orders').update({ dispatch_status: 'Dispatched' }).eq('id', batch.id);
-
       await supabase.from('system_logs').insert({
         action_type: 'STOCK_DISPATCHED',
         description: `Dispatched ${batch.batch_id} to location. Stock remains frozen pending receipt.`,
         user_email: currentUser?.email || 'Admin'
       });
-
       fetchData();
     } catch (err: any) {
       alert(err.message);
     }
+    setProcessingId(null);
+  };
+
+  // 🔴 GOD MODE: Delete Material Batch
+  const deleteBatch = async (id: string, batchId: string) => {
+    if (!confirm(`GOD MODE WARNING: Are you sure you want to completely eradicate Batch ${batchId}? This is irreversible.`)) return;
+    setProcessingId(id);
+    await supabase.from('work_orders').delete().eq('id', id);
+    await supabase.from('system_logs').insert({
+      action_type: 'GOD_MODE_DELETE',
+      description: `Admin hard-deleted material batch ${batchId}.`,
+      user_email: currentUser?.email || 'Admin'
+    });
+    fetchData();
     setProcessingId(null);
   };
 
@@ -171,6 +171,36 @@ export default function SiyanatOperations() {
     setProcessingId(null);
   };
 
+  // 🟢 NEW: Close Verified Complaint
+  const closeComplaint = async (id: string, complaintId: string) => {
+    if (!confirm(`Officially close complaint ${complaintId}?`)) return;
+    setProcessingId(id);
+    
+    await supabase.from('complaints').update({ status: 'Closed' }).eq('id', id);
+    await supabase.from('system_logs').insert({
+      action_type: 'COMPLAINT_CLOSED',
+      description: `Admin officially closed verified complaint ${complaintId}.`,
+      user_email: currentUser?.email || 'Admin'
+    });
+    
+    fetchData();
+    setProcessingId(null);
+  };
+
+  // 🔴 GOD MODE: Delete Complaint
+  const deleteComplaint = async (id: string, complaintId: string) => {
+    if (!confirm(`GOD MODE WARNING: Are you sure you want to completely eradicate Complaint ${complaintId}? All associated photos and assignments will be destroyed.`)) return;
+    setProcessingId(id);
+    await supabase.from('complaints').delete().eq('id', id);
+    await supabase.from('system_logs').insert({
+      action_type: 'GOD_MODE_DELETE',
+      description: `Admin hard-deleted maintenance complaint ${complaintId}.`,
+      user_email: currentUser?.email || 'Admin'
+    });
+    fetchData();
+    setProcessingId(null);
+  };
+
   return (
     <div className="space-y-6 pb-24">
       {/* Header & Tabs */}
@@ -180,7 +210,7 @@ export default function SiyanatOperations() {
             <Truck className="w-6 h-6" />
             Siyanat Operations Control
           </h2>
-          <p className="text-xs text-slate-500 mt-1">Manage material dispatches and maintenance task assignments.</p>
+          <p className="text-xs text-slate-500 mt-1">Manage material dispatches, maintenance routing, and portal overrides.</p>
         </div>
         <button onClick={fetchData} className="text-xs text-brand-maroon font-bold flex items-center space-x-1 hover:text-brand-dark">
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
@@ -222,7 +252,7 @@ export default function SiyanatOperations() {
                   <td className="p-3 font-semibold">{b.department}<div className="text-[10px] text-slate-500">{b.location}</div></td>
                   <td className="p-3">
                     <div className="flex flex-col gap-1 items-start">
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${b.approval_status === 'Approved' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>{b.approval_status}</span>
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${b.approval_status === 'Approved' ? 'bg-emerald-100 text-emerald-800' : b.approval_status === 'Rejected' ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-amber-800'}`}>{b.approval_status}</span>
                       <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">{b.dispatch_status}</span>
                     </div>
                   </td>
@@ -233,7 +263,7 @@ export default function SiyanatOperations() {
                           onClick={() => openReviewModal(b)} 
                           className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-[11px] shadow-sm flex items-center"
                         >
-                          <SplitSquareHorizontal className="w-3 h-3 mr-1"/> Review & Split
+                          <SplitSquareHorizontal className="w-3 h-3 mr-1"/> Split
                         </button>
                       )}
                       {b.approval_status === 'Approved' && b.dispatch_status === 'Pending' && (
@@ -246,6 +276,11 @@ export default function SiyanatOperations() {
                         </button>
                       )}
                       <button onClick={() => { setActiveBatch(b); setIsChatOpen(true); }} className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg text-[11px] flex items-center"><MessageSquare className="w-3 h-3 mr-1"/>Chat</button>
+                      
+                      {/* GOD MODE: Delete */}
+                      <button onClick={() => deleteBatch(b.id, b.batch_id)} disabled={processingId === b.id} className="p-1.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg transition disabled:opacity-50" title="Delete Batch">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -268,7 +303,7 @@ export default function SiyanatOperations() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
-              {loading ? (<tr><td colSpan={4} className="p-4 text-center">Loading...</td></tr>) : complaints.length === 0 ? (<tr><td colSpan={4} className="p-4 text-center">No maintenance tasks pending assignment.</td></tr>) : complaints.map(c => {
+              {loading ? (<tr><td colSpan={4} className="p-4 text-center">Loading...</td></tr>) : complaints.length === 0 ? (<tr><td colSpan={4} className="p-4 text-center">No maintenance tasks pending assignment or closure.</td></tr>) : complaints.map(c => {
                 const isAssigned = c.assignments && c.assignments.length > 0;
                 return (
                   <tr key={c.id} className="hover:bg-slate-50">
@@ -276,14 +311,28 @@ export default function SiyanatOperations() {
                     <td className="p-3"><div className="font-semibold">{c.category}</div><div className="text-[10px] text-slate-600">{c.zone} - {c.venue}</div></td>
                     <td className="p-3">
                       <div className="flex flex-col gap-1 items-start">
-                        <span className="px-2 py-0.5 bg-slate-200 text-slate-800 rounded font-bold text-[10px]">{c.status}</span>
+                        <span className={`px-2 py-0.5 text-slate-800 rounded font-bold text-[10px] ${c.status === 'Verified' ? 'bg-emerald-200 text-emerald-900' : 'bg-slate-200'}`}>{c.status}</span>
                         {isAssigned && <span className="text-[9px] font-bold text-indigo-600 uppercase">Tech: {c.assignments[0].technician.full_name}</span>}
                       </div>
                     </td>
                     <td className="p-3 text-right">
-                      {c.status === 'Approved by Supervisor' && (
-                        <button onClick={() => { setSelectedComplaint(c); setAssignModalOpen(true); }} className="px-2.5 py-1.5 bg-indigo-600 text-white font-bold rounded-lg text-[11px] shadow-sm flex items-center gap-1 ml-auto"><UserPlus className="w-3 h-3" /> Assign</button>
-                      )}
+                      <div className="flex items-center justify-end gap-1.5">
+                        {c.status === 'Approved by Supervisor' && (
+                          <button onClick={() => { setSelectedComplaint(c); setAssignModalOpen(true); }} className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg text-[11px] shadow-sm flex items-center gap-1"><UserPlus className="w-3 h-3" /> Assign</button>
+                        )}
+                        
+                        {/* THE MISSING CLOSE WORKFLOW */}
+                        {c.status === 'Verified' && (
+                          <button onClick={() => closeComplaint(c.id, c.complaint_id)} disabled={processingId === c.id} className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-[11px] shadow-sm flex items-center gap-1 disabled:opacity-50">
+                            <Archive className="w-3 h-3" /> Close
+                          </button>
+                        )}
+
+                        {/* GOD MODE: Delete */}
+                        <button onClick={() => deleteComplaint(c.id, c.complaint_id)} disabled={processingId === c.id} className="p-1.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg transition disabled:opacity-50" title="Delete Complaint">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -380,7 +429,7 @@ export default function SiyanatOperations() {
                   {technicians.map(t => <option key={t.id} value={t.id}>{t.full_name} ({t.trade || 'General'})</option>)}
                 </select>
               </div>
-              <button type="submit" disabled={processingId === selectedComplaint.id} className="w-full py-3 mt-2 bg-indigo-600 text-white font-extrabold text-xs uppercase rounded-xl disabled:opacity-50">Dispatch</button>
+              <button type="submit" disabled={processingId === selectedComplaint.id} className="w-full py-3 mt-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs uppercase rounded-xl disabled:opacity-50">Dispatch</button>
             </form>
           </div>
         </div>
