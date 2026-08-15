@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
-import { RefreshCw, MessageSquare, Truck, UserPlus, X, SplitSquareHorizontal, Archive, Trash2,CheckCircle } from 'lucide-react';
+import { RefreshCw, MessageSquare, Truck, UserPlus, X, SplitSquareHorizontal, Archive, Trash2, CheckCircle, Package, Wrench } from 'lucide-react';
 import BatchDetailsModal from '../components/BatchDetailsModal';
 
 export default function SiyanatOperations() {
@@ -42,7 +42,6 @@ export default function SiyanatOperations() {
       if (batchData) setBatches(batchData);
 
       // 2. Fetch Maintenance
-      // FIX: Added the explicit foreign key reference '!technician_assignments_technician_id_fkey'
       const { data: complaintData, error: complaintError } = await supabase
         .from('complaints')
         .select(`
@@ -244,146 +243,208 @@ export default function SiyanatOperations() {
           </h2>
           <p className="text-xs text-slate-500 mt-1">Manage material dispatches, maintenance routing, and portal overrides.</p>
         </div>
-        <button onClick={fetchData} className="text-xs text-brand-maroon font-bold flex items-center space-x-1 hover:text-brand-dark">
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+        <button onClick={fetchData} className="w-full md:w-auto px-4 py-2 bg-slate-100 hover:bg-slate-200 text-brand-maroon font-bold rounded-lg flex items-center justify-center space-x-2 transition">
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           <span>Refresh Data</span>
         </button>
       </div>
 
-      <div className="flex space-x-2 border-b border-slate-200">
+      <div className="flex space-x-2 border-b border-slate-200 overflow-x-auto pb-1">
         <button 
           onClick={() => setActiveTab('materials')}
-          className={`px-4 py-2 text-sm font-bold border-b-2 transition ${activeTab === 'materials' ? 'border-brand-maroon text-brand-maroon' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+          className={`px-4 py-2 text-sm font-bold border-b-2 transition flex items-center gap-2 whitespace-nowrap ${activeTab === 'materials' ? 'border-brand-maroon text-brand-maroon' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
         >
-          Material Dispatch
+          <Package className="w-4 h-4" /> Material Dispatch
         </button>
         <button 
           onClick={() => setActiveTab('maintenance')}
-          className={`px-4 py-2 text-sm font-bold border-b-2 transition ${activeTab === 'maintenance' ? 'border-brand-maroon text-brand-maroon' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+          className={`px-4 py-2 text-sm font-bold border-b-2 transition flex items-center gap-2 whitespace-nowrap ${activeTab === 'maintenance' ? 'border-brand-maroon text-brand-maroon' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
         >
-          Maintenance Routing
+          <Wrench className="w-4 h-4" /> Maintenance Routing
         </button>
       </div>
 
       {/* --- TAB 1: MATERIAL DISPATCH --- */}
       {activeTab === 'materials' && (
-        <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead className="bg-slate-100 text-slate-700 uppercase font-bold">
-              <tr>
-                <th className="p-3">Batch ID</th>
-                <th className="p-3">Department</th>
-                <th className="p-3">Status</th>
-                <th className="p-3 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200">
-              {loading ? (<tr><td colSpan={4} className="p-4 text-center">Loading...</td></tr>) : batches.length === 0 ? (<tr><td colSpan={4} className="p-4 text-center">No active batches.</td></tr>) : batches.map(b => (
-                <tr key={b.id} className="hover:bg-slate-50">
-                  <td className="p-3 font-bold text-brand-maroon">{b.batch_id}</td>
-                  <td className="p-3 font-semibold">{b.department}<div className="text-[10px] text-slate-500">{b.location}</div></td>
-                  <td className="p-3">
-                    <div className="flex flex-col gap-1 items-start">
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${b.approval_status === 'Approved' ? 'bg-emerald-100 text-emerald-800' : b.approval_status === 'Rejected' ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-amber-800'}`}>{b.approval_status}</span>
-                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">{b.dispatch_status}</span>
-                    </div>
-                  </td>
-                  <td className="p-3 text-right">
-                    <div className="flex items-center justify-end gap-1.5">
-                      {b.approval_status === 'Pending Approval' && (
+        <div className="space-y-4">
+          {loading ? (
+             <div className="p-8 text-center font-medium text-slate-500 bg-white rounded-2xl border border-slate-200 shadow-sm animate-pulse">Loading batches...</div>
+          ) : batches.length === 0 ? (
+             <div className="p-8 text-center font-medium italic text-slate-500 bg-white rounded-2xl border border-slate-200 shadow-sm">No active batches.</div>
+          ) : (
+             <div className="grid grid-cols-1 gap-4">
+               {batches.map(b => (
+                  <div key={b.id} className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                     
+                     {/* Card Content */}
+                     <div className="space-y-3 flex-1 w-full">
+                       
+                       {/* Header: Batch ID & Department */}
+                       <div>
+                         <h3 className="font-black text-brand-maroon text-sm md:text-base leading-tight">Batch: {b.batch_id}</h3>
+                         <p className="text-xs text-slate-600 mt-1 font-semibold">{b.department}</p>
+                       </div>
+
+                       {/* Meta Grid: Location & Status */}
+                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-50 p-3 rounded-xl border border-slate-100">
+                         <div>
+                           <div className="text-[10px] text-slate-400 uppercase font-bold mb-0.5">Location</div>
+                           <div className="font-bold text-slate-700 text-xs">{b.location}</div>
+                         </div>
+                         <div>
+                           <div className="text-[10px] text-slate-400 uppercase font-bold mb-1">Status</div>
+                           <div className="flex flex-wrap gap-1.5 items-center">
+                             <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${b.approval_status === 'Approved' ? 'bg-emerald-100 text-emerald-800' : b.approval_status === 'Rejected' ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-amber-800'}`}>
+                               {b.approval_status}
+                             </span>
+                             <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-200 text-slate-700">
+                               {b.dispatch_status}
+                             </span>
+                           </div>
+                         </div>
+                       </div>
+                     </div>
+
+                     {/* Actions (Stacked on Mobile, Right-aligned on Desktop) */}
+                     <div className="flex flex-row md:flex-col gap-2 w-full md:w-auto mt-2 md:mt-0 pt-3 md:pt-0 border-t md:border-t-0 border-slate-100 flex-wrap">
+                        {b.approval_status === 'Pending Approval' && (
+                          <button 
+                            onClick={() => openReviewModal(b)} 
+                            className="flex-1 md:w-full py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs shadow-sm flex items-center justify-center gap-1.5 transition"
+                          >
+                            <SplitSquareHorizontal className="w-3.5 h-3.5"/> Split
+                          </button>
+                        )}
+                        {b.approval_status === 'Approved' && b.dispatch_status === 'Pending' && (
+                          <button 
+                            onClick={() => dispatchBatch(b)} 
+                            disabled={processingId === b.id}
+                            className="flex-1 md:w-full py-2.5 px-3 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-xl text-xs shadow-sm flex items-center justify-center gap-1.5 disabled:opacity-50 transition"
+                          >
+                            <Truck className="w-3.5 h-3.5"/> Dispatch
+                          </button>
+                        )}
                         <button 
-                          onClick={() => openReviewModal(b)} 
-                          className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-[11px] shadow-sm flex items-center"
+                          onClick={() => { setActiveBatch(b); setIsChatOpen(true); }} 
+                          className="flex-1 md:w-full py-2.5 px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-sm flex items-center justify-center gap-1.5 transition"
                         >
-                          <SplitSquareHorizontal className="w-3 h-3 mr-1"/> Split
+                          <MessageSquare className="w-3.5 h-3.5"/> Chat
                         </button>
-                      )}
-                      {b.approval_status === 'Approved' && b.dispatch_status === 'Pending' && (
+                        
+                        {/* GOD MODE: Delete */}
                         <button 
-                          onClick={() => dispatchBatch(b)} 
-                          disabled={processingId === b.id}
-                          className="px-2.5 py-1.5 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-lg text-[11px] shadow-sm flex items-center disabled:opacity-50"
+                          onClick={() => deleteBatch(b.id, b.batch_id)} 
+                          disabled={processingId === b.id} 
+                          className="py-2.5 px-3 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl transition disabled:opacity-50 flex items-center justify-center" 
+                          title="Delete Batch"
                         >
-                          <Truck className="w-3 h-3 mr-1"/> Dispatch
+                          <Trash2 className="w-4 h-4" />
                         </button>
-                      )}
-                      <button onClick={() => { setActiveBatch(b); setIsChatOpen(true); }} className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg text-[11px] flex items-center"><MessageSquare className="w-3 h-3 mr-1"/>Chat</button>
-                      
-                      {/* GOD MODE: Delete */}
-                      <button onClick={() => deleteBatch(b.id, b.batch_id)} disabled={processingId === b.id} className="p-1.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg transition disabled:opacity-50" title="Delete Batch">
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                     </div>
+                  </div>
+               ))}
+             </div>
+          )}
         </div>
       )}
 
       {/* --- TAB 2: MAINTENANCE ROUTING --- */}
       {activeTab === 'maintenance' && (
-        <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead className="bg-slate-100 text-slate-700 uppercase font-bold">
-              <tr>
-                <th className="p-3">Complaint ID</th>
-                <th className="p-3">Location & Issue</th>
-                <th className="p-3">Current Status</th>
-                <th className="p-3 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200">
-              {loading ? (<tr><td colSpan={4} className="p-4 text-center">Loading...</td></tr>) : complaints.length === 0 ? (<tr><td colSpan={4} className="p-4 text-center">No maintenance tasks pending assignment or closure.</td></tr>) : complaints.map(c => {
+        <div className="space-y-4">
+          {loading ? (
+             <div className="p-8 text-center font-medium text-slate-500 bg-white rounded-2xl border border-slate-200 shadow-sm animate-pulse">Loading complaints...</div>
+          ) : complaints.length === 0 ? (
+             <div className="p-8 text-center font-medium italic text-slate-500 bg-white rounded-2xl border border-slate-200 shadow-sm">No maintenance tasks pending assignment or closure.</div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4">
+              {complaints.map(c => {
                 const isAssigned = c.assignments && c.assignments.length > 0;
                 return (
-                  <tr key={c.id} className="hover:bg-slate-50">
-                    <td className="p-3 font-bold text-brand-maroon">{c.complaint_id}<div className="text-[10px] text-slate-500 mt-0.5">{c.requester?.full_name}</div></td>
-                    <td className="p-3"><div className="font-semibold">{c.category}</div><div className="text-[10px] text-slate-600">{c.zone} - {c.venue}</div></td>
-                    <td className="p-3">
-                      <div className="flex flex-col gap-1 items-start">
-                        <span className={`px-2 py-0.5 text-slate-800 rounded font-bold text-[10px] ${c.status === 'Verified' ? 'bg-emerald-200 text-emerald-900' : 'bg-slate-200'}`}>{c.status}</span>
-                        {isAssigned && <span className="text-[9px] font-bold text-indigo-600 uppercase">Tech: {c.assignments[0].technician?.full_name}</span>}
-                      </div>
-                    </td>
-                    <td className="p-3 text-right">
-                      <div className="flex items-center justify-end gap-1.5">
+                  <div key={c.id} className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                     
+                     {/* Card Content */}
+                     <div className="space-y-3 flex-1 w-full">
+                       
+                       {/* Header: Complaint ID & Requester */}
+                       <div>
+                         <h3 className="font-black text-brand-maroon text-sm md:text-base leading-tight">{c.complaint_id}</h3>
+                         <p className="text-xs text-slate-500 mt-1 font-semibold">{c.requester?.full_name}</p>
+                       </div>
+
+                       {/* Meta Grid: Issue, Location & Status */}
+                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-50 p-3 rounded-xl border border-slate-100">
+                         <div>
+                           <div className="font-bold text-slate-800 text-xs">{c.category}</div>
+                           <div className="text-[10px] text-slate-600 mt-0.5">{c.zone} - {c.venue}</div>
+                         </div>
+                         <div>
+                           <div className="text-[10px] text-slate-400 uppercase font-bold mb-1">Current Status</div>
+                           <div className="flex flex-col gap-1 items-start">
+                             <span className={`px-2 py-0.5 rounded font-bold text-[10px] ${c.status === 'Verified' ? 'bg-emerald-200 text-emerald-900' : 'bg-slate-200 text-slate-800'}`}>
+                               {c.status}
+                             </span>
+                             {isAssigned && (
+                               <span className="text-[9px] font-bold text-indigo-600 uppercase bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">
+                                 Tech: {c.assignments[0].technician?.full_name}
+                               </span>
+                             )}
+                           </div>
+                         </div>
+                       </div>
+                     </div>
+
+                     {/* Actions */}
+                     <div className="flex flex-row md:flex-col gap-2 w-full md:w-auto mt-2 md:mt-0 pt-3 md:pt-0 border-t md:border-t-0 border-slate-100 flex-wrap">
                         {c.status === 'Approved by Supervisor' && (
-                          <button onClick={() => { setSelectedComplaint(c); setAssignModalOpen(true); }} className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg text-[11px] shadow-sm flex items-center gap-1"><UserPlus className="w-3 h-3" /> Assign</button>
+                          <button 
+                            onClick={() => { setSelectedComplaint(c); setAssignModalOpen(true); }} 
+                            className="flex-1 md:w-full py-2.5 px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-sm flex items-center justify-center gap-1.5 transition"
+                          >
+                            <UserPlus className="w-3.5 h-3.5" /> Assign
+                          </button>
                         )}
                         
                         {/* THE MISSING CLOSE WORKFLOW */}
                         {c.status === 'Verified' && (
-                          <button onClick={() => closeComplaint(c.id, c.complaint_id)} disabled={processingId === c.id} className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-[11px] shadow-sm flex items-center gap-1 disabled:opacity-50">
-                            <Archive className="w-3 h-3" /> Close
+                          <button 
+                            onClick={() => closeComplaint(c.id, c.complaint_id)} 
+                            disabled={processingId === c.id} 
+                            className="flex-1 md:w-full py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs shadow-sm flex items-center justify-center gap-1.5 disabled:opacity-50 transition"
+                          >
+                            <Archive className="w-3.5 h-3.5" /> Close
                           </button>
                         )}
 
                         {/* GOD MODE: Delete */}
-                        <button onClick={() => deleteComplaint(c.id, c.complaint_id)} disabled={processingId === c.id} className="p-1.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg transition disabled:opacity-50" title="Delete Complaint">
+                        <button 
+                          onClick={() => deleteComplaint(c.id, c.complaint_id)} 
+                          disabled={processingId === c.id} 
+                          className="py-2.5 px-3 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl transition disabled:opacity-50 flex items-center justify-center" 
+                          title="Delete Complaint"
+                        >
                           <Trash2 className="w-4 h-4" />
                         </button>
-                      </div>
-                    </td>
-                  </tr>
+                     </div>
+                  </div>
                 );
               })}
-            </tbody>
-          </table>
+            </div>
+          )}
         </div>
       )}
 
       {/* --- BATCH REVIEW & SPLIT MODAL --- */}
       {reviewModalOpen && reviewBatch && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex justify-center items-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden">
-            <div className="bg-brand-maroon p-4 flex justify-between items-center text-white">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex justify-center items-end sm:items-center p-4">
+          <div className="bg-white rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom sm:slide-in-from-bottom-0 sm:zoom-in-95 duration-300">
+            <div className="bg-brand-maroon p-5 flex justify-between items-center text-white">
               <h3 className="font-extrabold text-sm uppercase">Review & Split Batch: {reviewBatch.batch_id}</h3>
-              <button onClick={() => setReviewModalOpen(false)}><X className="w-5 h-5 hover:text-red-300" /></button>
+              <button onClick={() => setReviewModalOpen(false)} className="p-1 hover:bg-white/20 rounded-lg transition"><X className="w-5 h-5 hover:text-red-300" /></button>
             </div>
             <form onSubmit={handleReviewSubmit} className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
-              <p className="text-xs text-slate-500 font-bold mb-4">Determine availability for each requested item. Available items will be frozen in inventory.</p>
+              <p className="text-xs text-slate-500 font-bold mb-4 bg-slate-50 p-3 rounded-xl border border-slate-100">
+                Determine availability for each requested item. Available items will be frozen in inventory.
+              </p>
               
               {reviewBatch.items.map((item: any) => {
                 const itemName = item.item_type === 'Catalog' && item.inventory ? item.inventory.name : item.custom_item_name;
@@ -392,12 +453,12 @@ export default function SiyanatOperations() {
                 const availableStock = Math.max(0, physicalStock - frozenStock);
                 
                 return (
-                  <div key={item.id} className="p-3 border border-slate-200 rounded-xl bg-slate-50 grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
+                  <div key={item.id} className="p-4 border border-slate-200 rounded-2xl bg-white shadow-sm grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
                     <div className="md:col-span-4">
-                      <div className="font-bold text-slate-800 text-xs">{itemName}</div>
-                      <div className="text-[10px] text-slate-500">Requested: <span className="font-bold text-brand-maroon">{item.requested_qty}</span></div>
+                      <div className="font-bold text-slate-800 text-sm md:text-xs">{itemName}</div>
+                      <div className="text-[11px] md:text-[10px] text-slate-500 mt-1 md:mt-0">Requested: <span className="font-bold text-brand-maroon">{item.requested_qty}</span></div>
                       {item.item_type === 'Catalog' && (
-                        <div className="text-[10px] text-emerald-600 font-bold mt-1">Avail Stock: {availableStock}</div>
+                        <div className="text-[11px] md:text-[10px] text-emerald-600 font-bold mt-0.5">Avail Stock: {availableStock}</div>
                       )}
                     </div>
                     
@@ -405,7 +466,7 @@ export default function SiyanatOperations() {
                       <select 
                         value={itemDecisions[item.id]?.status || 'Available'}
                         onChange={(e) => updateDecision(item.id, 'status', e.target.value)}
-                        className="w-full p-2 bg-white border border-slate-300 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-brand-maroon"
+                        className="w-full p-3 md:p-2 bg-slate-50 border border-slate-300 rounded-xl md:rounded-lg text-sm md:text-xs font-bold outline-none focus:ring-2 focus:ring-brand-maroon transition"
                       >
                         <option value="Available">Available (Freeze Stock)</option>
                         <option value="Pending">Pending (Requires ETA)</option>
@@ -415,15 +476,15 @@ export default function SiyanatOperations() {
 
                     <div className="md:col-span-3">
                       {itemDecisions[item.id]?.status === 'Pending' && (
-                        <div>
-                          <label className="block text-[9px] font-bold text-slate-500 uppercase">ETA (Days)</label>
+                        <div className="animate-in fade-in duration-200">
+                          <label className="block text-[10px] md:text-[9px] font-bold text-slate-500 uppercase mb-1">ETA (Days)</label>
                           <input 
                             type="number" 
                             min="1" 
                             required
                             value={itemDecisions[item.id]?.eta || ''}
                             onChange={(e) => updateDecision(item.id, 'eta', parseInt(e.target.value) || 0)}
-                            className="w-full p-1.5 bg-white border border-slate-300 rounded text-xs font-bold outline-none text-center focus:ring-2 focus:ring-amber-500"
+                            className="w-full p-3 md:p-1.5 bg-white border border-slate-300 rounded-xl md:rounded text-sm md:text-xs font-bold outline-none text-center focus:ring-2 focus:ring-amber-500 transition"
                             placeholder="e.g. 5"
                           />
                         </div>
@@ -436,7 +497,7 @@ export default function SiyanatOperations() {
               <button 
                 type="submit" 
                 disabled={processingId === reviewBatch.id}
-                className="w-full py-3 mt-4 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs uppercase rounded-xl shadow-md transition disabled:opacity-50"
+                className="w-full py-4 md:py-3 mt-6 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs uppercase tracking-wide rounded-xl shadow-lg transition disabled:opacity-50"
               >
                 Confirm Split & Freeze Stock
               </button>
@@ -447,21 +508,23 @@ export default function SiyanatOperations() {
 
       {/* --- MAINTENANCE ASSIGN MODAL --- */}
       {assignModalOpen && selectedComplaint && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex justify-center items-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden">
-            <div className="bg-brand-maroon p-4 flex justify-between items-center text-white">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex justify-center items-end sm:items-center p-4">
+          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden animate-in slide-in-from-bottom sm:slide-in-from-bottom-0 sm:zoom-in-95 duration-300">
+            <div className="bg-brand-maroon p-5 flex justify-between items-center text-white">
               <h3 className="font-extrabold text-sm uppercase">Assign Technician</h3>
-              <button onClick={() => setAssignModalOpen(false)}><X className="w-5 h-5 hover:text-red-300" /></button>
+              <button onClick={() => setAssignModalOpen(false)} className="p-1 hover:bg-white/20 rounded-lg transition"><X className="w-5 h-5 hover:text-red-300" /></button>
             </div>
-            <form onSubmit={handleAssignTechnician} className="p-5 space-y-4">
+            <form onSubmit={handleAssignTechnician} className="p-6 space-y-5">
               <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Select Tradesman *</label>
-                <select required value={selectedTechId} onChange={e => setSelectedTechId(e.target.value)} className="w-full p-2.5 border border-slate-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-brand-maroon">
+                <label className="block text-xs font-bold text-slate-700 uppercase mb-2">Select Tradesman *</label>
+                <select required value={selectedTechId} onChange={e => setSelectedTechId(e.target.value)} className="w-full p-3.5 border border-slate-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-brand-maroon bg-slate-50 transition">
                   <option value="" disabled>-- Choose Tradesman --</option>
                   {technicians.map(t => <option key={t.id} value={t.id}>{t.full_name} ({t.trade || 'General'})</option>)}
                 </select>
               </div>
-              <button type="submit" disabled={processingId === selectedComplaint.id} className="w-full py-3 mt-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs uppercase rounded-xl disabled:opacity-50">Dispatch</button>
+              <button type="submit" disabled={processingId === selectedComplaint.id} className="w-full py-3.5 mt-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs uppercase tracking-wide rounded-xl shadow-lg disabled:opacity-50 flex items-center justify-center transition">
+                Dispatch
+              </button>
             </form>
           </div>
         </div>
@@ -471,15 +534,16 @@ export default function SiyanatOperations() {
       {activeBatch && currentUser && (
         <BatchDetailsModal batchId={activeBatch.batch_id} workOrderId={activeBatch.id} isOpen={isChatOpen} onClose={() => { setIsChatOpen(false); setActiveBatch(null); }} currentUser={currentUser} />
       )}
-    {/* CREATIVE SUCCESS MODAL */}
+      
+      {/* CREATIVE SUCCESS MODAL */}
       {successMsg && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="bg-white p-8 rounded-3xl shadow-2xl flex flex-col items-center max-w-sm w-full animate-in zoom-in-95 duration-300">
             <div className="w-20 h-20 bg-emerald-100 text-emerald-500 rounded-full flex items-center justify-center mb-5 shadow-inner">
               <CheckCircle className="w-10 h-10" />
             </div>
             <h3 className="text-2xl font-black text-slate-800 text-center mb-2">Success!</h3>
-            <p className="text-sm text-slate-500 text-center font-medium">
+            <p className="text-sm text-slate-500 text-center font-medium leading-relaxed">
               {successMsg}
             </p>
             <button 
