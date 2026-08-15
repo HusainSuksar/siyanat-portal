@@ -16,6 +16,21 @@ const PERIODS = [
   { id: 'P9', time: '02:35 PM - 03:10 PM' },
   { id: 'P10', time: '03:10 PM - 03:45 PM' }
 ];
+const PRESET_CLASSES: Record<string, { male: number, female: number }> = {
+  "1AM": { male: 11, female: 10 },
+  "2AF": { male: 10, female: 12 },
+  "3AM": { male: 15, female: 14 },
+  "4AF": { male: 12, female: 12 },
+  "5AM": { male: 14, female: 10 },
+  "6AF": { male: 9, female: 11 },
+  "7AM": { male: 13, female: 13 },
+  "8AF": { male: 11, female: 15 },
+  "9AM": { male: 12, female: 10 },
+  "10AF": { male: 10, female: 10 },
+  "11AM": { male: 15, female: 12 },
+  "Random": { male: 0, female: 0 },
+  "Faculty / Staff": { male: 0, female: 0 }
+};
 
 export default function BookEvent() {
   const [loading, setLoading] = useState(false);
@@ -57,6 +72,14 @@ export default function BookEvent() {
   useEffect(() => {
     fetchInitialData();
   }, []);
+  const handleDarajahChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const val = e.target.value;
+    setDarajah(val);
+    if (PRESET_CLASSES[val]) {
+      setMaleCount(PRESET_CLASSES[val].male);
+      setFemaleCount(PRESET_CLASSES[val].female);
+    }
+  };
 
   const fetchInitialData = async () => {
     const { data: authData } = await supabase.auth.getUser();
@@ -361,18 +384,16 @@ export default function BookEvent() {
           
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
             <div>
-              <label className="block text-[11px] font-extrabold text-slate-500 uppercase mb-1">Darajah</label>
-              <select value={darajah} onChange={e => setDarajah(e.target.value)} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold focus:ring-2 focus:ring-brand-maroon outline-none">
-                <option>1</option>
-                <option>2</option>
-                <option>3</option><option>4</option>
-                <option>5</option>
-                <option>6</option><option>7</option>
-                <option>8</option>
-                <option>9</option><option>10</option>
-                <option>11</option>
-                <option>Random</option>
-                <option>Faculty / Staff</option>
+              <label className="block text-[11px] font-extrabold text-slate-500 uppercase mb-1">Darajah / Class</label>
+              <select 
+                value={darajah} 
+                onChange={handleDarajahChange} 
+                className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold focus:ring-2 focus:ring-brand-maroon outline-none"
+              >
+                <option value="" disabled>Select Class</option>
+                {Object.keys(PRESET_CLASSES).map(className => (
+                  <option key={className} value={className}>{className}</option>
+                ))}
               </select>
             </div>
             

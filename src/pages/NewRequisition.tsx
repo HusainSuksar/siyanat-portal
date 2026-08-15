@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
 import { supabase, type InventoryItem } from '../lib/supabase';
-import { ShoppingBag, Send, PlusCircle, Trash2 } from 'lucide-react';
+import { ShoppingBag, Send, PlusCircle, Trash2, CheckCircle } from 'lucide-react';
 
 export default function NewRequisition() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [userRole, setUserRole] = useState('REQUESTER'); // NEW STATE
+  const [successBatch, setSuccessBatch] = useState<string | null>(null);
   
   // Form State
   const [location, setLocation] = useState('');
@@ -26,6 +28,14 @@ export default function NewRequisition() {
 
   const fetchCatalog = async () => {
     setLoading(true);
+    
+    // Get user role for stock visibility
+    const { data: authData } = await supabase.auth.getUser();
+    if (authData.user) {
+      const { data: profile } = await supabase.from('profiles').select('role').eq('id', authData.user.id).single();
+      if (profile) setUserRole(profile.role);
+    }
+
     const { data, error } = await supabase
       .from('inventory_items')
       .select('*')
@@ -121,7 +131,7 @@ export default function NewRequisition() {
         if (itemsError) throw itemsError;
       }
 
-      alert(`Requisition Submitted Successfully!\nBatch Reference: ${orderData.id}`);
+      setSuccessBatch(orderData.batch_id || orderData.id);
       
       // Reset Form
       setCart({});
@@ -200,15 +210,24 @@ export default function NewRequisition() {
               const available = Math.max(0, item.physical_stock - item.freezed_stock);
               const isOutOfStock = available <= 0;
               const currentQty = cart[item.id]?.qty || 0;
+              const canSeeStock = userRole === 'ADMIN' || userRole === 'SUPERVISOR'; // LOGIC CHECK
 
               return (
                 <div key={item.id} className="bg-slate-50 rounded-xl p-4 border border-slate-200 flex flex-col justify-between">
                   <div>
                     <div className="flex justify-between items-center mb-2">
                       <span className="text-[10px] font-bold text-slate-500 bg-white px-2 py-0.5 rounded border border-slate-200 uppercase">{item.unit}</span>
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${isOutOfStock ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
-                        {isOutOfStock ? 'Out of Stock' : `Avail: ${available}`}
-                      </span>
+                      
+                      {/* ROLE BASED STOCK VISIBILITY */}
+                      {canSeeStock ? (
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${isOutOfStock ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                          {isOutOfStock ? 'Out of Stock' : `Avail: ${available}`}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-700 uppercase">
+                          Catalog Item
+                        </span>
+                      )}
                     </div>
                     <h3 className="font-extrabold text-sm text-slate-800">{item.name}</h3>
                     <p className="text-[11px] text-slate-500">{item.category}</p>
@@ -218,8 +237,8 @@ export default function NewRequisition() {
                     <input 
                       type="number" 
                       min="0" 
-                      max={available}
-                      disabled={isOutOfStock}
+                      max={canSeeStock ? available : undefined} 
+                      disabled={canSeeStock && isOutOfStock}
                       value={currentQty}
                       onChange={(e) => updateCart(item, parseInt(e.target.value) || 0)}
                       className="w-16 px-2 py-1 border border-slate-300 rounded text-xs font-bold text-center disabled:opacity-50"
@@ -296,6 +315,30 @@ export default function NewRequisition() {
             >
               <span>{submitting ? 'Processing...' : 'Submit Batch'}</span>
               <Send className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+      {/* CREATIVE SUCCESS MODAL */}
+      {successBatch && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-white p-8 rounded-3xl shadow-2xl flex flex-col items-center max-w-sm w-full animate-in zoom-in-95 duration-300">
+            <div className="w-20 h-20 bg-emerald-100 text-emerald-500 rounded-full flex items-center justify-center mb-5 shadow-inner">
+              <CheckCircle className="w-10 h-10" />
+            </div>
+            <h3 className="text-2xl font-black text-slate-800 text-center mb-2">Submitted!</h3>
+            <p className="text-sm text-slate-500 text-center font-medium">
+              Your material requisition has been routed for approval.
+            </p>
+            <div className="mt-4 px-4 py-2 bg-slate-100 rounded-lg border border-slate-200">
+              <span className="text-xs font-bold text-slate-400 uppercase">Batch Ref: </span>
+              <span className="text-sm font-black text-brand-maroon">{successBatch}</span>
+            </div>
+            <button 
+              onClick={() => setSuccessBatch(null)} 
+              className="mt-8 w-full py-3.5 bg-slate-900 text-white font-bold rounded-xl hover:bg-black transition shadow-lg"
+            >
+              Continue
             </button>
           </div>
         </div>

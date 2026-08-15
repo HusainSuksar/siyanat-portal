@@ -17,6 +17,7 @@ export default function Dashboard() {
   const [activeTab, setActiveTab] = useState<'materials' | 'maintenance' | 'events' | 'fleet'>('materials');
   const [loading, setLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const [userRole, setUserRole] = useState<string>('REQUESTER');
   const [processingId, setProcessingId] = useState<string | null>(null);
   const navigate = useNavigate();
 
@@ -52,6 +53,7 @@ export default function Dashboard() {
         .single();
         
       const isAdmin = profile?.role === "ADMIN";
+      setUserRole(profile?.role || 'REQUESTER');
 
       // Build Queries
       let matQuery = supabase.from("work_orders").select("*, logs:work_order_logs(author_id)").order("created_at", { ascending: false }).limit(30);
@@ -175,9 +177,16 @@ export default function Dashboard() {
       {/* Welcome Banner */}
       <div className="bg-gradient-to-r from-brand-maroon to-brand-dark rounded-2xl p-6 text-white shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-extrabold text-brand-gold">
-            My Request Dashboard
-          </h2>
+          <div className="flex items-center gap-3">
+            <h2 className="text-2xl font-extrabold text-brand-gold">
+              My Request Dashboard
+            </h2>
+            {userRole !== 'REQUESTER' && (
+              <span className="px-3 py-1 bg-brand-gold/20 text-brand-gold text-[10px] font-black uppercase tracking-widest rounded-lg border border-brand-gold/50">
+                {userRole === 'ADMIN' ? 'TANZEEM HEAD / ADMIN' : userRole}
+              </span>
+            )}
+          </div>
           <p className="text-xs text-slate-200 mt-1">
             Track your materials, maintenance, events, and fleet requests in one place.
           </p>

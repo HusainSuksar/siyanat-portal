@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
-import { RefreshCw, MessageSquare, Truck, UserPlus, X, SplitSquareHorizontal, Archive, Trash2 } from 'lucide-react';
+import { RefreshCw, MessageSquare, Truck, UserPlus, X, SplitSquareHorizontal, Archive, Trash2,CheckCircle } from 'lucide-react';
 import BatchDetailsModal from '../components/BatchDetailsModal';
 
 export default function SiyanatOperations() {
@@ -8,6 +8,7 @@ export default function SiyanatOperations() {
   const [loading, setLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [processingId, setProcessingId] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
   
   // Material State
   const [batches, setBatches] = useState<any[]>([]);
@@ -129,7 +130,7 @@ export default function SiyanatOperations() {
         user_email: currentUser?.email || 'Admin'
       });
 
-      alert('Batch processed and stock frozen successfully!');
+      setSuccessMsg("Batch processed and stock frozen successfully!");
       setReviewModalOpen(false);
       fetchData();
     } catch (err: any) {
@@ -469,6 +470,26 @@ export default function SiyanatOperations() {
       {/* Chat Modal */}
       {activeBatch && currentUser && (
         <BatchDetailsModal batchId={activeBatch.batch_id} workOrderId={activeBatch.id} isOpen={isChatOpen} onClose={() => { setIsChatOpen(false); setActiveBatch(null); }} currentUser={currentUser} />
+      )}
+    {/* CREATIVE SUCCESS MODAL */}
+      {successMsg && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-white p-8 rounded-3xl shadow-2xl flex flex-col items-center max-w-sm w-full animate-in zoom-in-95 duration-300">
+            <div className="w-20 h-20 bg-emerald-100 text-emerald-500 rounded-full flex items-center justify-center mb-5 shadow-inner">
+              <CheckCircle className="w-10 h-10" />
+            </div>
+            <h3 className="text-2xl font-black text-slate-800 text-center mb-2">Success!</h3>
+            <p className="text-sm text-slate-500 text-center font-medium">
+              {successMsg}
+            </p>
+            <button 
+              onClick={() => setSuccessMsg(null)} 
+              className="mt-8 w-full py-3.5 bg-slate-900 text-white font-bold rounded-xl hover:bg-black transition shadow-lg"
+            >
+              Close
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );
