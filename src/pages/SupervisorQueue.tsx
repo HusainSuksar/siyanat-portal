@@ -13,17 +13,14 @@ export default function SupervisorQueue() {
     const { data: authData } = await supabase.auth.getUser();
     
     if (authData.user) {
-      // 1. FIX: Removed 'email' from the select statement to stop the 400 error
       const { data: profile } = await supabase
         .from('profiles')
         .select('role, zone')
         .eq('id', authData.user.id)
         .single();
       
-      // 2. FIX: Safely attach the email from the auth system instead
       setUserProfile({ ...profile, email: authData.user.email });
 
-      // Fetch pending complaints, joining with the photos and requester info
       let query = supabase
         .from('complaints')
         .select(`
@@ -34,9 +31,9 @@ export default function SupervisorQueue() {
         .eq('status', 'Pending Approval')
         .order('created_at', { ascending: true });
 
-      // If they are a supervisor, only show complaints for their specific zone
+      // FIX: Use .ilike for more robust string matching, handling potential spaces/case issues
       if (profile?.role === 'SUPERVISOR' && profile?.zone) {
-        query = query.eq('zone', profile.zone);
+        query = query.ilike('zone', `%${profile.zone.trim()}%`);
       }
 
       const { data, error } = await query;

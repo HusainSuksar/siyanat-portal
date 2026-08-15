@@ -33,15 +33,19 @@ export default function TeamManagement() {
   };
 
   // --- ADD NEW MEMBER LOGIC ---
+  // --- ADD NEW MEMBER LOGIC ---
   const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
     setProcessingId('new-user');
 
+    const cleanEmail = newUser.email.trim().toLowerCase();
+    const cleanPassword = '786110';
+
     try {
-      // 1. Create the user in Supabase Auth with the requested default password
+      // 1. Create the user
       const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: newUser.email,
-        password: '786110', // Default password per instruction
+        email: cleanEmail,
+        password: cleanPassword,
         options: {
           data: {
             full_name: newUser.full_name,
@@ -51,47 +55,44 @@ export default function TeamManagement() {
 
       if (authError) throw authError;
 
-      // 2. Wait a moment for Supabase triggers to create the profile row, then update it
       if (authData.user) {
         const payload = {
+          id: authData.user.id, // Explicitly pass ID for upsert
           full_name: newUser.full_name,
           department: newUser.department,
-          its_number: newUser.its_number,
+          its_number: newUser.its_number || null, // Handle empty ITS
           role: newUser.role,
           zone: newUser.role === 'SUPERVISOR' ? newUser.zone : null,
           trade: newUser.role === 'TECHNICIAN' ? newUser.trade : null,
         };
 
-        // Retry logic to ensure the trigger has finished
-        let attempts = 0;
-        let updateSuccess = false;
-        while (attempts < 3 && !updateSuccess) {
-          const { error: updateError } = await supabase.from('profiles').update(payload).eq('id', authData.user.id);
-          if (!updateError) {
-            updateSuccess = true;
-          } else {
-            attempts++;
-            await new Promise(res => setTimeout(res, 500)); // wait half a second
-          }
+        // 2. FORCE UPSERT: This guarantees the profile row is created/updated immediately
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .upsert(payload);
+
+        if (profileError) {
+             console.error("Profile Upsert Error:", profileError);
+             throw new Error("Account created, but profile data failed to save.");
         }
 
-        if (!updateSuccess) throw new Error("Could not apply profile data after account creation.");
-
-        // 3. Log the action
+        // 3. Log to audit history
         const { data: adminData } = await supabase.auth.getUser();
         await supabase.from('system_logs').insert({
           action_type: 'USER_CREATED',
-          description: `Admin created new team member: ${newUser.full_name} (${newUser.role}).`,
-          user_email: adminData.user?.email || 'System Admin'
+          description: `Admin registered new user: ${newUser.full_name} (${cleanEmail}) as ${newUser.role}.`,
+          user_email: adminData?.user?.email || 'System Admin'
         });
 
-        alert(`Team member added successfully!\n\nEmail: ${newUser.email}\nDefault Password: 786110`);
+        alert(`User Registered Successfully!\n\nEmail: ${cleanEmail}\nPassword: ${cleanPassword}`);
         setAddModalOpen(false);
         setNewUser({ full_name: '', email: '', department: '', its_number: '', role: 'REQUESTER', zone: '', trade: '' });
+        
+        // Refresh immediately
         fetchTeam();
       }
     } catch (err: any) {
-      alert("Error adding user: " + err.message);
+      alert("Registration Error: " + err.message);
     } finally {
       setProcessingId(null);
     }
