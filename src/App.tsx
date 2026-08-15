@@ -410,7 +410,7 @@ export default function App() {
       .from("profiles")
       .select("role")
       .eq("id", userId)
-      .single();
+      .maybeSingle();
     if (data && !error) setUserRole(data.role);
     setLoading(false);
   };
