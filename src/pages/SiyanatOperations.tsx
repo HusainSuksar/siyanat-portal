@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { RefreshCw, MessageSquare, Truck, UserPlus, X, SplitSquareHorizontal, Archive, Trash2 } from 'lucide-react';
 import BatchDetailsModal from '../components/BatchDetailsModal';
@@ -26,37 +26,60 @@ export default function SiyanatOperations() {
   const [selectedComplaint, setSelectedComplaint] = useState<any>(null);
   const [selectedTechId, setSelectedTechId] = useState('');
 
-  const fetchData = async () => {
+  // UseCallback ensures this function is perfectly stable for useEffect
+  const fetchData = useCallback(async () => {
     setLoading(true);
     
-    // Fetch Materials
-    const { data: batchData } = await supabase
-      .from('work_orders')
-      .select(`*, logs:work_order_logs(author_id), items:work_order_items(id, requested_qty, item_type, custom_item_name, status, eta_days, inventory_id, inventory:inventory_items(id, name, physical_stock, freezed_stock))`)
-      .order('created_at', { ascending: false });
+    try {
+      // 1. Fetch Materials (Force fresh read)
+      const { data: batchData, error: batchError } = await supabase
+        .from('work_orders')
+        .select(`*, logs:work_order_logs(author_id), items:work_order_items(id, requested_qty, item_type, custom_item_name, status, eta_days, inventory_id, inventory:inventory_items(id, name, physical_stock, freezed_stock))`)
+        .order('created_at', { ascending: false });
 
-    if (batchData) setBatches(batchData);
+      if (batchError) throw batchError;
+      if (batchData) setBatches(batchData);
 
-    // Fetch Maintenance (Expanded to include 'Verified' and 'Complaint Reopened')
-    const { data: complaintData } = await supabase
-      .from('complaints')
-      .select(`*, requester:profiles(full_name, department), assignments:technician_assignments(status, technician:profiles(full_name, trade))`)
-      .in('status', ['Approved by Supervisor', 'Assigned', 'Waiting for Material', 'Completed', 'Verified', 'Complaint Reopened'])
-      .order('created_at', { ascending: false });
+      // 2. Fetch Maintenance (Force fresh read, explicit status array)
+      const { data: complaintData, error: complaintError } = await supabase
+        .from('complaints')
+        .select(`
+          *, 
+          requester:profiles(full_name, department), 
+          assignments:technician_assignments(status, technician:profiles(full_name, trade))
+        `)
+        .in('status', [
+          'Approved by Supervisor', 
+          'Assigned', 
+          'Waiting for Material', 
+          'Completed', 
+          'Verified', 
+          'Complaint Reopened'
+        ])
+        .order('created_at', { ascending: false });
 
-    if (complaintData) setComplaints(complaintData);
+      if (complaintError) throw complaintError;
+      if (complaintData) setComplaints(complaintData);
 
-    // Fetch Technicians
-    const { data: techData } = await supabase.from('profiles').select('id, full_name, trade').eq('role', 'TECHNICIAN');
-    if (techData) setTechnicians(techData);
+      // 3. Fetch Technicians
+      const { data: techData } = await supabase
+        .from('profiles')
+        .select('id, full_name, trade')
+        .eq('role', 'TECHNICIAN');
+        
+      if (techData) setTechnicians(techData);
 
-    setLoading(false);
-  };
+    } catch (err: any) {
+      console.error("Error fetching Siyanat Operations data:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     fetchData();
     supabase.auth.getUser().then(({ data }) => setCurrentUser(data.user));
-  }, []);
+  }, [fetchData, activeTab]); // Re-fetch whenever the tab changes to guarantee fresh data
 
   // --- MATERIAL LOGIC ---
   const openReviewModal = (batch: any) => {
@@ -153,22 +176,29 @@ export default function SiyanatOperations() {
     if (!selectedTechId || !selectedComplaint) return;
     setProcessingId(selectedComplaint.id);
 
-    await supabase.from('technician_assignments').insert({
-      complaint_id: selectedComplaint.id,
-      technician_id: selectedTechId,
-      assigned_by: currentUser?.id
-    });
-    await supabase.from('complaints').update({ status: 'Assigned' }).eq('id', selectedComplaint.id);
-    await supabase.from('system_logs').insert({
-      action_type: 'TECHNICIAN_ASSIGNED',
-      description: `Assigned complaint ${selectedComplaint.complaint_id} to technician.`,
-      user_email: currentUser?.email || 'Admin'
-    });
+    try {
+      await supabase.from('technician_assignments').insert({
+        complaint_id: selectedComplaint.id,
+        technician_id: selectedTechId,
+        assigned_by: currentUser?.id
+      });
+      
+      await supabase.from('complaints').update({ status: 'Assigned' }).eq('id', selectedComplaint.id);
+      
+      await supabase.from('system_logs').insert({
+        action_type: 'TECHNICIAN_ASSIGNED',
+        description: `Assigned complaint ${selectedComplaint.complaint_id} to technician.`,
+        user_email: currentUser?.email || 'Admin'
+      });
 
-    setAssignModalOpen(false);
-    setSelectedTechId('');
-    fetchData();
-    setProcessingId(null);
+      setAssignModalOpen(false);
+      setSelectedTechId('');
+      fetchData();
+    } catch(err: any) {
+       alert("Error assigning technician: " + err.message);
+    } finally {
+      setProcessingId(null);
+    }
   };
 
   // 🟢 NEW: Close Verified Complaint
