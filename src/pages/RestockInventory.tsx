@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase, type InventoryItem } from '../lib/supabase';
-import { Warehouse, Plus, Trash2, Save, Search, PackageSearch, Edit, X, CheckCircle } from 'lucide-react';
+import { Warehouse, Plus, Trash2, Save, Search, PackageSearch, Edit, X, CheckCircle, Hash } from 'lucide-react';
 
 type RestockRow = {
   id: string;
@@ -93,13 +93,12 @@ export default function RestockInventory() {
         user_email: authData.user?.email || 'System Admin'
       });
 
-      // 2. 🟢 AUTO-FULFILLMENT ENGINE (The Missing Link)
-      // Check for any pending items that can now be fulfilled with the newly added stock
+      // 2. AUTO-FULFILLMENT ENGINE
       const { data: pendingItems } = await supabase
         .from('work_order_items')
         .select('id, inventory_id, requested_qty, work_order_id, item_type')
         .in('status', ['Pending', 'Ordered'])
-        .order('id', { ascending: true }); // First-Come, First-Served proxy
+        .order('id', { ascending: true });
 
       if (pendingItems) {
         let autoFulfilledCount = 0;
@@ -110,7 +109,6 @@ export default function RestockInventory() {
           if (inv) {
             const available = inv.physical_stock - inv.freezed_stock;
             if (available >= pItem.requested_qty) {
-              // Fulfill the item!
               await supabase.from('work_order_items').update({ status: 'Available' }).eq('id', pItem.id);
               await supabase.from('inventory_items').update({ freezed_stock: inv.freezed_stock + pItem.requested_qty }).eq('id', pItem.inventory_id);
               await supabase.from('work_orders').update({ dispatch_status: 'Pending' }).eq('id', pItem.work_order_id);
@@ -192,186 +190,232 @@ export default function RestockInventory() {
   return (
     <div className="space-y-6 pb-24">
       
-      {/* --- MASTER LIVE INVENTORY TABLE --- */}
+      {/* --- MASTER LIVE INVENTORY (Mobile-Friendly Cards) --- */}
       <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 space-y-4 max-w-5xl mx-auto">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b pb-3">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b pb-4">
           <div className="flex items-center space-x-2">
             <PackageSearch className="w-5 h-5 text-brand-maroon" />
             <h2 className="font-extrabold text-sm uppercase text-slate-800">Master Live Catalog</h2>
           </div>
-          <div className="relative w-full sm:w-64">
+          <div className="relative w-full md:w-72">
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
             <input 
               type="text" 
               placeholder="Search items or categories..." 
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs font-semibold focus:ring-2 focus:ring-brand-maroon outline-none"
+              className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-brand-maroon outline-none transition"
             />
           </div>
         </div>
 
-        <div className="overflow-x-auto max-h-[400px] overflow-y-auto rounded-lg border border-slate-200">
-          <table className="w-full text-left text-xs border-collapse relative">
-            <thead className="bg-slate-100 text-slate-700 uppercase font-bold sticky top-0 shadow-sm">
-              <tr>
-                <th className="p-3 border-b border-slate-200">Item Name & ID</th>
-                <th className="p-3 border-b border-slate-200">Category</th>
-                <th className="p-3 border-b border-slate-200 text-center">Stock Info</th>
-                <th className="p-3 border-b border-slate-200 text-right">Admin Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {loading ? (
-                <tr><td colSpan={4} className="p-6 text-center text-slate-500 font-medium">Fetching warehouse data...</td></tr>
-              ) : filteredCatalog.length === 0 ? (
-                <tr><td colSpan={4} className="p-6 text-center text-slate-500 font-medium italic">No items match your search.</td></tr>
-              ) : (
-                filteredCatalog.map(item => {
-                  const isLowStock = (item.physical_stock - item.freezed_stock) <= 5;
-                  return (
-                    <tr key={item.id} className="hover:bg-slate-50 transition">
-                      <td className="p-3">
-                        <div className="font-bold text-slate-800">{item.name}</div>
-                        <div className="text-[9px] text-slate-400 font-mono mt-0.5">{item.item_id}</div>
-                      </td>
-                      <td className="p-3 text-slate-500 font-medium">{item.category}</td>
-                      <td className="p-3">
-                        <div className="flex flex-col items-center gap-1">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold ${isLowStock ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-800'}`}>
-                            Avail: {item.physical_stock - item.freezed_stock} {item.unit}
-                          </span>
-                          <span className="text-[9px] text-slate-400 font-bold uppercase">
-                            (Physical: {item.physical_stock} | Frozen: {item.freezed_stock})
-                          </span>
-                        </div>
-                      </td>
-                      <td className="p-3 text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          <button onClick={() => { setEditingItem(item); setEditModalOpen(true); }} disabled={processingId === item.id} className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition disabled:opacity-50">
-                            <Edit className="w-4 h-4" />
-                          </button>
-                          <button onClick={() => handleDeleteItem(item.id, item.name)} disabled={processingId === item.id} className="p-1.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg transition disabled:opacity-50">
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
+        <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
+          {loading ? (
+            <div className="p-6 text-center text-slate-500 font-medium animate-pulse bg-slate-50 rounded-xl border border-slate-100">Fetching warehouse data...</div>
+          ) : filteredCatalog.length === 0 ? (
+            <div className="p-6 text-center text-slate-500 font-medium italic bg-slate-50 rounded-xl border border-slate-100">No items match your search.</div>
+          ) : (
+            filteredCatalog.map(item => {
+              const isLowStock = (item.physical_stock - item.freezed_stock) <= 5;
+              return (
+                <div key={item.id} className="bg-white rounded-xl p-4 border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4 transition hover:border-slate-300">
+                  
+                  <div className="flex-1 space-y-2">
+                    <div>
+                      <h3 className="font-bold text-slate-800 text-sm">{item.name}</h3>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="text-[10px] text-slate-500 font-mono bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">{item.item_id}</span>
+                        <span className="text-[10px] font-semibold text-slate-500 line-clamp-1">{item.category}</span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 bg-slate-50 p-2.5 rounded-lg border border-slate-100">
+                      <div>
+                        <div className="text-[9px] text-slate-400 uppercase font-black tracking-wide mb-1">Available</div>
+                        <span className={`px-2 py-0.5 rounded text-[11px] font-extrabold shadow-sm ${isLowStock ? 'bg-red-100 text-red-700 border border-red-200' : 'bg-emerald-100 text-emerald-800 border border-emerald-200'}`}>
+                          {item.physical_stock - item.freezed_stock} {item.unit}
+                        </span>
+                      </div>
+                      <div>
+                        <div className="text-[9px] text-slate-400 uppercase font-black tracking-wide mb-1">Breakdown</div>
+                        <span className="text-[10px] text-slate-600 font-bold">
+                          Phy: {item.physical_stock} | Frz: {item.freezed_stock}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-row md:flex-col gap-2 w-full md:w-auto border-t md:border-t-0 border-slate-100 pt-3 md:pt-0">
+                    <button 
+                      onClick={() => { setEditingItem(item); setEditModalOpen(true); }} 
+                      disabled={processingId === item.id} 
+                      className="flex-1 md:w-full py-2.5 md:py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition disabled:opacity-50 flex items-center justify-center gap-1.5"
+                    >
+                      <Edit className="w-4 h-4 md:w-3.5 md:h-3.5" /> <span className="md:hidden text-xs font-bold">Edit</span>
+                    </button>
+                    <button 
+                      onClick={() => handleDeleteItem(item.id, item.name)} 
+                      disabled={processingId === item.id} 
+                      className="flex-1 md:w-full py-2.5 md:py-2 px-3 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl transition disabled:opacity-50 flex items-center justify-center gap-1.5"
+                    >
+                      <Trash2 className="w-4 h-4 md:w-3.5 md:h-3.5" /> <span className="md:hidden text-xs font-bold">Delete</span>
+                    </button>
+                  </div>
+                  
+                </div>
+              );
+            })
+          )}
         </div>
       </div>
 
-      {/* --- BULK RESTOCK GRID --- */}
+      {/* --- BULK RESTOCK GRID (Mobile-Friendly Cards) --- */}
       <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 space-y-4 max-w-5xl mx-auto">
-        <div className="flex justify-between items-center border-b pb-3">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b pb-4">
           <div className="flex items-center space-x-2">
             <Warehouse className="w-5 h-5 text-brand-maroon" />
-            <h2 className="font-extrabold text-sm uppercase text-slate-800">Process Incoming Shipments (Restock)</h2>
+            <h2 className="font-extrabold text-sm uppercase text-slate-800">Incoming Shipments (Restock)</h2>
           </div>
-          <button onClick={() => addRow()} className="px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-lg shadow-sm transition flex items-center space-x-1">
-            <Plus className="w-3.5 h-3.5" /><span>Add Another Row</span>
+          <button 
+            onClick={() => addRow()} 
+            className="w-full sm:w-auto px-4 py-2.5 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl shadow-sm transition flex justify-center items-center space-x-2"
+          >
+            <Plus className="w-4 h-4" /><span>Add Row</span>
           </button>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse">
-            <thead className="bg-slate-100 text-slate-700 uppercase font-bold border-b border-slate-200">
-              <tr>
-                <th className="p-3 w-40">Item Source</th>
-                <th className="p-3">Item Details / Name</th>
-                <th className="p-3 w-48">Category</th>
-                <th className="p-3 w-24 text-center">Qty</th>
-                <th className="p-3 w-20 text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200">
-              {loading && catalog.length === 0 ? (
-                <tr><td colSpan={5} className="p-6 text-center text-slate-500 font-medium">Loading catalog...</td></tr>
-              ) : rows.length === 0 ? (
-                <tr><td colSpan={5} className="p-6 text-center text-slate-500 font-medium italic">Click "Add Another Row" to begin restocking.</td></tr>
-              ) : (
-                rows.map((row) => (
-                  <tr key={row.id} className="hover:bg-slate-50">
-                    <td className="p-2 align-top">
-                      <select value={row.type} onChange={(e) => updateRow(row.id, 'type', e.target.value)} className="w-full p-2 bg-white border border-slate-300 rounded text-xs font-bold focus:ring-2 focus:ring-brand-maroon outline-none">
-                        <option value="EXISTING">Existing Item</option>
-                        <option value="NEW">New Unlisted Item</option>
+        <div className="space-y-4">
+          {loading && catalog.length === 0 ? (
+            <div className="p-6 text-center text-slate-500 font-medium bg-slate-50 rounded-xl border border-slate-100">Loading catalog...</div>
+          ) : rows.length === 0 ? (
+            <div className="p-6 text-center text-slate-500 font-medium italic bg-slate-50 rounded-xl border border-slate-100">Click "Add Row" to begin restocking.</div>
+          ) : (
+            rows.map((row, index) => (
+              <div key={row.id} className="relative bg-white rounded-2xl p-4 shadow-sm border border-slate-200 flex flex-col gap-4 animate-in fade-in zoom-in-95 duration-200">
+                
+                {/* Remove Button for Mobile/Desktop */}
+                <button 
+                  onClick={() => removeRow(row.id)} 
+                  className="absolute top-3 right-3 p-2 text-red-500 hover:bg-red-100 rounded-lg transition z-10" 
+                  title="Remove Row"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+                
+                <div className="font-black text-slate-300 text-xs uppercase flex items-center gap-1"><Hash className="w-3 h-3"/> Row {index + 1}</div>
+
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+                  {/* Item Source */}
+                  <div className="md:col-span-3">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Item Source</label>
+                    <select 
+                      value={row.type} 
+                      onChange={(e) => updateRow(row.id, 'type', e.target.value)} 
+                      className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold focus:ring-2 focus:ring-brand-maroon outline-none transition"
+                    >
+                      <option value="EXISTING">Existing Catalog Item</option>
+                      <option value="NEW">New Unlisted Item</option>
+                    </select>
+                  </div>
+                  
+                  {/* Item Details */}
+                  <div className="md:col-span-4">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Item Details</label>
+                    {row.type === 'EXISTING' ? (
+                      <select 
+                        value={row.itemId} 
+                        onChange={(e) => updateRow(row.id, 'itemId', e.target.value)} 
+                        className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-brand-maroon outline-none transition"
+                      >
+                        {catalog.map(item => <option key={item.id} value={item.id}>{item.name} (Avail: {item.physical_stock - item.freezed_stock})</option>)}
                       </select>
-                    </td>
-                    <td className="p-2 align-top">
-                      {row.type === 'EXISTING' ? (
-                        <select value={row.itemId} onChange={(e) => updateRow(row.id, 'itemId', e.target.value)} className="w-full p-2 bg-white border border-slate-300 rounded text-xs font-medium focus:ring-2 focus:ring-brand-maroon outline-none">
-                          {catalog.map(item => <option key={item.id} value={item.id}>{item.name} (Avail: {item.physical_stock - item.freezed_stock})</option>)}
-                        </select>
-                      ) : (
-                        <input type="text" placeholder="e.g. PVC Pipe 1-inch" value={row.name} onChange={(e) => updateRow(row.id, 'name', e.target.value)} className="w-full p-2 bg-white border border-slate-300 rounded text-xs font-medium focus:ring-2 focus:ring-brand-maroon outline-none" />
-                      )}
-                    </td>
-                    <td className="p-2 align-top">
-                      <select value={row.category} onChange={(e) => updateRow(row.id, 'category', e.target.value)} className="w-full p-2 bg-white border border-slate-300 rounded text-xs font-medium focus:ring-2 focus:ring-brand-maroon outline-none">
-                        {CATEGORIES.map(cat => <option key={cat} value={cat}>{cat}</option>)}
-                      </select>
-                    </td>
-                    <td className="p-2 align-top">
-                      <input type="number" min="1" value={row.qty} onChange={(e) => updateRow(row.id, 'qty', parseInt(e.target.value) || 0)} className="w-full p-2 bg-white border border-slate-300 rounded text-xs font-bold text-center focus:ring-2 focus:ring-brand-maroon outline-none" />
-                    </td>
-                    <td className="p-2 align-top text-right">
-                      <button onClick={() => removeRow(row.id)} className="p-2 text-red-500 hover:bg-red-50 hover:text-red-700 rounded transition" title="Remove Row"><Trash2 className="w-4 h-4" /></button>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                    ) : (
+                      <input 
+                        type="text" 
+                        placeholder="e.g. PVC Pipe 1-inch" 
+                        value={row.name} 
+                        onChange={(e) => updateRow(row.id, 'name', e.target.value)} 
+                        className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-brand-maroon outline-none transition" 
+                      />
+                    )}
+                  </div>
+
+                  {/* Category */}
+                  <div className="md:col-span-3">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Category</label>
+                    <select 
+                      value={row.category} 
+                      onChange={(e) => updateRow(row.id, 'category', e.target.value)} 
+                      className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-brand-maroon outline-none transition"
+                    >
+                      {CATEGORIES.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                    </select>
+                  </div>
+
+                  {/* Qty */}
+                  <div className="md:col-span-2">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Quantity</label>
+                    <input 
+                      type="number" 
+                      min="1" 
+                      value={row.qty} 
+                      onChange={(e) => updateRow(row.id, 'qty', parseInt(e.target.value) || 0)} 
+                      className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-sm font-black text-center focus:ring-2 focus:ring-brand-maroon outline-none transition" 
+                    />
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
         </div>
 
-        <button onClick={submitBulkRestock} disabled={submitting || rows.length === 0} className="w-full py-3 mt-4 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl shadow-lg transition flex justify-center items-center space-x-2 disabled:opacity-70">
-          {submitting ? <span>Processing Updates & Fulfilling RTO...</span> : <><Save className="w-4 h-4" /><span>Process Restock & Auto-Fulfill Pended</span></>}
+        <button 
+          onClick={submitBulkRestock} 
+          disabled={submitting || rows.length === 0} 
+          className="w-full py-4 mt-6 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs md:text-sm uppercase tracking-wider rounded-xl shadow-lg transition flex justify-center items-center space-x-2 disabled:opacity-70"
+        >
+          {submitting ? <span>Processing Updates...</span> : <><Save className="w-5 h-5" /><span>Process Restock & Auto-Fulfill Pended</span></>}
         </button>
       </div>
 
       {/* --- GOD MODE: EDIT ITEM MODAL --- */}
       {editModalOpen && editingItem && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex justify-center items-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden">
-            <div className="bg-slate-800 p-4 flex justify-between items-center text-white">
-              <h3 className="font-extrabold text-sm uppercase">Edit Master Catalog</h3>
-              <button onClick={() => setEditModalOpen(false)}><X className="w-5 h-5 hover:text-red-300" /></button>
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex justify-center items-end sm:items-center p-4">
+          <div className="bg-white rounded-3xl w-full max-w-sm shadow-2xl overflow-hidden animate-in slide-in-from-bottom sm:slide-in-from-bottom-0 sm:zoom-in-95 duration-300">
+            <div className="bg-slate-800 p-5 flex justify-between items-center text-white">
+              <h3 className="font-extrabold text-sm uppercase">Edit Catalog Item</h3>
+              <button onClick={() => setEditModalOpen(false)} className="p-1 hover:bg-white/20 rounded-lg transition"><X className="w-5 h-5 hover:text-red-300" /></button>
             </div>
             
-            <form onSubmit={handleUpdateItem} className="p-5 space-y-4">
+            <form onSubmit={handleUpdateItem} className="p-6 space-y-5">
               <div>
-                <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">Item Name</label>
-                <input required type="text" value={editingItem.name} onChange={e => setEditingItem({...editingItem, name: e.target.value})} className="w-full p-2 border border-slate-300 rounded-lg text-sm font-semibold outline-none focus:ring-2 focus:ring-brand-maroon"/>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Item Name</label>
+                <input required type="text" value={editingItem.name} onChange={e => setEditingItem({...editingItem, name: e.target.value})} className="w-full p-3 border border-slate-300 rounded-xl text-sm font-semibold outline-none focus:ring-2 focus:ring-brand-maroon transition"/>
               </div>
 
               <div>
-                <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">Category</label>
-                <select required value={editingItem.category} onChange={e => setEditingItem({...editingItem, category: e.target.value})} className="w-full p-2 border border-slate-300 rounded-lg text-sm font-semibold outline-none focus:ring-2 focus:ring-brand-maroon">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Category</label>
+                <select required value={editingItem.category} onChange={e => setEditingItem({...editingItem, category: e.target.value})} className="w-full p-3 border border-slate-300 rounded-xl text-sm font-semibold outline-none focus:ring-2 focus:ring-brand-maroon transition">
                   {CATEGORIES.map(cat => <option key={cat} value={cat}>{cat}</option>)}
                 </select>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-2">
-                  <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">Measurement Unit</label>
-                  <input required type="text" value={editingItem.unit} onChange={e => setEditingItem({...editingItem, unit: e.target.value})} placeholder="e.g. Pcs, Box, Kg" className="w-full p-2 border border-slate-300 rounded-lg text-sm font-semibold outline-none focus:ring-2 focus:ring-brand-maroon"/>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Measurement Unit</label>
+                  <input required type="text" value={editingItem.unit} onChange={e => setEditingItem({...editingItem, unit: e.target.value})} placeholder="e.g. Pcs, Box, Kg" className="w-full p-3 border border-slate-300 rounded-xl text-sm font-semibold outline-none focus:ring-2 focus:ring-brand-maroon transition"/>
                 </div>
                 <div>
-                  <label className="block text-[11px] font-bold text-emerald-700 uppercase mb-1">Physical Stock</label>
-                  <input required type="number" min="0" value={editingItem.physical_stock} onChange={e => setEditingItem({...editingItem, physical_stock: parseInt(e.target.value) || 0})} className="w-full p-2 border border-emerald-300 bg-emerald-50 rounded-lg text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500"/>
+                  <label className="block text-[10px] font-bold text-emerald-700 uppercase mb-1.5">Physical Stock</label>
+                  <input required type="number" min="0" value={editingItem.physical_stock} onChange={e => setEditingItem({...editingItem, physical_stock: parseInt(e.target.value) || 0})} className="w-full p-3 border border-emerald-300 bg-emerald-50 rounded-xl text-sm font-black text-center outline-none focus:ring-2 focus:ring-emerald-500 transition"/>
                 </div>
                 <div>
-                  <label className="block text-[11px] font-bold text-indigo-700 uppercase mb-1">Frozen Stock</label>
-                  <input required type="number" min="0" value={editingItem.freezed_stock} onChange={e => setEditingItem({...editingItem, freezed_stock: parseInt(e.target.value) || 0})} className="w-full p-2 border border-indigo-300 bg-indigo-50 rounded-lg text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500"/>
+                  <label className="block text-[10px] font-bold text-indigo-700 uppercase mb-1.5">Frozen Stock</label>
+                  <input required type="number" min="0" value={editingItem.freezed_stock} onChange={e => setEditingItem({...editingItem, freezed_stock: parseInt(e.target.value) || 0})} className="w-full p-3 border border-indigo-300 bg-indigo-50 rounded-xl text-sm font-black text-center outline-none focus:ring-2 focus:ring-indigo-500 transition"/>
                 </div>
               </div>
 
-              <button type="submit" disabled={processingId === editingItem.id} className="w-full py-3 mt-4 bg-slate-900 hover:bg-black text-white font-extrabold text-xs uppercase rounded-xl shadow-md transition disabled:opacity-50 flex items-center justify-center gap-2">
+              <button type="submit" disabled={processingId === editingItem.id} className="w-full py-3.5 mt-2 bg-slate-900 hover:bg-black text-white font-extrabold text-xs uppercase tracking-wide rounded-xl shadow-lg transition disabled:opacity-50 flex items-center justify-center gap-2">
                 <CheckCircle className="w-4 h-4" /> Force Update Item
               </button>
             </form>
