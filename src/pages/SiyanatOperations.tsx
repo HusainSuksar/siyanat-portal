@@ -40,13 +40,14 @@ export default function SiyanatOperations() {
       if (batchError) throw batchError;
       if (batchData) setBatches(batchData);
 
-      // 2. Fetch Maintenance (Force fresh read, explicit status array)
+      // 2. Fetch Maintenance
+      // FIX: Added the explicit foreign key reference '!technician_assignments_technician_id_fkey'
       const { data: complaintData, error: complaintError } = await supabase
         .from('complaints')
         .select(`
           *, 
           requester:profiles(full_name, department), 
-          assignments:technician_assignments(status, technician:profiles(full_name, trade))
+          assignments:technician_assignments(status, technician:profiles!technician_assignments_technician_id_fkey(full_name, trade))
         `)
         .in('status', [
           'Approved by Supervisor', 
@@ -79,7 +80,7 @@ export default function SiyanatOperations() {
   useEffect(() => {
     fetchData();
     supabase.auth.getUser().then(({ data }) => setCurrentUser(data.user));
-  }, [fetchData, activeTab]); // Re-fetch whenever the tab changes to guarantee fresh data
+  }, [fetchData, activeTab]); 
 
   // --- MATERIAL LOGIC ---
   const openReviewModal = (batch: any) => {
@@ -342,7 +343,7 @@ export default function SiyanatOperations() {
                     <td className="p-3">
                       <div className="flex flex-col gap-1 items-start">
                         <span className={`px-2 py-0.5 text-slate-800 rounded font-bold text-[10px] ${c.status === 'Verified' ? 'bg-emerald-200 text-emerald-900' : 'bg-slate-200'}`}>{c.status}</span>
-                        {isAssigned && <span className="text-[9px] font-bold text-indigo-600 uppercase">Tech: {c.assignments[0].technician.full_name}</span>}
+                        {isAssigned && <span className="text-[9px] font-bold text-indigo-600 uppercase">Tech: {c.assignments[0].technician?.full_name}</span>}
                       </div>
                     </td>
                     <td className="p-3 text-right">
