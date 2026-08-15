@@ -178,7 +178,7 @@ const DesktopNavigation = ({ userRole }: { userRole: string | null }) => {
               className={getTabClass("/siyanat-operations")}
             >
               <Truck className="w-4 h-4" />
-              <span>Queue</span>
+              <span>Siyanat Operations</span>
             </Link>
             <Link to="/restock" className={getTabClass("/restock")}>
               <Warehouse className="w-4 h-4" />
