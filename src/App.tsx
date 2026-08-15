@@ -46,6 +46,8 @@ import BookEvent from "./pages/BookEvent";
 import BookVehicle from "./pages/BookVehicle";
 import TanzeemCommandCenter from "./pages/TanzeemCommandCenter";
 import RequestToOrder from "./pages/RequestToOrder";
+import NotificationBell from './components/NotificationBell';
+import InstallAppButton from './components/InstallAppButton';
 
 // --- NOTIFICATION MANAGER ---
 const NotificationManager = ({
@@ -364,22 +366,27 @@ const PortalLayout = ({
             </div>
           </div>
 
-          {/* Desktop Logout Button */}
-          <button
-            onClick={handleLogout}
-            className="hidden md:flex items-center space-x-1 px-3 py-1.5 bg-red-900/50 hover:bg-red-800 text-xs font-semibold rounded-lg border border-red-400/30 transition"
-          >
-            <LogOut className="w-4 h-4" />
-            <span>Logout</span>
-          </button>
+          <div className="flex items-center gap-2 md:gap-4">
+            {/* NEW IN-APP NOTIFICATION BELL */}
+            <NotificationBell />
 
-          {/* Mobile Hamburger Button */}
-          <button
-            onClick={() => setIsMobileMenuOpen(true)}
-            className="md:hidden p-2 bg-brand-dark rounded-lg"
-          >
-            <Menu className="w-6 h-6 text-brand-gold" />
-          </button>
+            {/* Desktop Logout Button */}
+            <button
+              onClick={handleLogout}
+              className="hidden md:flex items-center space-x-1 px-3 py-1.5 bg-red-900/50 hover:bg-red-800 text-xs font-semibold rounded-lg border border-red-400/30 transition"
+            >
+              <LogOut className="w-4 h-4" />
+              <span>Logout</span>
+            </button>
+
+            {/* Mobile Hamburger Button */}
+            <button
+              onClick={() => setIsMobileMenuOpen(true)}
+              className="md:hidden p-2 bg-brand-dark rounded-lg"
+            >
+              <Menu className="w-6 h-6 text-brand-gold" />
+            </button>
+          </div>
         </div>
       </header>
 
@@ -392,8 +399,13 @@ const PortalLayout = ({
         handleLogout={handleLogout}
       />
 
-      <main className="max-w-7xl mx-auto px-4 py-6 flex-grow w-full">
+      <main className="max-w-7xl mx-auto px-4 py-6 flex-grow w-full relative">
         {children}
+        
+        {/* NEW FLOATING INSTALL BUTTON */}
+        <div className="fixed bottom-6 right-6 z-[45]">
+          <InstallAppButton />
+        </div>
       </main>
     </div>
   );
