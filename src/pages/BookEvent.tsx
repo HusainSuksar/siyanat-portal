@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { Calendar, Users, MonitorSpeaker, Send, Clock, PackageSearch, PlusCircle, Trash2, Edit, XCircle, ShieldAlert, ListPlus, MapPin } from 'lucide-react';
+import { Calendar, Users, MonitorSpeaker, Send, Clock, PackageSearch, PlusCircle, Trash2, Edit, XCircle, ShieldAlert, ListPlus, MapPin, Lock, Car } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
-const PERIODS = [
+const BETWEEN_CLASS_PERIODS = [
   { id: 'P1', time: '08:15 - 09:00' },
   { id: 'P2', time: '09:01 - 09:35' },
   { id: 'P3', time: '09:36 - 10:10' },
@@ -12,19 +13,22 @@ const PERIODS = [
   { id: 'P7', time: '12:11 - 12:45' },
   { id: 'P8', time: '12:46 - 13:20' },
   { id: 'P9', time: '14:20 - 15:00' },
-  { id: 'P10', time: '15:01 - 15:45' },
-  { id: 'P11', time: '15:46 - 16:30' },
-  { id: 'P12', time: '16:31 - 17:00' },
-  { id: 'P13', time: '17:01 - 17:30' },
-  { id: 'P14', time: '17:31 - 18:00' },
-  { id: 'P15', time: '18:01 - 18:30' },
-  { id: 'P16', time: '18:31 - 19:00' },
-  { id: 'P17', time: '19:01 - 19:30' },
-  { id: 'P18', time: '19:31 - 20:00' },
-  { id: 'P19', time: '20:31 - 21:00' },
-  { id: 'P20', time: '21:01 - 21:30' },
-  { id: 'P21', time: '21:31 - 22:00' },
-  { id: 'P22', time: '22:01 - 22:30' }
+  { id: 'P10', time: '15:01 - 15:45' }
+];
+
+const AFTER_CLASS_SLOTS = [
+  '15:46 - 16:30',
+  '16:31 - 17:00',
+  '17:01 - 17:30',
+  '17:31 - 18:00',
+  '18:01 - 18:30',
+  '18:31 - 19:00',
+  '19:01 - 19:30',
+  '19:31 - 20:00',
+  '20:31 - 21:00',
+  '21:01 - 21:30',
+  '21:31 - 22:00',
+  '22:01 - 22:30'
 ];
 
 const VENUES: Record<string, string[]> = {
@@ -54,6 +58,7 @@ const PRESET_CLASSES: Record<string, { male: number, female: number }> = {
 export default function BookEvent() {
   const [loading, setLoading] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const [userRole, setUserRole] = useState<string>('STANDARD_USER');
   const [isAdmin, setIsAdmin] = useState(false);
   
   // Admin God Mode States
@@ -69,8 +74,8 @@ export default function BookEvent() {
   const [title, setTitle] = useState('');
   const [date, setDate] = useState('');
   const [timingType, setTimingType] = useState('Between Classes');
-  const [timeSlot, setTimeSlot] = useState('');
   const [selectedPeriods, setSelectedPeriods] = useState<string[]>([]);
+  const [selectedAfterClass, setSelectedAfterClass] = useState<string[]>([]);
   const [location, setLocation] = useState('');
   const [subLocation, setSubLocation] = useState('');
   
@@ -87,6 +92,7 @@ export default function BookEvent() {
   const [requirements, setRequirements] = useState<{dept: string, item: string, qty?: number}[]>([]);
 
   const totalCount = maleCount + femaleCount + othersCount;
+  const isStandardUser = userRole === 'STANDARD_USER';
 
   useEffect(() => {
     fetchInitialData();
@@ -103,7 +109,7 @@ export default function BookEvent() {
 
   const handleLocationChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     setLocation(e.target.value);
-    setSubLocation(''); // Reset sub-location when primary location changes
+    setSubLocation('');
   };
 
   const fetchInitialData = async () => {
@@ -112,17 +118,23 @@ export default function BookEvent() {
       setCurrentUser(authData.user);
       const { data: profile } = await supabase.from('profiles').select('role').eq('id', authData.user.id).single();
       
-      const adminCheck = profile?.role === 'ADMIN';
+      const role = profile?.role || 'STANDARD_USER';
+      setUserRole(role);
+      
+      const adminCheck = role === 'ADMIN' || role === 'GOD_MODE';
       setIsAdmin(adminCheck);
 
       if (adminCheck) fetchAllEvents();
+      
+      // Enforce Standard User Restrictions
+      if (role === 'STANDARD_USER') {
+        setTimingType('Between Classes');
+      }
     }
 
-    // Fetch Inventory for Dynamic Asset Checker
     const { data: invData } = await supabase.from('inventory_items').select('*').order('name');
     if (invData) setInventory(invData);
 
-    // Fetch Standard Checklists
     fetchStandardAssets();
   };
 
@@ -138,6 +150,10 @@ export default function BookEvent() {
 
   const togglePeriod = (periodId: string) => {
     setSelectedPeriods(prev => prev.includes(periodId) ? prev.filter(p => p !== periodId) : [...prev, periodId].sort((a, b) => parseInt(a.substring(1)) - parseInt(b.substring(1))));
+  };
+
+  const toggleAfterClassSlot = (slot: string) => {
+    setSelectedAfterClass(prev => prev.includes(slot) ? prev.filter(s => s !== slot) : [...prev, slot]);
   };
 
   const toggleStandardRequirement = (dept: string, item: string) => {
@@ -170,15 +186,17 @@ export default function BookEvent() {
     e.preventDefault();
     if (totalCount === 0) return alert("Total headcount cannot be zero.");
     
-    let finalTimeSlot = timeSlot;
+    let finalTimeSlot = '';
+    
     if (timingType === 'Between Classes') {
       if (selectedPeriods.length === 0) return alert("Please select at least one timetable period.");
       finalTimeSlot = selectedPeriods.map(pId => {
-        const p = PERIODS.find(x => x.id === pId);
+        const p = BETWEEN_CLASS_PERIODS.find(x => x.id === pId);
         return `${p?.id} (${p?.time})`;
       }).join(' | ');
     } else {
-      if (!timeSlot) return alert("Please enter the specific time slot.");
+      if (selectedAfterClass.length === 0) return alert("Please select at least one after-class time slot.");
+      finalTimeSlot = selectedAfterClass.join(' | ');
     }
 
     setLoading(true);
@@ -202,17 +220,14 @@ export default function BookEvent() {
       let eventId = editingEventId;
 
       if (editingEventId) {
-        // UPDATE (God Mode)
         await supabase.from('events').update(payload).eq('id', editingEventId);
-        await supabase.from('event_requirements').delete().eq('event_id', editingEventId); // Wipe old requirements
+        await supabase.from('event_requirements').delete().eq('event_id', editingEventId);
       } else {
-        // INSERT
         const { data: eventData, error: eventError } = await supabase.from('events').insert(payload).select().single();
         if (eventError) throw eventError;
         eventId = eventData.id;
       }
 
-      // Insert Requirements
       if (requirements.length > 0 && eventId) {
         const reqPayload = requirements.map(req => ({ event_id: eventId, department: req.dept, item_name: req.item, quantity: req.qty || 1 }));
         await supabase.from('event_requirements').insert(reqPayload);
@@ -238,11 +253,11 @@ export default function BookEvent() {
   const resetForm = () => {
     setEditingEventId(null);
     setTitle(''); setDate(''); setLocation(''); setSubLocation('');
-    setTimingType('Between Classes'); setTimeSlot(''); setSelectedPeriods([]);
+    setTimingType(isStandardUser ? 'Between Classes' : 'Between Classes'); 
+    setSelectedPeriods([]); setSelectedAfterClass([]);
     setDarajah(''); setMaleCount(0); setFemaleCount(0); setOthersCount(0); setRequirements([]);
   };
 
-  // --- GOD MODE ACTIONS: EVENTS ---
   const editEvent = async (event: any) => {
     setEditingEventId(event.id);
     setTitle(event.event_title);
@@ -256,21 +271,19 @@ export default function BookEvent() {
     setOthersCount(event.others_count || 0);
 
     if (event.timing_type === 'Between Classes') {
-      // Basic extraction of Period IDs from the string for editing
-      const matchedPeriods = PERIODS.filter(p => event.time_slot.includes(p.id)).map(p => p.id);
+      const matchedPeriods = BETWEEN_CLASS_PERIODS.filter(p => event.time_slot.includes(p.id)).map(p => p.id);
       setSelectedPeriods(matchedPeriods);
-      setTimeSlot('');
+      setSelectedAfterClass([]);
     } else {
-      setTimeSlot(event.time_slot);
+      const matchedSlots = AFTER_CLASS_SLOTS.filter(s => event.time_slot.includes(s));
+      setSelectedAfterClass(matchedSlots);
       setSelectedPeriods([]);
     }
 
-    // Fetch existing requirements
     const { data: reqs } = await supabase.from('event_requirements').select('*').eq('event_id', event.id);
     if (reqs) {
       setRequirements(reqs.map(r => ({ dept: r.department, item: r.item_name, qty: r.quantity })));
     }
-    
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -281,7 +294,6 @@ export default function BookEvent() {
     fetchAllEvents();
   };
 
-  // --- GOD MODE ACTIONS: STANDARD ASSETS ---
   const addStandardAsset = async () => {
     if (!newAssetName.trim()) return;
     const { error } = await supabase.from('standard_event_assets').insert({ department: newAssetDept, item_name: newAssetName });
@@ -299,7 +311,6 @@ export default function BookEvent() {
     fetchStandardAssets();
   };
 
-  // Separate standard assets by department for rendering
   const avitAssets = standardAssets.filter(a => a.department === 'AVIT');
   const supportAssets = standardAssets.filter(a => a.department === 'Support');
 
@@ -362,6 +373,7 @@ export default function BookEvent() {
               </select>
             </div>
 
+            {/* DYNAMIC TIMING RBAC SECTION */}
             <div className="md:col-span-2 border-t border-slate-100 pt-4 mt-2">
               <label className="block text-[11px] font-extrabold text-slate-500 uppercase mb-3">Event Timing Category *</label>
               <div className="flex flex-col sm:flex-row gap-3 mb-4">
@@ -369,18 +381,21 @@ export default function BookEvent() {
                   <input type="radio" name="timing" value="Between Classes" checked={timingType === 'Between Classes'} onChange={() => setTimingType('Between Classes')} className="hidden" />
                   <span className="font-bold text-sm">Between Classes (Timetable)</span>
                 </label>
-                <label className={`flex-1 flex items-center justify-center gap-2 p-3 rounded-xl border-2 cursor-pointer transition ${timingType === 'After Classes' ? 'border-brand-maroon bg-brand-maroon/5 text-brand-maroon' : 'border-slate-200 hover:border-slate-300'}`}>
-                  <input type="radio" name="timing" value="After Classes" checked={timingType === 'After Classes'} onChange={() => setTimingType('After Classes')} className="hidden" />
-                  <span className="font-bold text-sm">After Classes (Custom Time)</span>
+                
+                {/* ROLE BASED LOCKDOWN */}
+                <label className={`flex-1 flex items-center justify-center gap-2 p-3 rounded-xl border-2 transition ${isStandardUser ? 'opacity-60 cursor-not-allowed bg-slate-50 border-slate-200' : timingType === 'After Classes' ? 'border-brand-maroon bg-brand-maroon/5 text-brand-maroon cursor-pointer' : 'border-slate-200 hover:border-slate-300 cursor-pointer'}`} title={isStandardUser ? "Only Department Heads can book events outside standard timetable hours." : ""}>
+                  <input type="radio" name="timing" value="After Classes" disabled={isStandardUser} checked={timingType === 'After Classes'} onChange={() => !isStandardUser && setTimingType('After Classes')} className="hidden" />
+                  <span className={`font-bold text-sm ${isStandardUser ? 'text-slate-400' : ''}`}>After Classes (Custom Time)</span>
+                  {isStandardUser && <Lock className="w-4 h-4 text-slate-400" />}
                 </label>
               </div>
 
-              {/* DYNAMIC TIMETABLE RENDERER */}
+              {/* TIMETABLE RENDERING ENGINE */}
               {timingType === 'Between Classes' ? (
-                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 animate-in fade-in">
                   <h4 className="text-[10px] font-black text-slate-500 uppercase mb-3">Select Timetable Periods</h4>
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
-                    {PERIODS.map((p) => {
+                    {BETWEEN_CLASS_PERIODS.map((p) => {
                       return (
                         <label key={p.id} className={`flex flex-col p-2 rounded-lg border-2 cursor-pointer transition ${selectedPeriods.includes(p.id) ? 'border-indigo-500 bg-indigo-50 shadow-sm' : 'border-slate-200 bg-white hover:border-indigo-300'}`}>
                           <input type="checkbox" checked={selectedPeriods.includes(p.id)} onChange={() => togglePeriod(p.id)} className="hidden" />
@@ -392,13 +407,21 @@ export default function BookEvent() {
                   </div>
                 </div>
               ) : (
-                <div>
-                  <label className="block text-[11px] font-extrabold text-slate-500 uppercase mb-1">Custom Time Slot *</label>
-                  <input required={timingType === 'After Classes'} type="text" value={timeSlot} onChange={e => setTimeSlot(e.target.value)} placeholder="e.g. 4:00 PM - 6:00 PM" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold focus:ring-2 focus:ring-brand-maroon outline-none" />
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 animate-in fade-in">
+                  <h4 className="text-[10px] font-black text-slate-500 uppercase mb-3">Select After-Class Slots</h4>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
+                    {AFTER_CLASS_SLOTS.map((slot) => {
+                      return (
+                        <label key={slot} className={`flex flex-col p-2.5 rounded-lg border-2 cursor-pointer transition ${selectedAfterClass.includes(slot) ? 'border-brand-maroon bg-brand-maroon/10 shadow-sm' : 'border-slate-200 bg-white hover:border-brand-maroon/50'}`}>
+                          <input type="checkbox" checked={selectedAfterClass.includes(slot)} onChange={() => toggleAfterClassSlot(slot)} className="hidden" />
+                          <span className={`text-[11px] font-black text-center ${selectedAfterClass.includes(slot) ? 'text-brand-maroon' : 'text-slate-700'}`}>{slot}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
             </div>
-            
           </div>
         </div>
 
@@ -440,7 +463,6 @@ export default function BookEvent() {
             </div>
           </div>
           
-          {/* DYNAMIC READ-ONLY SUMMARY CARDS */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-5">
              <div className="bg-slate-50 border border-slate-200 p-3 rounded-xl text-center shadow-sm">
                <div className="text-[10px] font-extrabold uppercase text-slate-500">Total Males</div>
@@ -494,7 +516,6 @@ export default function BookEvent() {
             </div>
           </div>
 
-          {/* DYNAMIC ASSETS (STOCK CHECKER) */}
           <div className="border-t border-slate-100 pt-5">
              <h4 className="text-[10px] font-black uppercase text-slate-400 mb-3 flex items-center gap-1"><PackageSearch className="w-3.5 h-3.5"/> Request Additional Inventory Assets</h4>
              
@@ -519,7 +540,6 @@ export default function BookEvent() {
                </button>
              </div>
 
-             {/* Asset List Render */}
              {requirements.length > 0 && (
                <div className="mt-4 space-y-2">
                  {requirements.map((req, idx) => (
@@ -539,6 +559,21 @@ export default function BookEvent() {
           </div>
         </div>
 
+        {/* FLEET TRANSPORTATION CALLOUT */}
+        {userRole !== 'STANDARD_USER' && (
+          <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-200 flex items-start gap-4">
+            <div className="bg-white p-2 rounded-lg shadow-sm border border-indigo-100 shrink-0">
+              <Car className="w-6 h-6 text-indigo-600" />
+            </div>
+            <div>
+              <h4 className="text-sm font-black text-indigo-900 mb-1">Need Fleet Transportation?</h4>
+              <p className="text-xs text-indigo-800/80 leading-relaxed">
+                If your attendees require bus shuttles or van transport for this event, please submit a separate request via the <Link to="/book-vehicle" className="font-bold underline text-indigo-700 hover:text-indigo-900">Book Vehicle</Link> tab.
+              </p>
+            </div>
+          </div>
+        )}
+
         <button 
           type="submit" 
           disabled={loading}
@@ -548,17 +583,14 @@ export default function BookEvent() {
         </button>
       </form>
 
-      {/* --- ADMIN GOD MODE: EVENT & CHECKLIST MANAGEMENT (Mobile Friendly Cards) --- */}
+      {/* --- ADMIN GOD MODE --- */}
       {isAdmin && (
         <div className="mt-12 pt-8 border-t-4 border-slate-200 space-y-8">
-          
-          {/* Manage Standard Checklists */}
           <div>
             <div className="flex items-center gap-2 mb-4">
               <ListPlus className="w-5 h-5 text-indigo-600" />
               <h3 className="font-black text-lg text-slate-800 uppercase tracking-tight">Manage Standard Event Checklists</h3>
             </div>
-            
             <div className="bg-white rounded-2xl p-4 md:p-5 shadow-sm border border-slate-200 flex flex-col md:flex-row gap-6">
                <div className="flex-1 space-y-4">
                   <h4 className="text-xs font-bold text-slate-500 uppercase border-b pb-2">Active Checklist Items</h4>
@@ -588,13 +620,11 @@ export default function BookEvent() {
             </div>
           </div>
 
-          {/* Manage All Events */}
           <div>
             <div className="flex items-center gap-2 mb-4">
               <ShieldAlert className="w-5 h-5 text-red-600" />
               <h3 className="font-black text-lg text-slate-800 uppercase tracking-tight">Admin Override: Manage All Events</h3>
             </div>
-            
             <div className="space-y-4">
               {allEvents.length === 0 ? (
                 <div className="bg-white rounded-2xl p-6 text-center text-slate-500 font-medium italic border border-slate-200">No events booked.</div>
@@ -602,7 +632,6 @@ export default function BookEvent() {
                 <div className="grid grid-cols-1 gap-4">
                   {allEvents.map(e => (
                     <div key={e.id} className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                      
                       <div className="space-y-3 flex-1 w-full">
                         <div>
                           <h3 className="font-bold text-brand-maroon text-sm leading-tight">{e.event_title}</h3>
@@ -610,7 +639,6 @@ export default function BookEvent() {
                             <Users className="w-3 h-3"/> {e.requester?.full_name}
                           </p>
                         </div>
-
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-50 p-3 rounded-xl border border-slate-100">
                           <div>
                             <div className="flex items-center gap-1 text-slate-800 font-bold text-xs"><Clock className="w-3.5 h-3.5 text-slate-400"/> {new Date(e.event_date).toLocaleDateString()}</div>
@@ -623,7 +651,6 @@ export default function BookEvent() {
                           </div>
                         </div>
                       </div>
-
                       <div className="flex flex-row md:flex-col gap-2 w-full md:w-auto border-t md:border-t-0 border-slate-100 pt-3 md:pt-0">
                          <button onClick={() => editEvent(e)} className="flex-1 md:w-full py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 transition">
                            <Edit className="w-4 h-4 md:w-3.5 md:h-3.5" /> <span className="md:hidden">Edit</span>
@@ -632,14 +659,12 @@ export default function BookEvent() {
                            <Trash2 className="w-4 h-4 md:w-3.5 md:h-3.5" /> <span className="md:hidden">Eradicate</span>
                          </button>
                       </div>
-
                     </div>
                   ))}
                 </div>
               )}
             </div>
           </div>
-
         </div>
       )}
     </div>

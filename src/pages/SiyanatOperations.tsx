@@ -1,77 +1,92 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
-import { RefreshCw, MessageSquare, Truck, UserPlus, X, SplitSquareHorizontal, Archive, Trash2, CheckCircle, Package, Wrench } from 'lucide-react';
+import { RefreshCw, MessageSquare, Truck, UserPlus, X, SplitSquareHorizontal, Archive, Trash2, CheckCircle, Package, Wrench, ShoppingCart, FileText } from 'lucide-react';
 import BatchDetailsModal from '../components/BatchDetailsModal';
 
 export default function SiyanatOperations() {
   const [activeTab, setActiveTab] = useState<'materials' | 'maintenance'>('materials');
   const [loading, setLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const [userRole, setUserRole] = useState<string>('');
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   
-  // Material State
+  // Data State
   const [batches, setBatches] = useState<any[]>([]);
+  const [complaints, setComplaints] = useState<any[]>([]);
+  const [technicians, setTechnicians] = useState<any[]>([]);
+  const [vendors, setVendors] = useState<any[]>([]);
+  
+  // Modal States
   const [activeBatch, setActiveBatch] = useState<any>(null);
   const [isChatOpen, setIsChatOpen] = useState(false);
-  
-  // Batch Splitting Modal State
   const [reviewModalOpen, setReviewModalOpen] = useState(false);
   const [reviewBatch, setReviewBatch] = useState<any>(null);
   const [itemDecisions, setItemDecisions] = useState<any>({});
-
-  // Maintenance State
-  const [complaints, setComplaints] = useState<any[]>([]);
-  const [technicians, setTechnicians] = useState<any[]>([]);
+  
   const [assignModalOpen, setAssignModalOpen] = useState(false);
   const [selectedComplaint, setSelectedComplaint] = useState<any>(null);
   const [selectedTechId, setSelectedTechId] = useState('');
+
+  // PO Modal State
+  const [poModalOpen, setPoModalOpen] = useState(false);
+  const [poBatch, setPoBatch] = useState<any>(null);
+  const [selectedVendorId, setSelectedVendorId] = useState('');
 
   // UseCallback ensures this function is perfectly stable for useEffect
   const fetchData = useCallback(async () => {
     setLoading(true);
     
     try {
-      // 1. Fetch Materials (Force fresh read)
-      const { data: batchData, error: batchError } = await supabase
+      const { data: authData } = await supabase.auth.getUser();
+      if (!authData.user) return;
+      
+      const { data: profile } = await supabase.from('profiles').select('role').eq('id', authData.user.id).single();
+      const currentRole = profile?.role || '';
+      setUserRole(currentRole);
+
+      // 1. Fetch Materials (Filtered by Department Rules)
+      let batchQuery = supabase
         .from('work_orders')
         .select(`*, logs:work_order_logs(author_id), items:work_order_items(id, requested_qty, item_type, custom_item_name, status, eta_days, inventory_id, inventory:inventory_items(id, name, physical_stock, freezed_stock))`)
         .order('created_at', { ascending: false });
-
+        
+      const { data: batchData, error: batchError } = await batchQuery;
       if (batchError) throw batchError;
       if (batchData) setBatches(batchData);
 
-      // 2. Fetch Maintenance
-      const { data: complaintData, error: complaintError } = await supabase
+      // 2. Fetch Maintenance (Filtered by Role)
+      let complaintQuery = supabase
         .from('complaints')
         .select(`
           *, 
           requester:profiles(full_name, department), 
           assignments:technician_assignments(status, technician:profiles!technician_assignments_technician_id_fkey(full_name, trade))
         `)
-        .in('status', [
-          'Approved by Supervisor', 
-          'Assigned', 
-          'Waiting for Material', 
-          'Completed', 
-          'Verified', 
-          'Complaint Reopened'
-        ])
+        .in('status', ['Approved by Supervisor', 'Assigned', 'Waiting for Material', 'Completed', 'Verified', 'Complaint Reopened'])
         .order('created_at', { ascending: false });
 
+      // Apply Strict Departmental Segregation
+      if (currentRole === 'SIYANAT_HEAD') {
+        complaintQuery = complaintQuery.neq('category', 'AVIT');
+      } else if (currentRole === 'AVIT_HEAD') {
+        complaintQuery = complaintQuery.eq('category', 'AVIT');
+      }
+
+      const { data: complaintData, error: complaintError } = await complaintQuery;
       if (complaintError) throw complaintError;
       if (complaintData) setComplaints(complaintData);
 
       // 3. Fetch Technicians
-      const { data: techData } = await supabase
-        .from('profiles')
-        .select('id, full_name, trade')
-        .eq('role', 'TECHNICIAN');
-        
+      const { data: techData } = await supabase.from('profiles').select('id, full_name, trade').eq('role', 'TECHNICIAN');
       if (techData) setTechnicians(techData);
 
+      // 4. Fetch Vendors for PO Engine
+      const { data: vendorData } = await supabase.from('vendors').select('*').eq('is_active', true).order('name');
+      if (vendorData) setVendors(vendorData);
+
     } catch (err: any) {
-      console.error("Error fetching Siyanat Operations data:", err);
+      console.error("Error fetching operations data:", err);
     } finally {
       setLoading(false);
     }
@@ -82,7 +97,7 @@ export default function SiyanatOperations() {
     supabase.auth.getUser().then(({ data }) => setCurrentUser(data.user));
   }, [fetchData, activeTab]); 
 
-  // --- MATERIAL LOGIC ---
+  // --- STANDARD MATERIAL LOGIC ---
   const openReviewModal = (batch: any) => {
     setReviewBatch(batch);
     const initialDecisions: any = {};
@@ -94,10 +109,7 @@ export default function SiyanatOperations() {
   };
 
   const updateDecision = (itemId: string, field: string, value: any) => {
-    setItemDecisions((prev: any) => ({
-      ...prev,
-      [itemId]: { ...prev[itemId], [field]: value }
-    }));
+    setItemDecisions((prev: any) => ({ ...prev, [itemId]: { ...prev[itemId], [field]: value } }));
   };
 
   const handleReviewSubmit = async (e: React.FormEvent) => {
@@ -125,7 +137,7 @@ export default function SiyanatOperations() {
 
       await supabase.from('system_logs').insert({
         action_type: 'BATCH_REVIEWED',
-        description: `Split and processed material batch ${reviewBatch.batch_id}. Frozen available stock.`,
+        description: `Split and processed material batch ${reviewBatch.batch_id}.`,
         user_email: currentUser?.email || 'Admin'
       });
 
@@ -147,7 +159,7 @@ export default function SiyanatOperations() {
       await supabase.from('work_orders').update({ dispatch_status: 'Dispatched' }).eq('id', batch.id);
       await supabase.from('system_logs').insert({
         action_type: 'STOCK_DISPATCHED',
-        description: `Dispatched ${batch.batch_id} to location. Stock remains frozen pending receipt.`,
+        description: `Dispatched ${batch.batch_id}.`,
         user_email: currentUser?.email || 'Admin'
       });
       fetchData();
@@ -157,16 +169,71 @@ export default function SiyanatOperations() {
     setProcessingId(null);
   };
 
-  // 🔴 GOD MODE: Delete Material Batch
+  // --- VENDOR PURCHASE ORDER LOGIC ---
+  const generatePO = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedVendorId || !poBatch) return;
+    setProcessingId(poBatch.id);
+
+    try {
+      // 1. Generate PO Number
+      const poNumber = `PO-${Math.floor(100000 + Math.random() * 900000)}`;
+      
+      // 2. Extract original Complaint ID from reason string
+      const complaintMatch = poBatch.reason.match(/Complaint:\s*([A-Za-z0-9-]+)/);
+      const complaintRef = complaintMatch ? complaintMatch[1] : null;
+
+      let actualComplaintId = null;
+      if (complaintRef) {
+        const { data: comp } = await supabase.from('complaints').select('id').eq('complaint_id', complaintRef).single();
+        if (comp) actualComplaintId = comp.id;
+      }
+
+      // 3. Create PO Record
+      const { data: newPo, error: poError } = await supabase.from('purchase_orders').insert({
+        po_number: poNumber,
+        complaint_id: actualComplaintId,
+        technician_id: poBatch.requester_id,
+        vendor_id: selectedVendorId,
+        status: 'PO Issued'
+      }).select().single();
+
+      if (poError) throw poError;
+
+      // 4. Create PO Items
+      const poItems = poBatch.items.map((item: any) => ({
+        po_id: newPo.id,
+        inventory_id: item.item_type === 'Catalog' ? item.inventory_id : null,
+        custom_item_name: item.item_type === 'Custom' ? item.custom_item_name : null,
+        requested_qty: item.requested_qty
+      }));
+
+      await supabase.from('purchase_order_items').insert(poItems);
+
+      // 5. Update the dummy Work Order status so it disappears from queue
+      await supabase.from('work_orders').update({ approval_status: 'PO Generated', dispatch_status: 'PO Sent to Vendor' }).eq('id', poBatch.id);
+
+      await supabase.from('system_logs').insert({
+        action_type: 'PO_GENERATED',
+        description: `Generated ${poNumber} for vendor to fulfill technician material request.`,
+        user_email: currentUser?.email || 'Admin'
+      });
+
+      setSuccessMsg(`Official Purchase Order (${poNumber}) successfully generated and assigned to vendor!`);
+      setPoModalOpen(false);
+      fetchData();
+
+    } catch (err: any) {
+      alert("Error generating PO: " + err.message);
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
   const deleteBatch = async (id: string, batchId: string) => {
-    if (!confirm(`GOD MODE WARNING: Are you sure you want to completely eradicate Batch ${batchId}? This is irreversible.`)) return;
+    if (!confirm(`GOD MODE WARNING: Are you sure you want to completely eradicate Batch ${batchId}?`)) return;
     setProcessingId(id);
     await supabase.from('work_orders').delete().eq('id', id);
-    await supabase.from('system_logs').insert({
-      action_type: 'GOD_MODE_DELETE',
-      description: `Admin hard-deleted material batch ${batchId}.`,
-      user_email: currentUser?.email || 'Admin'
-    });
     fetchData();
     setProcessingId(null);
   };
@@ -183,15 +250,8 @@ export default function SiyanatOperations() {
         technician_id: selectedTechId,
         assigned_by: currentUser?.id
       });
-      
       await supabase.from('complaints').update({ status: 'Assigned' }).eq('id', selectedComplaint.id);
       
-      await supabase.from('system_logs').insert({
-        action_type: 'TECHNICIAN_ASSIGNED',
-        description: `Assigned complaint ${selectedComplaint.complaint_id} to technician.`,
-        user_email: currentUser?.email || 'Admin'
-      });
-
       setAssignModalOpen(false);
       setSelectedTechId('');
       fetchData();
@@ -202,46 +262,31 @@ export default function SiyanatOperations() {
     }
   };
 
-  // 🟢 NEW: Close Verified Complaint
   const closeComplaint = async (id: string, complaintId: string) => {
     if (!confirm(`Officially close complaint ${complaintId}?`)) return;
     setProcessingId(id);
-    
     await supabase.from('complaints').update({ status: 'Closed' }).eq('id', id);
-    await supabase.from('system_logs').insert({
-      action_type: 'COMPLAINT_CLOSED',
-      description: `Admin officially closed verified complaint ${complaintId}.`,
-      user_email: currentUser?.email || 'Admin'
-    });
-    
     fetchData();
     setProcessingId(null);
   };
 
-  // 🔴 GOD MODE: Delete Complaint
   const deleteComplaint = async (id: string, complaintId: string) => {
-    if (!confirm(`GOD MODE WARNING: Are you sure you want to completely eradicate Complaint ${complaintId}? All associated photos and assignments will be destroyed.`)) return;
+    if (!confirm(`GOD MODE WARNING: Eradicate Complaint ${complaintId}?`)) return;
     setProcessingId(id);
     await supabase.from('complaints').delete().eq('id', id);
-    await supabase.from('system_logs').insert({
-      action_type: 'GOD_MODE_DELETE',
-      description: `Admin hard-deleted maintenance complaint ${complaintId}.`,
-      user_email: currentUser?.email || 'Admin'
-    });
     fetchData();
     setProcessingId(null);
   };
 
   return (
     <div className="space-y-6 pb-24">
-      {/* Header & Tabs */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h2 className="text-xl font-extrabold text-brand-maroon flex items-center gap-2">
             <Truck className="w-6 h-6" />
             Siyanat Operations Control
           </h2>
-          <p className="text-xs text-slate-500 mt-1">Manage material dispatches, maintenance routing, and portal overrides.</p>
+          <p className="text-xs text-slate-500 mt-1">Manage material dispatches, vendor POs, and maintenance routing.</p>
         </div>
         <button onClick={fetchData} className="w-full md:w-auto px-4 py-2 bg-slate-100 hover:bg-slate-200 text-brand-maroon font-bold rounded-lg flex items-center justify-center space-x-2 transition">
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
@@ -250,16 +295,10 @@ export default function SiyanatOperations() {
       </div>
 
       <div className="flex space-x-2 border-b border-slate-200 overflow-x-auto pb-1">
-        <button 
-          onClick={() => setActiveTab('materials')}
-          className={`px-4 py-2 text-sm font-bold border-b-2 transition flex items-center gap-2 whitespace-nowrap ${activeTab === 'materials' ? 'border-brand-maroon text-brand-maroon' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
-        >
+        <button onClick={() => setActiveTab('materials')} className={`px-4 py-2 text-sm font-bold border-b-2 transition flex items-center gap-2 whitespace-nowrap ${activeTab === 'materials' ? 'border-brand-maroon text-brand-maroon' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
           <Package className="w-4 h-4" /> Material Dispatch
         </button>
-        <button 
-          onClick={() => setActiveTab('maintenance')}
-          className={`px-4 py-2 text-sm font-bold border-b-2 transition flex items-center gap-2 whitespace-nowrap ${activeTab === 'maintenance' ? 'border-brand-maroon text-brand-maroon' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
-        >
+        <button onClick={() => setActiveTab('maintenance')} className={`px-4 py-2 text-sm font-bold border-b-2 transition flex items-center gap-2 whitespace-nowrap ${activeTab === 'maintenance' ? 'border-brand-maroon text-brand-maroon' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
           <Wrench className="w-4 h-4" /> Maintenance Routing
         </button>
       </div>
@@ -268,33 +307,36 @@ export default function SiyanatOperations() {
       {activeTab === 'materials' && (
         <div className="space-y-4">
           {loading ? (
-             <div className="p-8 text-center font-medium text-slate-500 bg-white rounded-2xl border border-slate-200 shadow-sm animate-pulse">Loading batches...</div>
+             <div className="p-8 text-center font-medium text-slate-500 bg-white rounded-2xl border border-slate-200 animate-pulse">Loading batches...</div>
           ) : batches.length === 0 ? (
-             <div className="p-8 text-center font-medium italic text-slate-500 bg-white rounded-2xl border border-slate-200 shadow-sm">No active batches.</div>
+             <div className="p-8 text-center font-medium italic text-slate-500 bg-white rounded-2xl border border-slate-200">No active batches.</div>
           ) : (
              <div className="grid grid-cols-1 gap-4">
-               {batches.map(b => (
-                  <div key={b.id} className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-4">
+               {batches.map(b => {
+                 const isTechPORequest = b.approval_status === 'Pending Admin PO';
+
+                 return (
+                  <div key={b.id} className={`bg-white rounded-2xl p-5 shadow-sm border-2 flex flex-col md:flex-row md:items-center justify-between gap-4 ${isTechPORequest ? 'border-indigo-400' : 'border-slate-200'}`}>
                      
-                     {/* Card Content */}
                      <div className="space-y-3 flex-1 w-full">
-                       
-                       {/* Header: Batch ID & Department */}
                        <div>
-                         <h3 className="font-black text-brand-maroon text-sm md:text-base leading-tight">Batch: {b.batch_id}</h3>
-                         <p className="text-xs text-slate-600 mt-1 font-semibold">{b.department}</p>
+                         <div className="flex items-center gap-2 mb-1">
+                           <h3 className="font-black text-brand-maroon text-sm md:text-base leading-tight">Batch: {b.batch_id}</h3>
+                           {isTechPORequest && <span className="px-2 py-0.5 bg-indigo-100 text-indigo-800 text-[9px] font-black uppercase tracking-wider rounded border border-indigo-200">Field Request</span>}
+                         </div>
+                         <p className="text-xs text-slate-600 font-semibold">{b.department}</p>
                        </div>
 
-                       {/* Meta Grid: Location & Status */}
                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-50 p-3 rounded-xl border border-slate-100">
                          <div>
-                           <div className="text-[10px] text-slate-400 uppercase font-bold mb-0.5">Location</div>
+                           <div className="text-[10px] text-slate-400 uppercase font-bold mb-0.5">Location / Context</div>
                            <div className="font-bold text-slate-700 text-xs">{b.location}</div>
+                           {isTechPORequest && <div className="text-[10px] text-indigo-600 font-bold mt-1 line-clamp-1">{b.reason}</div>}
                          </div>
                          <div>
                            <div className="text-[10px] text-slate-400 uppercase font-bold mb-1">Status</div>
                            <div className="flex flex-wrap gap-1.5 items-center">
-                             <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${b.approval_status === 'Approved' ? 'bg-emerald-100 text-emerald-800' : b.approval_status === 'Rejected' ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-amber-800'}`}>
+                             <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${isTechPORequest ? 'bg-indigo-100 text-indigo-800' : b.approval_status === 'Approved' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
                                {b.approval_status}
                              </span>
                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-200 text-slate-700">
@@ -305,44 +347,44 @@ export default function SiyanatOperations() {
                        </div>
                      </div>
 
-                     {/* Actions (Stacked on Mobile, Right-aligned on Desktop) */}
                      <div className="flex flex-row md:flex-col gap-2 w-full md:w-auto mt-2 md:mt-0 pt-3 md:pt-0 border-t md:border-t-0 border-slate-100 flex-wrap">
-                        {b.approval_status === 'Pending Approval' && (
+                        
+                        {/* SPECIAL PO ACTION */}
+                        {isTechPORequest ? (
                           <button 
-                            onClick={() => openReviewModal(b)} 
-                            className="flex-1 md:w-full py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs shadow-sm flex items-center justify-center gap-1.5 transition"
+                            onClick={() => { setPoBatch(b); setPoModalOpen(true); }}
+                            className="flex-1 md:w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-sm flex items-center justify-center gap-1.5 transition"
                           >
-                            <SplitSquareHorizontal className="w-3.5 h-3.5"/> Split
+                            <ShoppingCart className="w-3.5 h-3.5"/> Gen PO
                           </button>
+                        ) : (
+                          <>
+                            {b.approval_status === 'Pending Approval' && (
+                              <button onClick={() => openReviewModal(b)} className="flex-1 md:w-full py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs shadow-sm flex items-center justify-center gap-1.5 transition">
+                                <SplitSquareHorizontal className="w-3.5 h-3.5"/> Split
+                              </button>
+                            )}
+                            {b.approval_status === 'Approved' && b.dispatch_status === 'Pending' && (
+                              <button onClick={() => dispatchBatch(b)} disabled={processingId === b.id} className="flex-1 md:w-full py-2.5 px-3 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-xl text-xs shadow-sm flex items-center justify-center gap-1.5 disabled:opacity-50 transition">
+                                <Truck className="w-3.5 h-3.5"/> Dispatch
+                              </button>
+                            )}
+                          </>
                         )}
-                        {b.approval_status === 'Approved' && b.dispatch_status === 'Pending' && (
-                          <button 
-                            onClick={() => dispatchBatch(b)} 
-                            disabled={processingId === b.id}
-                            className="flex-1 md:w-full py-2.5 px-3 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-xl text-xs shadow-sm flex items-center justify-center gap-1.5 disabled:opacity-50 transition"
-                          >
-                            <Truck className="w-3.5 h-3.5"/> Dispatch
-                          </button>
-                        )}
-                        <button 
-                          onClick={() => { setActiveBatch(b); setIsChatOpen(true); }} 
-                          className="flex-1 md:w-full py-2.5 px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-sm flex items-center justify-center gap-1.5 transition"
-                        >
+                        
+                        <button onClick={() => { setActiveBatch(b); setIsChatOpen(true); }} className="flex-1 md:w-full py-2.5 px-3 bg-slate-800 hover:bg-black text-white font-bold rounded-xl text-xs shadow-sm flex items-center justify-center gap-1.5 transition">
                           <MessageSquare className="w-3.5 h-3.5"/> Chat
                         </button>
                         
-                        {/* GOD MODE: Delete */}
-                        <button 
-                          onClick={() => deleteBatch(b.id, b.batch_id)} 
-                          disabled={processingId === b.id} 
-                          className="py-2.5 px-3 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl transition disabled:opacity-50 flex items-center justify-center" 
-                          title="Delete Batch"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        {(userRole === 'GOD_MODE' || userRole === 'ADMIN') && (
+                          <button onClick={() => deleteBatch(b.id, b.batch_id)} disabled={processingId === b.id} className="py-2.5 px-3 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl transition disabled:opacity-50 flex items-center justify-center">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
                      </div>
                   </div>
-               ))}
+                 );
+               })}
              </div>
           )}
         </div>
@@ -352,26 +394,20 @@ export default function SiyanatOperations() {
       {activeTab === 'maintenance' && (
         <div className="space-y-4">
           {loading ? (
-             <div className="p-8 text-center font-medium text-slate-500 bg-white rounded-2xl border border-slate-200 shadow-sm animate-pulse">Loading complaints...</div>
+             <div className="p-8 text-center font-medium text-slate-500 bg-white rounded-2xl border border-slate-200 animate-pulse">Loading complaints...</div>
           ) : complaints.length === 0 ? (
-             <div className="p-8 text-center font-medium italic text-slate-500 bg-white rounded-2xl border border-slate-200 shadow-sm">No maintenance tasks pending assignment or closure.</div>
+             <div className="p-8 text-center font-medium italic text-slate-500 bg-white rounded-2xl border border-slate-200">No maintenance tasks pending assignment or closure.</div>
           ) : (
             <div className="grid grid-cols-1 gap-4">
               {complaints.map(c => {
                 const isAssigned = c.assignments && c.assignments.length > 0;
                 return (
                   <div key={c.id} className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                     
-                     {/* Card Content */}
                      <div className="space-y-3 flex-1 w-full">
-                       
-                       {/* Header: Complaint ID & Requester */}
                        <div>
                          <h3 className="font-black text-brand-maroon text-sm md:text-base leading-tight">{c.complaint_id}</h3>
                          <p className="text-xs text-slate-500 mt-1 font-semibold">{c.requester?.full_name}</p>
                        </div>
-
-                       {/* Meta Grid: Issue, Location & Status */}
                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-50 p-3 rounded-xl border border-slate-100">
                          <div>
                            <div className="font-bold text-slate-800 text-xs">{c.category}</div>
@@ -392,38 +428,22 @@ export default function SiyanatOperations() {
                          </div>
                        </div>
                      </div>
-
-                     {/* Actions */}
                      <div className="flex flex-row md:flex-col gap-2 w-full md:w-auto mt-2 md:mt-0 pt-3 md:pt-0 border-t md:border-t-0 border-slate-100 flex-wrap">
                         {c.status === 'Approved by Supervisor' && (
-                          <button 
-                            onClick={() => { setSelectedComplaint(c); setAssignModalOpen(true); }} 
-                            className="flex-1 md:w-full py-2.5 px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-sm flex items-center justify-center gap-1.5 transition"
-                          >
+                          <button onClick={() => { setSelectedComplaint(c); setAssignModalOpen(true); }} className="flex-1 md:w-full py-2.5 px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-sm flex items-center justify-center gap-1.5 transition">
                             <UserPlus className="w-3.5 h-3.5" /> Assign
                           </button>
                         )}
-                        
-                        {/* THE MISSING CLOSE WORKFLOW */}
                         {c.status === 'Verified' && (
-                          <button 
-                            onClick={() => closeComplaint(c.id, c.complaint_id)} 
-                            disabled={processingId === c.id} 
-                            className="flex-1 md:w-full py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs shadow-sm flex items-center justify-center gap-1.5 disabled:opacity-50 transition"
-                          >
+                          <button onClick={() => closeComplaint(c.id, c.complaint_id)} disabled={processingId === c.id} className="flex-1 md:w-full py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs shadow-sm flex items-center justify-center gap-1.5 disabled:opacity-50 transition">
                             <Archive className="w-3.5 h-3.5" /> Close
                           </button>
                         )}
-
-                        {/* GOD MODE: Delete */}
-                        <button 
-                          onClick={() => deleteComplaint(c.id, c.complaint_id)} 
-                          disabled={processingId === c.id} 
-                          className="py-2.5 px-3 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl transition disabled:opacity-50 flex items-center justify-center" 
-                          title="Delete Complaint"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        {(userRole === 'GOD_MODE' || userRole === 'ADMIN') && (
+                          <button onClick={() => deleteComplaint(c.id, c.complaint_id)} disabled={processingId === c.id} className="py-2.5 px-3 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl transition disabled:opacity-50 flex items-center justify-center">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
                      </div>
                   </div>
                 );
@@ -433,7 +453,61 @@ export default function SiyanatOperations() {
         </div>
       )}
 
-      {/* --- BATCH REVIEW & SPLIT MODAL --- */}
+      {/* --- VENDOR PO GENERATION MODAL --- */}
+      {poModalOpen && poBatch && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex justify-center items-end sm:items-center p-4">
+          <div className="bg-white rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom sm:slide-in-from-bottom-0 sm:zoom-in-95 duration-300">
+            <div className="bg-indigo-600 p-5 flex justify-between items-center text-white">
+              <h3 className="font-extrabold text-sm uppercase flex items-center gap-2"><ShoppingCart className="w-5 h-5"/> Generate Purchase Order</h3>
+              <button onClick={() => setPoModalOpen(false)} className="p-1 hover:bg-white/20 rounded-lg transition"><X className="w-5 h-5 hover:text-red-300" /></button>
+            </div>
+            <form onSubmit={generatePO} className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
+              <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100">
+                <p className="text-[10px] font-black uppercase text-indigo-400 tracking-widest mb-1">Context</p>
+                <p className="text-sm font-bold text-indigo-900">{poBatch.reason}</p>
+                <p className="text-xs text-indigo-700 font-medium mt-1">Requested by field technician. Pending external procurement.</p>
+              </div>
+              
+              <div>
+                <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-2">Requested Items</h4>
+                <div className="space-y-2 border border-slate-200 rounded-xl p-2 bg-slate-50">
+                  {poBatch.items.map((item: any) => {
+                    const itemName = item.item_type === 'Catalog' && item.inventory ? item.inventory.name : item.custom_item_name;
+                    return (
+                      <div key={item.id} className="flex justify-between items-center p-2.5 bg-white rounded-lg border border-slate-100 shadow-sm">
+                        <div>
+                          <p className="text-xs font-bold text-slate-800">{itemName}</p>
+                          <p className="text-[9px] font-black text-brand-maroon uppercase mt-0.5">{item.item_type}</p>
+                        </div>
+                        <span className="text-xs font-black text-slate-700 bg-slate-100 px-2 py-1 rounded">Qty: {item.requested_qty}</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+
+              <div className="pt-2">
+                <label className="block text-[11px] font-black text-slate-500 uppercase mb-2">Select Approved Vendor *</label>
+                <select 
+                  required value={selectedVendorId} onChange={e => setSelectedVendorId(e.target.value)} 
+                  className="w-full p-3.5 bg-white border border-slate-300 rounded-xl text-sm font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition"
+                >
+                  <option value="" disabled>-- Choose External Vendor --</option>
+                  {vendors.map(v => (
+                    <option key={v.id} value={v.id}>{v.name} ({v.category})</option>
+                  ))}
+                </select>
+              </div>
+
+              <button type="submit" disabled={processingId === poBatch.id} className="w-full py-4 mt-4 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs uppercase tracking-widest rounded-xl shadow-lg transition disabled:opacity-50 flex justify-center items-center gap-2">
+                <FileText className="w-4 h-4" /> Issue Formal P.O. to Vendor
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* --- STANDARD BATCH REVIEW MODAL --- */}
       {reviewModalOpen && reviewBatch && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex justify-center items-end sm:items-center p-4">
           <div className="bg-white rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom sm:slide-in-from-bottom-0 sm:zoom-in-95 duration-300">
@@ -494,11 +568,7 @@ export default function SiyanatOperations() {
                 );
               })}
 
-              <button 
-                type="submit" 
-                disabled={processingId === reviewBatch.id}
-                className="w-full py-4 md:py-3 mt-6 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs uppercase tracking-wide rounded-xl shadow-lg transition disabled:opacity-50"
-              >
+              <button type="submit" disabled={processingId === reviewBatch.id} className="w-full py-4 md:py-3 mt-6 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs uppercase tracking-wide rounded-xl shadow-lg transition disabled:opacity-50">
                 Confirm Split & Freeze Stock
               </button>
             </form>
@@ -531,9 +601,7 @@ export default function SiyanatOperations() {
       )}
 
       {/* Chat Modal */}
-      {activeBatch && currentUser && (
-        <BatchDetailsModal batchId={activeBatch.batch_id} workOrderId={activeBatch.id} isOpen={isChatOpen} onClose={() => { setIsChatOpen(false); setActiveBatch(null); }} currentUser={currentUser} />
-      )}
+      {activeBatch && currentUser && <BatchDetailsModal batchId={activeBatch.batch_id} workOrderId={activeBatch.id} isOpen={isChatOpen} onClose={() => { setIsChatOpen(false); setActiveBatch(null); }} currentUser={currentUser} />}
       
       {/* CREATIVE SUCCESS MODAL */}
       {successMsg && (
@@ -543,15 +611,8 @@ export default function SiyanatOperations() {
               <CheckCircle className="w-10 h-10" />
             </div>
             <h3 className="text-2xl font-black text-slate-800 text-center mb-2">Success!</h3>
-            <p className="text-sm text-slate-500 text-center font-medium leading-relaxed">
-              {successMsg}
-            </p>
-            <button 
-              onClick={() => setSuccessMsg(null)} 
-              className="mt-8 w-full py-3.5 bg-slate-900 text-white font-bold rounded-xl hover:bg-black transition shadow-lg"
-            >
-              Close
-            </button>
+            <p className="text-sm text-slate-500 text-center font-medium leading-relaxed">{successMsg}</p>
+            <button onClick={() => setSuccessMsg(null)} className="mt-8 w-full py-3.5 bg-slate-900 text-white font-bold rounded-xl hover:bg-black transition shadow-lg">Close</button>
           </div>
         </div>
       )}

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { Camera, Send, MapPin, Wrench, ImagePlus, Trash2, CheckCircle } from 'lucide-react';
 
@@ -75,6 +75,10 @@ export default function NewComplaint() {
   const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
   const [successRef, setSuccessRef] = useState<string | null>(null);
   
+  // RBAC State
+  const [, setUserRole] = useState('STANDARD_USER');
+  const [isSupervisor, setIsSupervisor] = useState(false);
+  
   const [form, setForm] = useState({
     zone: '',
     venue: '',
@@ -85,6 +89,28 @@ export default function NewComplaint() {
     priority: 'Medium (12–24 hrs)',
     description: ''
   });
+
+  useEffect(() => {
+    fetchUserProfile();
+  }, []);
+
+  const fetchUserProfile = async () => {
+    const { data: authData } = await supabase.auth.getUser();
+    if (authData.user) {
+      const { data: profile } = await supabase.from('profiles').select('role, zone').eq('id', authData.user.id).single();
+      if (profile) {
+        setUserRole(profile.role);
+        
+        // Lock down zone for Supervisors
+        if (profile.role === 'SUPERVISOR') {
+          setIsSupervisor(true);
+          if (profile.zone) {
+            setForm(prev => ({ ...prev, zone: profile.zone.trim() }));
+          }
+        }
+      }
+    }
+  };
 
   const handleZoneChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     setForm({ ...form, zone: e.target.value, venue: '' }); // Reset venue when zone changes
@@ -168,8 +194,17 @@ export default function NewComplaint() {
       // Show Success Modal
       setSuccessRef(complaintData.complaint_id);
       
-      // Reset Form
-      setForm({ zone: '', venue: '', floor: '', roomArea: '', studentTr: '', category: '', priority: 'Medium (12–24 hrs)', description: '' });
+      // Reset Form (Preserving Supervisor Zone)
+      setForm(prev => ({ 
+        zone: isSupervisor ? prev.zone : '', 
+        venue: '', 
+        floor: '', 
+        roomArea: '', 
+        studentTr: '', 
+        category: '', 
+        priority: 'Medium (12–24 hrs)', 
+        description: '' 
+      }));
       setPhotos([]);
       setPhotoPreviews([]);
 
@@ -206,12 +241,19 @@ export default function NewComplaint() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5 md:gap-6">
             <div>
               <label className="block text-[11px] font-black text-slate-500 uppercase mb-2">Zone *</label>
-              <select required value={form.zone} onChange={handleZoneChange} className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-brand-maroon outline-none transition shadow-sm">
+              <select 
+                required 
+                disabled={isSupervisor}
+                value={form.zone} 
+                onChange={handleZoneChange} 
+                className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-brand-maroon outline-none transition shadow-sm disabled:opacity-70 disabled:cursor-not-allowed"
+              >
                 <option value="" disabled>-- Select Zone --</option>
                 {Object.keys(ZONES).map(zone => (
                   <option key={zone} value={zone}>{zone}</option>
                 ))}
               </select>
+              {isSupervisor && <p className="text-[9px] font-bold text-brand-maroon mt-1.5 uppercase">Locked to assigned zone</p>}
             </div>
             <div>
               <label className="block text-[11px] font-black text-slate-500 uppercase mb-2">Building / Venue *</label>

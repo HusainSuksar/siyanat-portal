@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase, type InventoryItem } from '../lib/supabase';
-import { Warehouse, Plus, Trash2, Save, Search, PackageSearch, Edit, X, CheckCircle, Hash } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
+import { Warehouse, Plus, Trash2, Save, Search, PackageSearch, Edit, X, Hash, ShoppingCart, Truck, Building2 } from 'lucide-react';
 
 type RestockRow = {
   id: string;
@@ -11,38 +12,71 @@ type RestockRow = {
   qty: number;
 };
 
-const CATEGORIES = [
+const SIYANAT_CATEGORIES = [
   "Electrical & Lighting", "Plumbing & Sanitary", "HVAC & AC Maintenance", 
   "Civil & Masonry", "Carpentry & Hardware", "Painting & Finishes", 
-  "Safety & PPE Equipment", "Cleaning & Janitorial Supplies", "Office & Administrative Supplies", 
-  "IT & Networking Hardware", "Tools & Machinery", "General / Miscellaneous"
+  "Safety & PPE Equipment", "Cleaning & Janitorial Supplies", 
+  "Tools & Machinery", "General / Miscellaneous"
+];
+
+const TANZEEM_CATEGORIES = [
+  "Office & Administrative Supplies", 
+  "IT & Networking Hardware"
 ];
 
 export default function RestockInventory() {
+  const { role, user } = useAuth();
+  const [activeTab, setActiveTab] = useState<'catalog' | 'restock' | 'pos' | 'vendors'>('catalog');
+  
   const [catalog, setCatalog] = useState<InventoryItem[]>([]);
+  const [vendors, setVendors] = useState<any[]>([]);
+  const [pendingPOs, setPendingPOs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [rows, setRows] = useState<RestockRow[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   
+  // Vendor Form State
+  const [newVendorName, setNewVendorName] = useState('');
+  const [newVendorCategory, setNewVendorCategory] = useState('Electrical');
+  const [newVendorContact, setNewVendorContact] = useState('');
+
   // God Mode Edit State
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
   const [processingId, setProcessingId] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchCatalog();
-  }, []);
+  const isTanzeemOnly = role === 'TANZEEM_HEAD';
+  const availableCategories = isTanzeemOnly ? TANZEEM_CATEGORIES : [...SIYANAT_CATEGORIES, ...TANZEEM_CATEGORIES];
 
-  const fetchCatalog = async () => {
+  useEffect(() => {
+    fetchData();
+  }, [activeTab]);
+
+  const fetchData = async () => {
     setLoading(true);
-    const { data, error } = await supabase.from('inventory_items').select('*').order('name');
-    if (data && !error) {
-      setCatalog(data);
-      if (rows.length === 0 && data.length > 0) {
-        addRow(data);
+    
+    // 1. Fetch Catalog with Departmental Filtering
+    let catQuery = supabase.from('inventory_items').select('*').order('name');
+    if (isTanzeemOnly) {
+      catQuery = catQuery.in('category', TANZEEM_CATEGORIES);
+    }
+    const { data: catData } = await catQuery;
+    if (catData) {
+      setCatalog(catData);
+      if (rows.length === 0 && catData.length > 0) {
+        addRow(catData);
       }
     }
+
+    // 2. Fetch Vendors
+    const { data: vendorData } = await supabase.from('vendors').select('*').order('name');
+    if (vendorData) setVendors(vendorData);
+
+    // 3. Fetch Pending POs
+    const { data: poData } = await supabase.from('purchase_orders').select('*, vendor:vendors(name, category), technician:profiles(full_name), items:purchase_order_items(*)').eq('status', 'PO Issued').order('created_at', { ascending: false });
+    if (poData) setPendingPOs(poData);
+
     setLoading(false);
   };
 
@@ -53,7 +87,7 @@ export default function RestockInventory() {
       type: 'EXISTING',
       itemId: defaultItemId,
       name: '',
-      category: CATEGORIES[0],
+      category: availableCategories[0],
       qty: 10,
     }]);
   };
@@ -66,10 +100,8 @@ export default function RestockInventory() {
     setSubmitting(true);
 
     try {
-      const { data: authData } = await supabase.auth.getUser();
       let totalItemsRestocked = 0;
 
-      // 1. Process Stock Additions
       for (const row of rows) {
         if (row.type === 'NEW') {
           const { error } = await supabase.from('inventory_items').insert({
@@ -90,45 +122,12 @@ export default function RestockInventory() {
       await supabase.from('system_logs').insert({
         action_type: 'INVENTORY_RESTOCK',
         description: `Processed bulk restock adding ${totalItemsRestocked} items.`,
-        user_email: authData.user?.email || 'System Admin'
+        user_email: user?.email || 'System Admin'
       });
 
-      // 2. AUTO-FULFILLMENT ENGINE
-      const { data: pendingItems } = await supabase
-        .from('work_order_items')
-        .select('id, inventory_id, requested_qty, work_order_id, item_type')
-        .in('status', ['Pending', 'Ordered'])
-        .order('id', { ascending: true });
-
-      if (pendingItems) {
-        let autoFulfilledCount = 0;
-        for (const pItem of pendingItems) {
-          if (pItem.item_type !== 'Catalog' || !pItem.inventory_id) continue;
-          
-          const { data: inv } = await supabase.from('inventory_items').select('physical_stock, freezed_stock').eq('id', pItem.inventory_id).single();
-          if (inv) {
-            const available = inv.physical_stock - inv.freezed_stock;
-            if (available >= pItem.requested_qty) {
-              await supabase.from('work_order_items').update({ status: 'Available' }).eq('id', pItem.id);
-              await supabase.from('inventory_items').update({ freezed_stock: inv.freezed_stock + pItem.requested_qty }).eq('id', pItem.inventory_id);
-              await supabase.from('work_orders').update({ dispatch_status: 'Pending' }).eq('id', pItem.work_order_id);
-              autoFulfilledCount++;
-            }
-          }
-        }
-
-        if (autoFulfilledCount > 0) {
-          await supabase.from('system_logs').insert({
-            action_type: 'AUTO_FULFILLMENT',
-            description: `Auto-fulfillment Engine successfully fulfilled ${autoFulfilledCount} pending items from the RTO queue using new stock.`,
-            user_email: authData.user?.email || 'System Admin'
-          });
-        }
-      }
-
-      alert("Inventory Restocked & Auto-Fulfillment Engine executed successfully!");
+      alert("Inventory Restocked Successfully!");
       setRows([]);
-      fetchCatalog();
+      fetchData();
     } catch (err: any) {
       alert("Error processing restock: " + err.message);
     } finally {
@@ -136,51 +135,82 @@ export default function RestockInventory() {
     }
   };
 
-  // --- GOD MODE: EDIT & DELETE INVENTORY ---
+  // --- VENDOR MANAGEMENT ACTIONS ---
+  const handleAddVendor = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newVendorName.trim()) return;
+
+    const { error } = await supabase.from('vendors').insert({
+      name: newVendorName,
+      category: newVendorCategory,
+      contact_info: newVendorContact
+    });
+
+    if (!error) {
+      setNewVendorName('');
+      setNewVendorContact('');
+      alert("Vendor registered successfully!");
+      fetchData();
+    } else {
+      alert("Error adding vendor.");
+    }
+  };
+
+  const toggleVendorStatus = async (id: string, currentStatus: boolean) => {
+    await supabase.from('vendors').update({ is_active: !currentStatus }).eq('id', id);
+    fetchData();
+  };
+
+  // --- PO FULFILLMENT / RECEIVING DOCK ---
+  const fulfillPO = async (po: any) => {
+    if (!confirm(`Mark Purchase Order ${po.po_number} as Received? This will inject items into warehouse stock.`)) return;
+    setProcessingId(po.id);
+
+    try {
+      // 1. Update PO Status
+      await supabase.from('purchase_orders').update({ status: 'Fulfilled & Received' }).eq('id', po.id);
+
+      // 2. Increment physical stock for each item in the PO
+      for (const item of po.items) {
+        if (item.inventory_id) {
+          const { data: inv } = await supabase.from('inventory_items').select('physical_stock').eq('id', item.inventory_id).single();
+          if (inv) {
+            await supabase.from('inventory_items').update({ physical_stock: inv.physical_stock + item.requested_qty }).eq('id', item.inventory_id);
+          }
+        }
+      }
+
+      await supabase.from('system_logs').insert({
+        action_type: 'PO_FULFILLED',
+        description: `Received shipment for PO ${po.po_number}. Warehouse stock updated.`,
+        user_email: user?.email || 'System Admin'
+      });
+
+      alert(`PO ${po.po_number} fulfilled and inventory stock updated!`);
+      fetchData();
+    } catch (err: any) {
+      alert("Error fulfilling PO: " + err.message);
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
   const handleUpdateItem = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingItem) return;
     setProcessingId(editingItem.id);
 
     const { error } = await supabase.from('inventory_items').update({
-      name: editingItem.name,
-      category: editingItem.category,
-      unit: editingItem.unit,
-      physical_stock: editingItem.physical_stock,
-      freezed_stock: editingItem.freezed_stock
+      name: editingItem.name, category: editingItem.category, unit: editingItem.unit,
+      physical_stock: editingItem.physical_stock, freezed_stock: editingItem.freezed_stock
     }).eq('id', editingItem.id);
 
     if (!error) {
-      const { data: authData } = await supabase.auth.getUser();
-      await supabase.from('system_logs').insert({
-        action_type: 'INVENTORY_MODIFIED',
-        description: `Admin manually modified master catalog item: ${editingItem.name}.`,
-        user_email: authData.user?.email || 'System Admin'
-      });
       alert('Item updated successfully.');
       setEditModalOpen(false);
-      fetchCatalog();
+      fetchData();
     } else {
       alert("Error updating item.");
-    }
-    setProcessingId(null);
-  };
-
-  const handleDeleteItem = async (id: string, name: string) => {
-    if (!confirm(`GOD MODE WARNING: Are you sure you want to completely eradicate '${name}' from the master catalog? This will fail if it's tied to existing historical requests.`)) return;
-    setProcessingId(id);
-
-    const { error } = await supabase.from('inventory_items').delete().eq('id', id);
-    if (!error) {
-      const { data: authData } = await supabase.auth.getUser();
-      await supabase.from('system_logs').insert({
-        action_type: 'GOD_MODE_DELETE',
-        description: `Admin hard-deleted master catalog item: ${name}.`,
-        user_email: authData.user?.email || 'System Admin'
-      });
-      fetchCatalog();
-    } else {
-      alert("Cannot delete item. It is currently linked to historical batches or request logs.");
     }
     setProcessingId(null);
   };
@@ -188,236 +218,261 @@ export default function RestockInventory() {
   const filteredCatalog = catalog.filter(item => item.name.toLowerCase().includes(searchTerm.toLowerCase()) || item.category.toLowerCase().includes(searchTerm.toLowerCase()));
 
   return (
-    <div className="space-y-6 pb-24">
+    <div className="space-y-6 max-w-6xl mx-auto pb-24">
       
-      {/* --- MASTER LIVE INVENTORY (Mobile-Friendly Cards) --- */}
-      <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 space-y-4 max-w-5xl mx-auto">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b pb-4">
-          <div className="flex items-center space-x-2">
-            <PackageSearch className="w-5 h-5 text-brand-maroon" />
-            <h2 className="font-extrabold text-sm uppercase text-slate-800">Master Live Catalog</h2>
-          </div>
-          <div className="relative w-full md:w-72">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-            <input 
-              type="text" 
-              placeholder="Search items or categories..." 
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-brand-maroon outline-none transition"
-            />
-          </div>
-        </div>
-
-        <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
-          {loading ? (
-            <div className="p-6 text-center text-slate-500 font-medium animate-pulse bg-slate-50 rounded-xl border border-slate-100">Fetching warehouse data...</div>
-          ) : filteredCatalog.length === 0 ? (
-            <div className="p-6 text-center text-slate-500 font-medium italic bg-slate-50 rounded-xl border border-slate-100">No items match your search.</div>
-          ) : (
-            filteredCatalog.map(item => {
-              const isLowStock = (item.physical_stock - item.freezed_stock) <= 5;
-              return (
-                <div key={item.id} className="bg-white rounded-xl p-4 border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4 transition hover:border-slate-300">
-                  
-                  <div className="flex-1 space-y-2">
-                    <div>
-                      <h3 className="font-bold text-slate-800 text-sm">{item.name}</h3>
-                      <div className="flex items-center gap-2 mt-1">
-                        <span className="text-[10px] text-slate-500 font-mono bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">{item.item_id}</span>
-                        <span className="text-[10px] font-semibold text-slate-500 line-clamp-1">{item.category}</span>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2 bg-slate-50 p-2.5 rounded-lg border border-slate-100">
-                      <div>
-                        <div className="text-[9px] text-slate-400 uppercase font-black tracking-wide mb-1">Available</div>
-                        <span className={`px-2 py-0.5 rounded text-[11px] font-extrabold shadow-sm ${isLowStock ? 'bg-red-100 text-red-700 border border-red-200' : 'bg-emerald-100 text-emerald-800 border border-emerald-200'}`}>
-                          {item.physical_stock - item.freezed_stock} {item.unit}
-                        </span>
-                      </div>
-                      <div>
-                        <div className="text-[9px] text-slate-400 uppercase font-black tracking-wide mb-1">Breakdown</div>
-                        <span className="text-[10px] text-slate-600 font-bold">
-                          Phy: {item.physical_stock} | Frz: {item.freezed_stock}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-row md:flex-col gap-2 w-full md:w-auto border-t md:border-t-0 border-slate-100 pt-3 md:pt-0">
-                    <button 
-                      onClick={() => { setEditingItem(item); setEditModalOpen(true); }} 
-                      disabled={processingId === item.id} 
-                      className="flex-1 md:w-full py-2.5 md:py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition disabled:opacity-50 flex items-center justify-center gap-1.5"
-                    >
-                      <Edit className="w-4 h-4 md:w-3.5 md:h-3.5" /> <span className="md:hidden text-xs font-bold">Edit</span>
-                    </button>
-                    <button 
-                      onClick={() => handleDeleteItem(item.id, item.name)} 
-                      disabled={processingId === item.id} 
-                      className="flex-1 md:w-full py-2.5 md:py-2 px-3 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl transition disabled:opacity-50 flex items-center justify-center gap-1.5"
-                    >
-                      <Trash2 className="w-4 h-4 md:w-3.5 md:h-3.5" /> <span className="md:hidden text-xs font-bold">Delete</span>
-                    </button>
-                  </div>
-                  
-                </div>
-              );
-            })
-          )}
-        </div>
+      {/* Header Tabs */}
+      <div className="flex space-x-2 border-b border-slate-200 overflow-x-auto pb-1">
+        <button onClick={() => setActiveTab('catalog')} className={`px-5 py-3 text-xs uppercase tracking-widest font-black border-b-2 transition flex items-center gap-2 whitespace-nowrap ${activeTab === 'catalog' ? 'border-brand-maroon text-brand-maroon' : 'border-transparent text-slate-400 hover:text-slate-700'}`}>
+          <PackageSearch className="w-4 h-4" /> Master Catalog ({catalog.length})
+        </button>
+        <button onClick={() => setActiveTab('restock')} className={`px-5 py-3 text-xs uppercase tracking-widest font-black border-b-2 transition flex items-center gap-2 whitespace-nowrap ${activeTab === 'restock' ? 'border-brand-maroon text-brand-maroon' : 'border-transparent text-slate-400 hover:text-slate-700'}`}>
+          <Warehouse className="w-4 h-4" /> Incoming Restock
+        </button>
+        <button onClick={() => setActiveTab('pos')} className={`px-5 py-3 text-xs uppercase tracking-widest font-black border-b-2 transition flex items-center gap-2 whitespace-nowrap ${activeTab === 'pos' ? 'border-brand-maroon text-brand-maroon' : 'border-transparent text-slate-400 hover:text-slate-700'}`}>
+          <ShoppingCart className="w-4 h-4" /> Pending POs
+          {pendingPOs.length > 0 && <span className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full ml-1">{pendingPOs.length}</span>}
+        </button>
+        <button onClick={() => setActiveTab('vendors')} className={`px-5 py-3 text-xs uppercase tracking-widest font-black border-b-2 transition flex items-center gap-2 whitespace-nowrap ${activeTab === 'vendors' ? 'border-brand-maroon text-brand-maroon' : 'border-transparent text-slate-400 hover:text-slate-700'}`}>
+          <Building2 className="w-4 h-4" /> Vendor Directory
+        </button>
       </div>
 
-      {/* --- BULK RESTOCK GRID (Mobile-Friendly Cards) --- */}
-      <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 space-y-4 max-w-5xl mx-auto">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b pb-4">
-          <div className="flex items-center space-x-2">
-            <Warehouse className="w-5 h-5 text-brand-maroon" />
-            <h2 className="font-extrabold text-sm uppercase text-slate-800">Incoming Shipments (Restock)</h2>
+      {/* --- TAB 1: MASTER CATALOG --- */}
+      {activeTab === 'catalog' && (
+        <div className="bg-white rounded-3xl p-5 md:p-8 shadow-sm border border-slate-200 space-y-5">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-100 pb-4">
+            <h3 className="font-black text-sm uppercase tracking-wide text-slate-800">Inventory Stock Overview</h3>
+            <div className="relative w-full md:w-72">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+              <input type="text" placeholder="Search catalog..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-brand-maroon" />
+            </div>
           </div>
-          <button 
-            onClick={() => addRow()} 
-            className="w-full sm:w-auto px-4 py-2.5 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl shadow-sm transition flex justify-center items-center space-x-2"
-          >
-            <Plus className="w-4 h-4" /><span>Add Row</span>
-          </button>
-        </div>
 
-        <div className="space-y-4">
-          {loading && catalog.length === 0 ? (
-            <div className="p-6 text-center text-slate-500 font-medium bg-slate-50 rounded-xl border border-slate-100">Loading catalog...</div>
-          ) : rows.length === 0 ? (
-            <div className="p-6 text-center text-slate-500 font-medium italic bg-slate-50 rounded-xl border border-slate-100">Click "Add Row" to begin restocking.</div>
-          ) : (
-            rows.map((row, index) => (
-              <div key={row.id} className="relative bg-white rounded-2xl p-4 shadow-sm border border-slate-200 flex flex-col gap-4 animate-in fade-in zoom-in-95 duration-200">
-                
-                {/* Remove Button for Mobile/Desktop */}
-                <button 
-                  onClick={() => removeRow(row.id)} 
-                  className="absolute top-3 right-3 p-2 text-red-500 hover:bg-red-100 rounded-lg transition z-10" 
-                  title="Remove Row"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-                
-                <div className="font-black text-slate-300 text-xs uppercase flex items-center gap-1"><Hash className="w-3 h-3"/> Row {index + 1}</div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+            {loading ? (
+              <div className="col-span-full p-8 text-center text-slate-400 font-bold animate-pulse">Loading catalog...</div>
+            ) : filteredCatalog.length === 0 ? (
+              <div className="col-span-full p-8 text-center text-slate-400 font-bold italic">No items found.</div>
+            ) : (
+              filteredCatalog.map(item => {
+                const avail = item.physical_stock - item.freezed_stock;
+                return (
+                  <div key={item.id} className="bg-slate-50 rounded-2xl p-4 border border-slate-200 flex flex-col justify-between shadow-sm">
+                    <div>
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="text-[9px] font-black uppercase tracking-wider bg-white px-2 py-0.5 rounded border border-slate-200 text-slate-500">{item.unit}</span>
+                        <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded ${avail > 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-700'}`}>
+                          {avail > 0 ? `Avail: ${avail}` : 'Out of Stock'}
+                        </span>
+                      </div>
+                      <h4 className="font-bold text-slate-800 text-sm leading-tight">{item.name}</h4>
+                      <p className="text-[10px] text-slate-500 font-semibold uppercase mt-1">{item.category}</p>
+                    </div>
+                    <div className="mt-4 pt-3 border-t border-slate-200 flex justify-between items-center">
+                      <span className="text-[10px] font-bold text-slate-400">Phy: {item.physical_stock} | Frz: {item.freezed_stock}</span>
+                      <button onClick={() => { setEditingItem(item); setEditModalOpen(true); }} className="px-3 py-1.5 bg-white hover:bg-slate-100 text-slate-700 rounded-lg text-xs font-bold border border-slate-200 shadow-sm transition flex items-center gap-1">
+                        <Edit className="w-3.5 h-3.5" /> Edit
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* --- TAB 2: INCOMING RESTOCK --- */}
+      {activeTab === 'restock' && (
+        <div className="bg-white rounded-3xl p-5 md:p-8 shadow-sm border border-slate-200 space-y-5">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-100 pb-4">
+            <h3 className="font-black text-sm uppercase tracking-wide text-slate-800">Process Bulk Shipment Restock</h3>
+            <button onClick={() => addRow()} className="px-4 py-2.5 bg-slate-900 hover:bg-black text-white font-black text-xs uppercase tracking-wide rounded-xl shadow-sm transition flex items-center gap-1.5">
+              <Plus className="w-4 h-4" /> Add Row
+            </button>
+          </div>
+
+          <div className="space-y-4">
+            {rows.map((row, index) => (
+              <div key={row.id} className="relative bg-slate-50 rounded-2xl p-4 border border-slate-200 shadow-sm flex flex-col gap-4">
+                <button onClick={() => removeRow(row.id)} className="absolute top-3 right-3 p-1.5 text-red-500 hover:bg-red-100 rounded-lg transition" title="Remove"><Trash2 className="w-4 h-4" /></button>
+                <div className="font-black text-slate-400 text-[10px] uppercase tracking-widest flex items-center gap-1"><Hash className="w-3 h-3"/> Row {index + 1}</div>
 
                 <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-                  {/* Item Source */}
                   <div className="md:col-span-3">
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Item Source</label>
-                    <select 
-                      value={row.type} 
-                      onChange={(e) => updateRow(row.id, 'type', e.target.value)} 
-                      className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold focus:ring-2 focus:ring-brand-maroon outline-none transition"
-                    >
-                      <option value="EXISTING">Existing Catalog Item</option>
+                    <label className="block text-[10px] font-black text-slate-500 uppercase mb-1.5">Source</label>
+                    <select value={row.type} onChange={(e) => updateRow(row.id, 'type', e.target.value)} className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none">
+                      <option value="EXISTING">Catalog Item</option>
                       <option value="NEW">New Unlisted Item</option>
                     </select>
                   </div>
                   
-                  {/* Item Details */}
                   <div className="md:col-span-4">
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Item Details</label>
+                    <label className="block text-[10px] font-black text-slate-500 uppercase mb-1.5">Item Name</label>
                     {row.type === 'EXISTING' ? (
-                      <select 
-                        value={row.itemId} 
-                        onChange={(e) => updateRow(row.id, 'itemId', e.target.value)} 
-                        className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-brand-maroon outline-none transition"
-                      >
-                        {catalog.map(item => <option key={item.id} value={item.id}>{item.name} (Avail: {item.physical_stock - item.freezed_stock})</option>)}
+                      <select value={row.itemId} onChange={(e) => updateRow(row.id, 'itemId', e.target.value)} className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-semibold outline-none">
+                        {catalog.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
                       </select>
                     ) : (
-                      <input 
-                        type="text" 
-                        placeholder="e.g. PVC Pipe 1-inch" 
-                        value={row.name} 
-                        onChange={(e) => updateRow(row.id, 'name', e.target.value)} 
-                        className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-brand-maroon outline-none transition" 
-                      />
+                      <input type="text" placeholder="e.g. Copper Wire" value={row.name} onChange={(e) => updateRow(row.id, 'name', e.target.value)} className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-semibold outline-none" />
                     )}
                   </div>
 
-                  {/* Category */}
                   <div className="md:col-span-3">
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Category</label>
-                    <select 
-                      value={row.category} 
-                      onChange={(e) => updateRow(row.id, 'category', e.target.value)} 
-                      className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-brand-maroon outline-none transition"
-                    >
-                      {CATEGORIES.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                    <label className="block text-[10px] font-black text-slate-500 uppercase mb-1.5">Category</label>
+                    <select value={row.category} onChange={(e) => updateRow(row.id, 'category', e.target.value)} className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-semibold outline-none">
+                      {availableCategories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
                     </select>
                   </div>
 
-                  {/* Qty */}
                   <div className="md:col-span-2">
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Quantity</label>
-                    <input 
-                      type="number" 
-                      min="1" 
-                      value={row.qty} 
-                      onChange={(e) => updateRow(row.id, 'qty', parseInt(e.target.value) || 0)} 
-                      className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-sm font-black text-center focus:ring-2 focus:ring-brand-maroon outline-none transition" 
-                    />
+                    <label className="block text-[10px] font-black text-slate-500 uppercase mb-1.5">Quantity</label>
+                    <input type="number" min="1" value={row.qty} onChange={(e) => updateRow(row.id, 'qty', parseInt(e.target.value) || 0)} className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-sm font-black text-center outline-none" />
                   </div>
                 </div>
               </div>
-            ))
-          )}
+            ))}
+          </div>
+
+          <button onClick={submitBulkRestock} disabled={submitting || rows.length === 0} className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase tracking-widest rounded-2xl shadow-xl transition flex justify-center items-center gap-2 disabled:opacity-50">
+            <Save className="w-4 h-4" /> {submitting ? 'Processing Restock...' : 'Commit Restock to Warehouse'}
+          </button>
         </div>
+      )}
 
-        <button 
-          onClick={submitBulkRestock} 
-          disabled={submitting || rows.length === 0} 
-          className="w-full py-4 mt-6 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs md:text-sm uppercase tracking-wider rounded-xl shadow-lg transition flex justify-center items-center space-x-2 disabled:opacity-70"
-        >
-          {submitting ? <span>Processing Updates...</span> : <><Save className="w-5 h-5" /><span>Process Restock & Auto-Fulfill Pended</span></>}
-        </button>
-      </div>
+      {/* --- TAB 3: PENDING POs (RECEIVING DOCK) --- */}
+      {activeTab === 'pos' && (
+        <div className="bg-white rounded-3xl p-5 md:p-8 shadow-sm border border-slate-200 space-y-5">
+          <div className="border-b border-slate-100 pb-4">
+            <h3 className="font-black text-sm uppercase tracking-wide text-slate-800">Pending Purchase Orders (Receiving Dock)</h3>
+            <p className="text-xs font-bold text-slate-400 mt-1">Mark shipments as received to automatically update warehouse stock.</p>
+          </div>
 
-      {/* --- GOD MODE: EDIT ITEM MODAL --- */}
-      {editModalOpen && editingItem && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex justify-center items-end sm:items-center p-4">
-          <div className="bg-white rounded-3xl w-full max-w-sm shadow-2xl overflow-hidden animate-in slide-in-from-bottom sm:slide-in-from-bottom-0 sm:zoom-in-95 duration-300">
-            <div className="bg-slate-800 p-5 flex justify-between items-center text-white">
-              <h3 className="font-extrabold text-sm uppercase">Edit Catalog Item</h3>
-              <button onClick={() => setEditModalOpen(false)} className="p-1 hover:bg-white/20 rounded-lg transition"><X className="w-5 h-5 hover:text-red-300" /></button>
-            </div>
-            
-            <form onSubmit={handleUpdateItem} className="p-6 space-y-5">
+          <div className="space-y-4">
+            {pendingPOs.length === 0 ? (
+              <div className="p-12 text-center text-slate-400 font-bold italic bg-slate-50 rounded-2xl border border-slate-100">No pending purchase orders waiting for delivery.</div>
+            ) : (
+              pendingPOs.map(po => (
+                <div key={po.id} className="bg-slate-50 rounded-2xl p-5 border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between gap-5">
+                  <div className="space-y-3 flex-1">
+                    <div className="flex items-center gap-3">
+                      <h4 className="font-black text-brand-maroon text-base">{po.po_number}</h4>
+                      <span className="px-2.5 py-0.5 bg-indigo-100 text-indigo-800 text-[9px] font-black uppercase tracking-wider rounded border border-indigo-200">{po.status}</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-white p-3.5 rounded-xl border border-slate-100">
+                      <div>
+                        <span className="text-[10px] font-black uppercase text-slate-400">Vendor:</span>
+                        <p className="font-bold text-slate-800 text-xs">{po.vendor?.name || 'External Vendor'}</p>
+                      </div>
+                      <div>
+                        <span className="text-[10px] font-black uppercase text-slate-400">Requested By:</span>
+                        <p className="font-bold text-slate-800 text-xs">{po.technician?.full_name || 'Field Technician'}</p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <span className="text-[10px] font-black uppercase text-slate-400">Ordered Items:</span>
+                      {po.items.map((i: any) => (
+                        <div key={i.id} className="text-xs font-bold text-slate-700 bg-white px-3 py-1.5 rounded-lg border border-slate-100 flex justify-between">
+                          <span>{i.custom_item_name || 'Catalog Item'}</span>
+                          <span className="text-brand-maroon">Qty: {i.requested_qty}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center">
+                    <button onClick={() => fulfillPO(po)} disabled={processingId === po.id} className="w-full md:w-auto px-6 py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase tracking-widest rounded-xl shadow-lg transition flex items-center justify-center gap-2 disabled:opacity-50">
+                      <Truck className="w-4 h-4" /> Receive Shipment
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* --- TAB 4: VENDOR DIRECTORY --- */}
+      {activeTab === 'vendors' && (
+        <div className="bg-white rounded-3xl p-5 md:p-8 shadow-sm border border-slate-200 space-y-6">
+          <div className="border-b border-slate-100 pb-4">
+            <h3 className="font-black text-sm uppercase tracking-wide text-slate-800">Manage Approved Vendors</h3>
+            <p className="text-xs font-bold text-slate-400 mt-1">Add external suppliers used for purchase order generation.</p>
+          </div>
+
+          <form onSubmit={handleAddVendor} className="bg-slate-50 p-5 rounded-2xl border border-slate-200 space-y-4">
+            <h4 className="text-xs font-black uppercase text-slate-700 tracking-wider">Register New Vendor</h4>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
-                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Item Name</label>
-                <input required type="text" value={editingItem.name} onChange={e => setEditingItem({...editingItem, name: e.target.value})} className="w-full p-3 border border-slate-300 rounded-xl text-sm font-semibold outline-none focus:ring-2 focus:ring-brand-maroon transition"/>
+                <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">Vendor Name *</label>
+                <input required type="text" placeholder="e.g. Al-Saif Hardware" value={newVendorName} onChange={e => setNewVendorName(e.target.value)} className="w-full p-3 bg-white border border-slate-300 rounded-xl text-xs font-bold outline-none" />
               </div>
-
               <div>
-                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Category</label>
-                <select required value={editingItem.category} onChange={e => setEditingItem({...editingItem, category: e.target.value})} className="w-full p-3 border border-slate-300 rounded-xl text-sm font-semibold outline-none focus:ring-2 focus:ring-brand-maroon transition">
-                  {CATEGORIES.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">Category *</label>
+                <select value={newVendorCategory} onChange={e => setNewVendorCategory(e.target.value)} className="w-full p-3 bg-white border border-slate-300 rounded-xl text-xs font-bold outline-none">
+                  <option value="Electrical">Electrical</option>
+                  <option value="Plumbing">Plumbing</option>
+                  <option value="Carpentry">Carpentry</option>
+                  <option value="Civil">Civil</option>
+                  <option value="General">General / Stationery</option>
                 </select>
               </div>
+              <div>
+                <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">Contact Info</label>
+                <input type="text" placeholder="Phone or email..." value={newVendorContact} onChange={e => setNewVendorContact(e.target.value)} className="w-full p-3 bg-white border border-slate-300 rounded-xl text-xs font-bold outline-none" />
+              </div>
+            </div>
+            <button type="submit" className="px-6 py-3 bg-slate-900 hover:bg-black text-white font-black text-xs uppercase tracking-widest rounded-xl shadow-md transition">Register Vendor</button>
+          </form>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="col-span-2">
-                  <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Measurement Unit</label>
-                  <input required type="text" value={editingItem.unit} onChange={e => setEditingItem({...editingItem, unit: e.target.value})} placeholder="e.g. Pcs, Box, Kg" className="w-full p-3 border border-slate-300 rounded-xl text-sm font-semibold outline-none focus:ring-2 focus:ring-brand-maroon transition"/>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {vendors.map(v => (
+              <div key={v.id} className="bg-slate-50 p-4 rounded-2xl border border-slate-200 flex justify-between items-center shadow-sm">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h5 className="font-bold text-slate-800 text-sm">{v.name}</h5>
+                    <span className={`px-2 py-0.5 text-[9px] font-black uppercase rounded ${v.is_active ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-700'}`}>
+                      {v.is_active ? 'Active' : 'Disabled'}
+                    </span>
+                  </div>
+                  <p className="text-[10px] font-bold text-slate-500 uppercase mt-1">Category: {v.category}</p>
+                  {v.contact_info && <p className="text-[10px] text-slate-400 mt-0.5">{v.contact_info}</p>}
+                </div>
+                <button onClick={() => toggleVendorStatus(v.id, v.is_active)} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${v.is_active ? 'bg-red-50 text-red-600 hover:bg-red-100' : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'}`}>
+                  {v.is_active ? 'Disable' : 'Enable'}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Edit Item Modal */}
+      {editModalOpen && editingItem && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex justify-center items-center p-4">
+          <div className="bg-white rounded-3xl w-full max-w-sm shadow-2xl overflow-hidden">
+            <div className="bg-slate-800 p-5 flex justify-between items-center text-white">
+              <h3 className="font-extrabold text-sm uppercase">Edit Item</h3>
+              <button onClick={() => setEditModalOpen(false)}><X className="w-5 h-5" /></button>
+            </div>
+            <form onSubmit={handleUpdateItem} className="p-6 space-y-4">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Name</label>
+                <input type="text" value={editingItem.name} onChange={e => setEditingItem({...editingItem, name: e.target.value})} className="w-full p-3 border border-slate-300 rounded-xl text-xs font-bold outline-none" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Physical</label>
+                  <input type="number" min="0" value={editingItem.physical_stock} onChange={e => setEditingItem({...editingItem, physical_stock: parseInt(e.target.value) || 0})} className="w-full p-3 border border-slate-300 rounded-xl text-xs font-black text-center outline-none" />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-bold text-emerald-700 uppercase mb-1.5">Physical Stock</label>
-                  <input required type="number" min="0" value={editingItem.physical_stock} onChange={e => setEditingItem({...editingItem, physical_stock: parseInt(e.target.value) || 0})} className="w-full p-3 border border-emerald-300 bg-emerald-50 rounded-xl text-sm font-black text-center outline-none focus:ring-2 focus:ring-emerald-500 transition"/>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-indigo-700 uppercase mb-1.5">Frozen Stock</label>
-                  <input required type="number" min="0" value={editingItem.freezed_stock} onChange={e => setEditingItem({...editingItem, freezed_stock: parseInt(e.target.value) || 0})} className="w-full p-3 border border-indigo-300 bg-indigo-50 rounded-xl text-sm font-black text-center outline-none focus:ring-2 focus:ring-indigo-500 transition"/>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Frozen</label>
+                  <input type="number" min="0" value={editingItem.freezed_stock} onChange={e => setEditingItem({...editingItem, freezed_stock: parseInt(e.target.value) || 0})} className="w-full p-3 border border-slate-300 rounded-xl text-xs font-black text-center outline-none" />
                 </div>
               </div>
-
-              <button type="submit" disabled={processingId === editingItem.id} className="w-full py-3.5 mt-2 bg-slate-900 hover:bg-black text-white font-extrabold text-xs uppercase tracking-wide rounded-xl shadow-lg transition disabled:opacity-50 flex items-center justify-center gap-2">
-                <CheckCircle className="w-4 h-4" /> Force Update Item
-              </button>
+              <button type="submit" className="w-full py-3 bg-slate-900 text-white font-bold text-xs uppercase tracking-wide rounded-xl shadow-lg">Save Changes</button>
             </form>
           </div>
         </div>
