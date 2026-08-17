@@ -73,8 +73,15 @@ export default function RestockInventory() {
     const { data: vendorData } = await supabase.from('vendors').select('*').order('name');
     if (vendorData) setVendors(vendorData);
 
-    // 3. Fetch Pending POs
-    const { data: poData } = await supabase.from('purchase_orders').select('*, vendor:vendors(name, category), technician:profiles(full_name), items:purchase_order_items(*)').eq('status', 'PO Issued').order('created_at', { ascending: false });
+    // 3. Fetch Pending POs (FIXED QUERY: Removed created_at sort)
+    const { data: poData, error: poError } = await supabase
+      .from('purchase_orders')
+      .select('*, vendor:vendors(name, category), items:purchase_order_items(*)')
+      .eq('status', 'PO Issued');
+
+    if (poError) {
+      console.error("Error fetching POs:", poError.message);
+    }
     if (poData) setPendingPOs(poData);
 
     setLoading(false);
@@ -180,13 +187,19 @@ export default function RestockInventory() {
         }
       }
 
+      // 3. THE AUTO-FULFILLMENT ENGINE: Wake up the technician's ticket!
+      if (po.complaint_id) {
+        await supabase.from('technician_assignments').update({ status: 'Assigned' }).eq('complaint_id', po.complaint_id);
+        await supabase.from('complaints').update({ status: 'Assigned' }).eq('id', po.complaint_id);
+      }
+
       await supabase.from('system_logs').insert({
         action_type: 'PO_FULFILLED',
-        description: `Received shipment for PO ${po.po_number}. Warehouse stock updated.`,
+        description: `Received shipment for PO ${po.po_number}. Auto-fulfillment triggered for ticket.`,
         user_email: user?.email || 'System Admin'
       });
 
-      alert(`PO ${po.po_number} fulfilled and inventory stock updated!`);
+      alert(`PO ${po.po_number} fulfilled! Technician has been notified.`);
       fetchData();
     } catch (err: any) {
       alert("Error fulfilling PO: " + err.message);

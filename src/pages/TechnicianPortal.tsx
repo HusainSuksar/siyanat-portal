@@ -41,7 +41,11 @@ export default function TechnicianPortal() {
         .eq('technician_id', authData.user.id)
         .order('assigned_at', { ascending: false });
 
-      if (data && !error) setAssignments(data);
+      if (error) {
+        console.error("Database Error fetching assignments:", error.message);
+      }
+      
+      if (data) setAssignments(data);
     }
     setLoading(false);
   };

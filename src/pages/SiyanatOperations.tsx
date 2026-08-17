@@ -245,18 +245,25 @@ export default function SiyanatOperations() {
     setProcessingId(selectedComplaint.id);
 
     try {
-      await supabase.from('technician_assignments').insert({
+      // 1. MUST destructure and check the 'error' object directly!
+      const { error: assignError } = await supabase.from('technician_assignments').insert({
         complaint_id: selectedComplaint.id,
         technician_id: selectedTechId,
         assigned_by: currentUser?.id
       });
-      await supabase.from('complaints').update({ status: 'Assigned' }).eq('id', selectedComplaint.id);
+      
+      if (assignError) throw assignError; // Force the app to catch the error
+
+      // 2. Only update the complaint if the assignment actually succeeded
+      const { error: updateError } = await supabase.from('complaints').update({ status: 'Assigned' }).eq('id', selectedComplaint.id);
+      if (updateError) throw updateError;
       
       setAssignModalOpen(false);
       setSelectedTechId('');
       fetchData();
     } catch(err: any) {
-       alert("Error assigning technician: " + err.message);
+       // This will now successfully alert you if a DB Trigger blocks the insert
+       alert("DATABASE ERROR Assigning Technician: " + err.message);
     } finally {
       setProcessingId(null);
     }
@@ -429,11 +436,15 @@ export default function SiyanatOperations() {
                        </div>
                      </div>
                      <div className="flex flex-row md:flex-col gap-2 w-full md:w-auto mt-2 md:mt-0 pt-3 md:pt-0 border-t md:border-t-0 border-slate-100 flex-wrap">
-                        {c.status === 'Approved by Supervisor' && (
-                          <button onClick={() => { setSelectedComplaint(c); setAssignModalOpen(true); }} className="flex-1 md:w-full py-2.5 px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-sm flex items-center justify-center gap-1.5 transition">
-                            <UserPlus className="w-3.5 h-3.5" /> Assign
-                          </button>
-                        )}
+                        {(c.status === 'Approved by Supervisor' || c.status === 'Assigned') && (
+  <button 
+    onClick={() => { setSelectedComplaint(c); setAssignModalOpen(true); }} 
+    className="flex-1 md:w-full py-2.5 px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-sm flex items-center justify-center gap-1.5 transition"
+  >
+    <UserPlus className="w-3.5 h-3.5" /> 
+    <span>{c.status === 'Assigned' ? 'Reassign' : 'Assign'}</span>
+  </button>
+)}
                         {c.status === 'Verified' && (
                           <button onClick={() => closeComplaint(c.id, c.complaint_id)} disabled={processingId === c.id} className="flex-1 md:w-full py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs shadow-sm flex items-center justify-center gap-1.5 disabled:opacity-50 transition">
                             <Archive className="w-3.5 h-3.5" /> Close
