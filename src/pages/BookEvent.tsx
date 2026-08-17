@@ -121,7 +121,7 @@ export default function BookEvent() {
       const role = profile?.role || 'STANDARD_USER';
       setUserRole(role);
       
-      const adminCheck = role === 'ADMIN' || role === 'GOD_MODE';
+      const adminCheck = role === 'ADMIN' || role === 'SUPER_ADMIN';
       setIsAdmin(adminCheck);
 
       if (adminCheck) fetchAllEvents();

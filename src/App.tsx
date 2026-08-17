@@ -83,7 +83,7 @@ const DesktopNavigation = ({ userRole }: { userRole: string }) => {
       : "px-4 py-2 rounded-xl font-bold text-xs bg-white text-slate-600 hover:text-slate-900 border border-slate-200 flex items-center space-x-2 whitespace-nowrap transition";
   };
 
-  const isGodMode = userRole === 'GOD_MODE' || userRole === 'ADMIN';
+  const isGodMode = userRole === 'SUPER_ADMIN' || userRole === 'ADMIN';
   const isSiyanatHead = userRole === 'SIYANAT_HEAD' || isGodMode;
   const isTanzeemHead = userRole === 'TANZEEM_HEAD' || isGodMode;
   const isAvitHead = userRole === 'AVIT_HEAD' || isGodMode;
@@ -148,7 +148,7 @@ const MobileDrawerNavigation = ({ userRole, isOpen, setIsOpen, handleLogout }: {
     </Link>
   );
 
-  const isGodMode = userRole === 'GOD_MODE' || userRole === 'ADMIN';
+  const isGodMode = userRole === 'SUPER_ADMIN' || userRole === 'ADMIN';
   const isSiyanatHead = userRole === 'SIYANAT_HEAD' || isGodMode;
   const isTanzeemHead = userRole === 'TANZEEM_HEAD' || isGodMode;
   const isAvitHead = userRole === 'AVIT_HEAD' || isGodMode;
@@ -270,7 +270,7 @@ export default function App() {
 
   if (loading) return <div className="flex justify-center items-center min-h-screen bg-brand-maroon text-brand-gold font-bold">Loading Portal...</div>;
 
-  const isGodMode = role === 'GOD_MODE' || role === 'ADMIN';
+  const isGodMode = role === 'SUPER_ADMIN' || role === 'ADMIN';
   const isSiyanatHead = role === 'SIYANAT_HEAD' || isGodMode;
   const isTanzeemHead = role === 'TANZEEM_HEAD' || isGodMode;
   const isAvitHead = role === 'AVIT_HEAD' || isGodMode;

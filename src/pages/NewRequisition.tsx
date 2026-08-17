@@ -257,7 +257,7 @@ export default function NewRequisition() {
               const available = Math.max(0, item.physical_stock - item.freezed_stock);
               const isOutOfStock = available <= 0;
               const currentQty = cart[item.id]?.qty || 0;
-              const canSeeStock = userRole === 'ADMIN' || userRole === 'SUPERVISOR' || userRole === 'SIYANAT_HEAD' || userRole === 'TANZEEM_HEAD' || userRole === 'AVIT_HEAD' || userRole === 'GOD_MODE';
+              const canSeeStock = userRole === 'ADMIN' || userRole === 'SUPERVISOR' || userRole === 'SIYANAT_HEAD' || userRole === 'TANZEEM_HEAD' || userRole === 'AVIT_HEAD' || userRole === 'SUPER_ADMIN';
 
               return (
                 <div key={item.id} className={`rounded-2xl p-4 border flex flex-col justify-between transition-all ${currentQty > 0 ? 'border-brand-maroon bg-brand-maroon/5 shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300'}`}>

@@ -376,7 +376,7 @@ export default function SiyanatOperations() {
                           <MessageSquare className="w-3.5 h-3.5"/> Chat
                         </button>
                         
-                        {(userRole === 'GOD_MODE' || userRole === 'ADMIN') && (
+                        {(userRole === 'SUPER_ADMIN' || userRole === 'ADMIN') && (
                           <button onClick={() => deleteBatch(b.id, b.batch_id)} disabled={processingId === b.id} className="py-2.5 px-3 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl transition disabled:opacity-50 flex items-center justify-center">
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -439,7 +439,7 @@ export default function SiyanatOperations() {
                             <Archive className="w-3.5 h-3.5" /> Close
                           </button>
                         )}
-                        {(userRole === 'GOD_MODE' || userRole === 'ADMIN') && (
+                        {(userRole === 'SUPER_ADMIN' || userRole === 'ADMIN') && (
                           <button onClick={() => deleteComplaint(c.id, c.complaint_id)} disabled={processingId === c.id} className="py-2.5 px-3 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl transition disabled:opacity-50 flex items-center justify-center">
                             <Trash2 className="w-4 h-4" />
                           </button>

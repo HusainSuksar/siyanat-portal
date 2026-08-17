@@ -125,7 +125,7 @@ export default function TanzeemCommandCenter() {
             </p>
           </div>
         </div>
-        {(role === 'TANZEEM_HEAD' || role === 'GOD_MODE') && (
+        {(role === 'TANZEEM_HEAD' || role === 'SUPER_ADMIN') && (
           <div className="px-5 py-2.5 bg-brand-maroon text-brand-gold font-black text-xs uppercase tracking-widest rounded-xl shadow-md border border-brand-dark/20 flex items-center gap-2 w-full sm:w-auto justify-center">
             {role.replace('_', ' ')}
           </div>
