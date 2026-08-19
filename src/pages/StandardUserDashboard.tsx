@@ -80,25 +80,15 @@ export default function StandardUserDashboard() {
   }, []);
 
   // --- MATERIAL ACTIONS ---
+  // THE FIX: Secure RPC Call
   const confirmReceipt = async (batch: any) => {
     if (!confirm("Confirm you have physically received these items? This will finalize the inventory deduction and close the request.")) return;
     setProcessingId(batch.id);
 
     try {
-      const { data: items, error: itemsError } = await supabase.from("work_order_items").select("*, inventory:inventory_items(id, physical_stock, freezed_stock)").eq("work_order_id", batch.id).eq("status", "Available");
-      if (itemsError) throw itemsError;
-
-      if (items) {
-        for (const item of items) {
-          if (item.item_type === "Catalog" && item.inventory) {
-            const newPhysical = Math.max(0, item.inventory.physical_stock - item.requested_qty);
-            const newFreezed = Math.max(0, item.inventory.freezed_stock - item.requested_qty);
-            await supabase.from("inventory_items").update({ physical_stock: newPhysical, freezed_stock: newFreezed }).eq("id", item.inventory.id);
-          }
-        }
-      }
-
-      await supabase.rpc('advance_pipeline', { target_table: 'work_orders', target_id: batch.id });
+      // Execute the secure database engine
+      const { error } = await supabase.rpc('receive_work_order', { target_id: batch.id });
+      if (error) throw error;
       
       await supabase.from("system_logs").insert({
         action_type: "ITEMS_RECEIVED",
@@ -109,6 +99,7 @@ export default function StandardUserDashboard() {
       alert("Receipt confirmed! Request completed.");
       fetchDashboardData();
     } catch (err: any) {
+      console.error(err);
       alert("Error confirming receipt: " + err.message);
     } finally {
       setProcessingId(null);

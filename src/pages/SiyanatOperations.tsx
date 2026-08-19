@@ -143,7 +143,8 @@ export default function SiyanatOperations() {
 
         await supabase.from('work_order_items').update({ status: decision.status, eta_days: decision.eta }).eq('id', item.id);
 
-        if (decision.status === 'Available' && item.item_type === 'Catalog' && item.inventory_id) {
+        // SECURITY FIX: Only freeze stock if moving FROM Pending TO Available
+        if (item.status === 'Pending' && decision.status === 'Available' && item.item_type === 'Catalog' && item.inventory_id) {
           const inv = item.inventory;
           const newFreezedStock = (inv?.freezed_stock || 0) + item.requested_qty;
           await supabase.from('inventory_items').update({ freezed_stock: newFreezedStock }).eq('id', item.inventory_id);
@@ -151,22 +152,19 @@ export default function SiyanatOperations() {
       }
 
       // 2. THE FIX: Smart Pipeline Evaluation
-      // We look at EVERY item in the batch (across all departments) to decide the fate of the Batch.
       const { data: allItems } = await supabase.from('work_order_items').select('status').eq('work_order_id', reviewBatch.id);
       
       const hasPending = allItems?.some(i => i.status === 'Pending' || i.status === 'Ordered');
       const hasAvailable = allItems?.some(i => i.status === 'Available');
 
+      let newState = 'REJECTED';
       if (hasPending) {
-        // Some items are waiting on RTO or another department head. Park it in PROCESSING.
-        await supabase.from('work_orders').update({ pipeline_state: 'PROCESSING' }).eq('id', reviewBatch.id);
+        newState = 'PROCESSING';
       } else if (hasAvailable) {
-        // All departments have finished, and there is at least one item ready for pickup!
-        await supabase.from('work_orders').update({ pipeline_state: 'ACTION_REQUIRED' }).eq('id', reviewBatch.id);
-      } else {
-        // Every single item was rejected
-        await supabase.from('work_orders').update({ pipeline_state: 'REJECTED' }).eq('id', reviewBatch.id);
+        newState = 'ACTION_REQUIRED';
       }
+
+      await supabase.from('work_orders').update({ pipeline_state: newState }).eq('id', reviewBatch.id);
 
       await supabase.from('system_logs').insert({
         action_type: 'BATCH_REVIEWED',
@@ -322,9 +320,11 @@ export default function SiyanatOperations() {
              <div className="grid grid-cols-1 gap-4">
                {batches.map(b => {
                  const isTechPORequest = b.department === 'Technician Procurement';
-                 const relevantItemsCount = (userRole === 'SUPER_ADMIN' || userRole === 'ADMIN')
-                   ? b.items?.length || 0
-                   : b.items?.filter((i: any) => i.fulfillment_dept === userRole).length || 0;
+                 const myItems = (userRole === 'SUPER_ADMIN' || userRole === 'ADMIN')
+                   ? b.items || []
+                   : b.items?.filter((i: any) => i.fulfillment_dept === userRole) || [];
+                 const relevantItemsCount = myItems.length;
+                 const needsReview = myItems.some((i: any) => i.status === 'Pending');
 
                  return (
                   <div key={b.id} className={`bg-white rounded-2xl p-5 shadow-sm border-2 flex flex-col md:flex-row md:items-center justify-between gap-4 ${isTechPORequest ? 'border-indigo-400' : 'border-slate-200'}`}>
@@ -354,7 +354,7 @@ export default function SiyanatOperations() {
 
                      <div className="flex flex-row md:flex-col gap-2 w-full md:w-auto mt-2 md:mt-0 pt-3 md:pt-0 border-t md:border-t-0 border-slate-100 flex-wrap">
                         
-                        {/* SPECIAL PO ACTION */}
+                        {/* SPECIAL PO ACTION & THE FIX: HIDE GHOST BUTTON */}
                         {isTechPORequest ? (
                           <button 
                             onClick={() => { setPoBatch(b); setPoModalOpen(true); }}
@@ -362,10 +362,14 @@ export default function SiyanatOperations() {
                           >
                             <ShoppingCart className="w-3.5 h-3.5"/> Gen PO
                           </button>
-                        ) : (
+                        ) : needsReview ? (
                           <button onClick={() => openReviewModal(b)} className="flex-1 md:w-full py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs shadow-sm flex items-center justify-center gap-1.5 transition">
                             <SplitSquareHorizontal className="w-3.5 h-3.5"/> Split & Dispatch
                           </button>
+                        ) : (
+                          <div className="flex-1 md:w-full py-2.5 px-3 bg-slate-100 text-slate-500 font-bold uppercase tracking-wider rounded-xl text-xs flex items-center justify-center gap-1.5 border border-slate-200">
+                            <CheckCircle className="w-3.5 h-3.5" /> Reviewed
+                          </div>
                         )}
                         
                         <button onClick={() => { setActiveBatch(b); setIsChatOpen(true); }} className="flex-1 md:w-full py-2.5 px-3 bg-slate-800 hover:bg-black text-white font-bold rounded-xl text-xs shadow-sm flex items-center justify-center gap-1.5 transition">
@@ -543,13 +547,15 @@ export default function SiyanatOperations() {
                         className="w-full p-3 md:p-2 bg-slate-50 border border-slate-300 rounded-xl md:rounded-lg text-sm md:text-xs font-bold outline-none focus:ring-2 focus:ring-brand-maroon transition"
                       >
                         <option value="Available">Available (Freeze Stock)</option>
-                        <option value="Pending">Pending (Requires ETA)</option>
+                        {/* THE FIX: Replaced Pending with Ordered */}
+                        <option value="Ordered">Pending (Requires ETA)</option>
                         <option value="Not Provided">Not Provided (Reject)</option>
                       </select>
                     </div>
 
                     <div className="md:col-span-3">
-                      {itemDecisions[item.id]?.status === 'Pending' && (
+                      {/* THE FIX: Changed to trigger off 'Ordered' */}
+                      {itemDecisions[item.id]?.status === 'Ordered' && (
                         <div className="animate-in fade-in duration-200">
                           <label className="block text-[10px] md:text-[9px] font-bold text-slate-500 uppercase mb-1">ETA (Days)</label>
                           <input 
