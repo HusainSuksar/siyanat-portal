@@ -1,61 +1,83 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { BarChart3, Download, FileSpreadsheet, Package, Wrench, Calendar, Car, Trash2 } from 'lucide-react';
+import { BarChart3, Download, FileSpreadsheet, Package, Wrench, Calendar, Car, Trash2, } from 'lucide-react';
+import { useToast } from '../hooks/useToast';
+// Use strict typing
+// Use strict typing
+import type { WorkOrder } from '../types';
 
 export default function Reports() {
+  const { showToast } = useToast();
   const [activeTab, setActiveTab] = useState<'materials' | 'complaints' | 'events' | 'fleet'>('materials');
   const [loading, setLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [processingId, setProcessingId] = useState<string | null>(null);
 
   // Data States
-  const [materials, setMaterials] = useState<any[]>([]);
+  const [materials, setMaterials] = useState<WorkOrder[]>([]);
   const [complaints, setComplaints] = useState<any[]>([]);
   const [events, setEvents] = useState<any[]>([]);
   const [fleet, setFleet] = useState<any[]>([]);
 
+  // Delete Modal State
+  const [deleteTarget, setDeleteTarget] = useState<{ table: string, id: string, reference: string } | null>(null);
+
   useEffect(() => {
-    fetchData();
     supabase.auth.getUser().then(({ data }) => setCurrentUser(data.user));
   }, []);
 
-  const fetchData = async () => {
-    setLoading(true);
-    
-    const [matRes, compRes, evRes, fleetRes] = await Promise.all([
-      supabase.from('work_orders').select(`*, items:work_order_items(requested_qty, item_type, custom_item_name, inventory:inventory_items(name)), requester:profiles(full_name, department)`).order('created_at', { ascending: false }),
-      supabase.from('complaints').select(`*, requester:profiles(full_name, department)`).order('created_at', { ascending: false }),
-      supabase.from('events').select(`*, requester:profiles(full_name, department), requirements:event_requirements(item_name)`).order('created_at', { ascending: false }),
-      supabase.from('vehicle_requests').select(`*, requester:profiles(full_name, department)`).order('created_at', { ascending: false })
-    ]);
+  // Targeted Fetching: Only fetch the table that is actively being viewed
+  useEffect(() => {
+    const fetchActiveData = async () => {
+      setLoading(true);
+      if (activeTab === 'materials') {
+        const { data } = await supabase.from('work_orders').select(`*, items:work_order_items(requested_qty, item_type, custom_item_name, inventory:inventory_items(name)), requester:profiles(full_name, department)`).order('created_at', { ascending: false });
+        if (data) setMaterials(data as WorkOrder[]);
+      } else if (activeTab === 'complaints') {
+        const { data } = await supabase.from('complaints').select(`*, requester:profiles(full_name, department)`).order('created_at', { ascending: false });
+        if (data) setComplaints(data);
+      } else if (activeTab === 'events') {
+        const { data } = await supabase.from('events').select(`*, requester:profiles(full_name, department), requirements:event_requirements(item_name)`).order('created_at', { ascending: false });
+        if (data) setEvents(data);
+      } else if (activeTab === 'fleet') {
+        const { data } = await supabase.from('vehicle_requests').select(`*, requester:profiles(full_name, department)`).order('created_at', { ascending: false });
+        if (data) setFleet(data);
+      }
+      setLoading(false);
+    };
 
-    if (matRes.data) setMaterials(matRes.data);
-    if (compRes.data) setComplaints(compRes.data);
-    if (evRes.data) setEvents(evRes.data);
-    if (fleetRes.data) setFleet(fleetRes.data);
+    fetchActiveData();
+  }, [activeTab]);
 
-    setLoading(false);
-  };
+  // 🔴 GOD MODE: Universal Hard Delete (Secured with modern modal)
+  const executeDelete = async () => {
+    if (!deleteTarget) return;
+    setProcessingId(deleteTarget.id);
 
-  // 🔴 GOD MODE: Universal Hard Delete
-  const deleteRecord = async (table: string, id: string, reference: string) => {
-    if (!confirm(`GOD MODE WARNING: Are you sure you want to permanently erase [${reference}] from the ${table} archives? This cannot be undone.`)) return;
-    
-    setProcessingId(id);
-    const { error } = await supabase.from(table).delete().eq('id', id);
-    
-    if (!error) {
+    try {
+      const { error } = await supabase.from(deleteTarget.table).delete().eq('id', deleteTarget.id);
+      if (error) throw error;
+
       await supabase.from('system_logs').insert({
         action_type: 'GOD_MODE_DELETE',
-        description: `Admin hard-deleted archive record ${reference} from ${table}.`,
+        description: `Admin hard-deleted archive record ${deleteTarget.reference} from ${deleteTarget.table}.`,
         user_email: currentUser?.email || 'Admin'
       });
-      alert('Record permanently deleted.');
-      fetchData();
-    } else {
-      alert("Error deleting record: " + error.message);
+      
+      showToast(`Record ${deleteTarget.reference} permanently eradicated.`, 'success');
+      
+      // Update local state directly to avoid re-fetching the whole table immediately
+      if (activeTab === 'materials') setMaterials(prev => prev.filter(item => item.id !== deleteTarget.id));
+      if (activeTab === 'complaints') setComplaints(prev => prev.filter(item => item.id !== deleteTarget.id));
+      if (activeTab === 'events') setEvents(prev => prev.filter(item => item.id !== deleteTarget.id));
+      if (activeTab === 'fleet') setFleet(prev => prev.filter(item => item.id !== deleteTarget.id));
+      
+    } catch (err: any) {
+      showToast("Error deleting record: " + err.message, 'error');
+    } finally {
+      setProcessingId(null);
+      setDeleteTarget(null);
     }
-    setProcessingId(null);
   };
 
   // --- DYNAMIC CSV EXPORT ENGINE ---
@@ -65,36 +87,36 @@ export default function Reports() {
     let filename = "";
 
     if (activeTab === 'materials') {
-      if (materials.length === 0) return alert("No material data to export.");
+      if (materials.length === 0) return showToast("No material data to export.", 'warning');
       filename = "Materials_Report";
-      headers = ["Batch ID", "Date Submitted", "Requester", "Department", "Location", "Urgency", "Approval Status", "Dispatch Status", "Items Requested"];
+      headers = ["Batch ID", "Date Submitted", "Requester", "Location", "Pipeline State", "Items Requested"];
       rows = materials.map(m => {
         const itemsString = m.items?.map((i: any) => `${i.item_type === 'Catalog' && i.inventory ? i.inventory.name : i.custom_item_name} (x${i.requested_qty})`).join('; ');
-        return [m.batch_id, new Date(m.created_at).toLocaleDateString(), m.requester?.full_name || 'N/A', m.department, m.location, m.urgency, m.approval_status, m.dispatch_status, `"${itemsString}"`].join(',');
+        return [m.batch_id, new Date(m.created_at || '').toLocaleDateString(), m.requester?.full_name || 'N/A', m.location, m.pipeline_state, `"${itemsString}"`].join(',');
       });
     } 
     else if (activeTab === 'complaints') {
-      if (complaints.length === 0) return alert("No complaint data to export.");
+      if (complaints.length === 0) return showToast("No complaint data to export.", 'warning');
       filename = "Complaints_Report";
-      headers = ["Complaint ID", "Date", "Requester", "Zone", "Venue", "Category", "Priority", "Status", "Resolution Remarks/Rejection"];
+      headers = ["Complaint ID", "Date", "Requester", "Zone", "Venue", "Category", "Priority", "Pipeline State"];
       rows = complaints.map(c => [
-        c.complaint_id, new Date(c.created_at).toLocaleDateString(), c.requester?.full_name || 'N/A', c.zone, `${c.venue} (${c.room_area})`, c.category, c.priority, c.status, `"${c.rejection_reason || c.resolution_remarks || ''}"`
+        c.complaint_id, new Date(c.created_at).toLocaleDateString(), c.requester?.full_name || 'N/A', c.zone, `"${c.venue} (${c.room_area})"`, c.category, c.priority, c.pipeline_state
       ].join(','));
     }
     else if (activeTab === 'events') {
-      if (events.length === 0) return alert("No event data to export.");
+      if (events.length === 0) return showToast("No event data to export.", 'warning');
       filename = "Events_Report";
-      headers = ["Event Title", "Event Date", "Time Slot", "Requester", "Location", "Darajah", "Total Pax", "Status"];
+      headers = ["Event Title", "Event Date", "Time Slot", "Requester", "Location", "Total Pax", "Pipeline State"];
       rows = events.map(e => [
-        `"${e.event_title}"`, new Date(e.event_date).toLocaleDateString(), e.time_slot, e.requester?.full_name || 'N/A', e.location, e.darajah, e.total_count, e.status
+        `"${e.event_title}"`, new Date(e.event_date).toLocaleDateString(), e.time_slot, e.requester?.full_name || 'N/A', e.location, e.total_count, e.pipeline_state
       ].join(','));
     }
     else if (activeTab === 'fleet') {
-      if (fleet.length === 0) return alert("No fleet data to export.");
+      if (fleet.length === 0) return showToast("No fleet data to export.", 'warning');
       filename = "Fleet_Logistics_Report";
-      headers = ["Destination", "Purpose", "Date", "Requester", "Total Pax", "Reach By", "Assigned Vehicles", "Status"];
+      headers = ["Destination", "Purpose", "Date", "Requester", "Total Pax", "Reach By", "Assigned Vehicles", "Pipeline State"];
       rows = fleet.map(f => [
-        `"${f.destination}"`, `"${f.purpose}"`, new Date(f.request_date).toLocaleDateString(), f.requester?.full_name || 'N/A', f.total_count, f.arrival_time, `"${f.assigned_vehicles || ''}"`, f.status
+        `"${f.destination}"`, `"${f.purpose}"`, new Date(f.request_date).toLocaleDateString(), f.requester?.full_name || 'N/A', f.total_count, f.arrival_time, `"${f.assigned_vehicles || ''}"`, f.pipeline_state
       ].join(','));
     }
 
@@ -108,31 +130,31 @@ export default function Reports() {
     document.body.removeChild(link);
   };
 
-  // --- DYNAMIC METRICS ---
+  // --- DYNAMIC METRICS (Updated to map pipeline_state) ---
   const getMetrics = () => {
     if (activeTab === 'materials') return {
       title1: 'Total Batches', val1: materials.length,
-      title2: 'Dispatched', val2: materials.filter(m => m.dispatch_status === 'Dispatched' || m.dispatch_status === 'Received').length,
-      title3: 'Approval Rate', val3: materials.length > 0 ? `${Math.round((materials.filter(m => m.approval_status === 'Approved').length / materials.length) * 100)}%` : '0%',
-      title4: 'Rejected', val4: materials.filter(m => m.approval_status === 'Rejected').length
+      title2: 'Awaiting Pickup', val2: materials.filter(m => m.pipeline_state === 'ACTION_REQUIRED').length,
+      title3: 'Completed', val3: materials.filter(m => m.pipeline_state === 'CLOSED').length,
+      title4: 'Rejected', val4: materials.filter(m => m.pipeline_state === 'REJECTED').length
     };
     if (activeTab === 'complaints') return {
       title1: 'Total Complaints', val1: complaints.length,
-      title2: 'Resolved/Closed', val2: complaints.filter(c => ['Verified', 'Closed'].includes(c.status)).length,
-      title3: 'Urgent Issues', val3: complaints.filter(c => c.priority.includes('URGENT')).length,
-      title4: 'Rejected', val4: complaints.filter(c => c.status === 'Rejected' || c.status === 'Not Processed').length
+      title2: 'Resolved/Closed', val2: complaints.filter(c => c.pipeline_state === 'CLOSED').length,
+      title3: 'In Progress', val3: complaints.filter(c => c.pipeline_state === 'PROCESSING').length,
+      title4: 'Rejected', val4: complaints.filter(c => c.pipeline_state === 'REJECTED').length
     };
     if (activeTab === 'events') return {
       title1: 'Total Events', val1: events.length,
-      title2: 'Approved', val2: events.filter(e => e.status === 'Approved & Scheduled').length,
-      title3: 'Pending', val3: events.filter(e => e.status.includes('Pending')).length,
-      title4: 'Declined', val4: events.filter(e => e.status === 'Not Confirmed').length
+      title2: 'Concluded', val2: events.filter(e => e.pipeline_state === 'CLOSED').length,
+      title3: 'Scheduled', val3: events.filter(e => e.pipeline_state === 'PROCESSING').length,
+      title4: 'Declined', val4: events.filter(e => e.pipeline_state === 'REJECTED').length
     };
     return {
       title1: 'Total Fleet Requests', val1: fleet.length,
-      title2: 'Dispatched', val2: fleet.filter(f => f.status === 'Fleet Dispatched').length,
-      title3: 'Pending', val3: fleet.filter(f => f.status.includes('Pending')).length,
-      title4: 'Not Serviced', val4: fleet.filter(f => f.status === 'Not Serviced').length
+      title2: 'Dispatched', val2: fleet.filter(f => f.pipeline_state === 'PROCESSING').length,
+      title3: 'Awaiting Assignment', val3: fleet.filter(f => f.pipeline_state === 'AUTHORIZED').length,
+      title4: 'Rejected', val4: fleet.filter(f => f.pipeline_state === 'REJECTED').length
     };
   };
 
@@ -205,7 +227,7 @@ export default function Reports() {
         </div>
         
         {loading ? (
-          <div className="py-10 text-center text-xs font-bold text-slate-400 animate-pulse">Compiling database...</div>
+          <div className="py-10 text-center text-xs font-bold text-slate-400 animate-pulse">Syncing active archive...</div>
         ) : (
           <div className="overflow-y-auto max-h-[500px] border border-slate-100 rounded-lg">
             <table className="w-full text-left text-[11px]">
@@ -220,11 +242,11 @@ export default function Reports() {
                     {materials.map(m => (
                       <tr key={m.id} className="hover:bg-slate-50">
                         <td className="p-3 font-bold text-brand-maroon">{m.batch_id}</td>
-                        <td className="p-3 text-slate-500">{new Date(m.created_at).toLocaleDateString()}</td>
+                        <td className="p-3 text-slate-500">{new Date(m.created_at || '').toLocaleDateString()}</td>
                         <td className="p-3 font-semibold">{m.requester?.full_name}</td>
-                        <td className="p-3">{m.dispatch_status}</td>
+                        <td className="p-3"><span className="px-2 py-1 rounded bg-slate-100 font-bold uppercase">{m.pipeline_state}</span></td>
                         <td className="p-3 text-right">
-                          <button onClick={() => deleteRecord('work_orders', m.id, m.batch_id)} disabled={processingId === m.id} className="text-slate-400 hover:text-red-600 transition"><Trash2 className="w-4 h-4 ml-auto" /></button>
+                          <button onClick={() => setDeleteTarget({ table: 'work_orders', id: m.id, reference: m.batch_id })} disabled={processingId === m.id} className="text-slate-400 hover:text-red-600 transition"><Trash2 className="w-4 h-4 ml-auto" /></button>
                         </td>
                       </tr>
                     ))}
@@ -244,9 +266,9 @@ export default function Reports() {
                         <td className="p-3 font-bold text-brand-maroon">{c.complaint_id}</td>
                         <td className="p-3 text-slate-500">{new Date(c.created_at).toLocaleDateString()}</td>
                         <td className="p-3 font-semibold">{c.category}</td>
-                        <td className="p-3">{c.status}</td>
+                        <td className="p-3"><span className="px-2 py-1 rounded bg-slate-100 font-bold uppercase">{c.pipeline_state}</span></td>
                         <td className="p-3 text-right">
-                          <button onClick={() => deleteRecord('complaints', c.id, c.complaint_id)} disabled={processingId === c.id} className="text-slate-400 hover:text-red-600 transition"><Trash2 className="w-4 h-4 ml-auto" /></button>
+                          <button onClick={() => setDeleteTarget({ table: 'complaints', id: c.id, reference: c.complaint_id })} disabled={processingId === c.id} className="text-slate-400 hover:text-red-600 transition"><Trash2 className="w-4 h-4 ml-auto" /></button>
                         </td>
                       </tr>
                     ))}
@@ -266,9 +288,9 @@ export default function Reports() {
                         <td className="p-3 font-bold text-brand-maroon">{e.event_title}</td>
                         <td className="p-3 text-slate-500">{new Date(e.event_date).toLocaleDateString()}</td>
                         <td className="p-3 font-semibold">{e.location}</td>
-                        <td className="p-3">{e.status}</td>
+                        <td className="p-3"><span className="px-2 py-1 rounded bg-slate-100 font-bold uppercase">{e.pipeline_state}</span></td>
                         <td className="p-3 text-right">
-                          <button onClick={() => deleteRecord('events', e.id, e.event_title)} disabled={processingId === e.id} className="text-slate-400 hover:text-red-600 transition"><Trash2 className="w-4 h-4 ml-auto" /></button>
+                          <button onClick={() => setDeleteTarget({ table: 'events', id: e.id, reference: e.event_title })} disabled={processingId === e.id} className="text-slate-400 hover:text-red-600 transition"><Trash2 className="w-4 h-4 ml-auto" /></button>
                         </td>
                       </tr>
                     ))}
@@ -288,9 +310,9 @@ export default function Reports() {
                         <td className="p-3 font-bold text-brand-maroon">{f.destination}</td>
                         <td className="p-3 text-slate-500">{new Date(f.request_date).toLocaleDateString()}</td>
                         <td className="p-3 font-semibold">{f.arrival_time}</td>
-                        <td className="p-3">{f.status}</td>
+                        <td className="p-3"><span className="px-2 py-1 rounded bg-slate-100 font-bold uppercase">{f.pipeline_state}</span></td>
                         <td className="p-3 text-right">
-                          <button onClick={() => deleteRecord('vehicle_requests', f.id, f.destination)} disabled={processingId === f.id} className="text-slate-400 hover:text-red-600 transition"><Trash2 className="w-4 h-4 ml-auto" /></button>
+                          <button onClick={() => setDeleteTarget({ table: 'vehicle_requests', id: f.id, reference: f.destination })} disabled={processingId === f.id} className="text-slate-400 hover:text-red-600 transition"><Trash2 className="w-4 h-4 ml-auto" /></button>
                         </td>
                       </tr>
                     ))}
@@ -302,6 +324,25 @@ export default function Reports() {
           </div>
         )}
       </div>
+
+      {/* GOD MODE Delete Confirmation Modal */}
+      {deleteTarget && (
+        <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4">
+          <div className="bg-white p-6 rounded-2xl max-w-sm w-full text-center">
+            <div className="w-12 h-12 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Trash2 className="w-6 h-6" />
+            </div>
+            <h3 className="text-lg font-black text-slate-800 mb-2">Eradicate Record?</h3>
+            <p className="text-xs text-slate-500 mb-6 font-medium leading-relaxed">
+              You are about to permanently delete <strong>{deleteTarget.reference}</strong> from the database. This action cannot be undone.
+            </p>
+            <div className="flex gap-3">
+              <button onClick={() => setDeleteTarget(null)} className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition">Cancel</button>
+              <button onClick={executeDelete} disabled={!!processingId} className="flex-1 py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition disabled:opacity-50">Eradicate</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
