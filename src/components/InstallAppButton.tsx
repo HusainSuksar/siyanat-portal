@@ -21,24 +21,19 @@ export default function InstallAppButton() {
   const [isIOS, setIsIOS] = useState(false);
   const [isStandalone, setIsStandalone] = useState(false);
   const [showIOSModal, setShowIOSModal] = useState(false);
-  const [notifsEnabled, setNotifsEnabled] = useState(true); // Defaults to true to prevent flashing
+  const [notifsEnabled, setNotifsEnabled] = useState(true);
 
   useEffect(() => {
-    // 1. Check if app is installed (standalone mode)
     const isAppStandalone = window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone;
     setIsStandalone(isAppStandalone);
 
-    // 2. Check Device Type
     const userAgent = window.navigator.userAgent.toLowerCase();
-    const isAppleDevice = /iphone|ipad|ipod/.test(userAgent);
-    setIsIOS(isAppleDevice);
+    setIsIOS(/iphone|ipad|ipod/.test(userAgent));
 
-    // 3. Check Notification Permissions
     if ('Notification' in window) {
       setNotifsEnabled(Notification.permission === 'granted');
     }
 
-    // 4. Capture Android/Chrome Install Prompt
     const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
       setDeferredPrompt(e);
@@ -48,6 +43,36 @@ export default function InstallAppButton() {
     return () => window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
   }, []);
 
+  // THE FIX: Silent Sync for Login Swaps
+  useEffect(() => {
+    const syncSubscription = async () => {
+      if (user && 'Notification' in window && Notification.permission === 'granted') {
+        try {
+          if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+          
+          const registration = await navigator.serviceWorker.ready;
+          const subscription = await registration.pushManager.getSubscription();
+          
+          if (subscription) {
+            const subJson = subscription.toJSON();
+            // Automatically re-assign this device's token to the currently logged-in user
+            await supabase.from('user_push_subscriptions').upsert({
+              user_id: user.id,
+              endpoint: subJson.endpoint,
+              p256dh: subJson.keys?.p256dh,
+              auth: subJson.keys?.auth,
+              user_agent: navigator.userAgent
+            }, { onConflict: 'endpoint' });
+          }
+        } catch (error) {
+          console.error("Silent sync failed:", error);
+        }
+      }
+    };
+
+    syncSubscription();
+  }, [user]);
+
   const enableNotifications = async () => {
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
       alert('Push notifications are not supported on this device/browser. iOS requires adding the app to your Home Screen first.');
@@ -55,18 +80,15 @@ export default function InstallAppButton() {
     }
 
     try {
-      // Ask user for permission
       const permission = await Notification.requestPermission();
       if (permission !== 'granted') {
         alert('Notification permission denied. You can enable it in your device settings.');
         return;
       }
 
-      // Register the sw.js background listener
       const registration = await navigator.serviceWorker.register('/sw.js');
       await navigator.serviceWorker.ready;
 
-      // Subscribe device using your secure VAPID key
       const vapidPublicKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
       if (!vapidPublicKey) throw new Error("VAPID Public Key missing in .env file.");
 
@@ -75,7 +97,6 @@ export default function InstallAppButton() {
         applicationServerKey: urlBase64ToUint8Array(vapidPublicKey)
       });
 
-      // Extract tokens and save to Supabase
       const subJson = subscription.toJSON();
       if (user) {
         await supabase.from('user_push_subscriptions').upsert({
@@ -103,19 +124,16 @@ export default function InstallAppButton() {
       const { outcome } = await deferredPrompt.userChoice;
       if (outcome === 'accepted') {
         setDeferredPrompt(null);
-        // Prompt for notifications immediately after successful install
         setTimeout(() => enableNotifications(), 2000);
       }
     }
   };
 
-  // If app is installed AND notifications are on, hide the button completely
   if (isStandalone && notifsEnabled) return null;
 
   return (
     <>
       <div className="flex flex-col gap-3 items-end">
-        {/* The New Notification Prompt Button */}
         {!notifsEnabled && (
           <button 
             onClick={enableNotifications}
@@ -125,7 +143,6 @@ export default function InstallAppButton() {
           </button>
         )}
 
-        {/* The Install App Button */}
         {!isStandalone && (isIOS || deferredPrompt) && (
           <button 
             onClick={handleInstallClick}
@@ -146,7 +163,7 @@ export default function InstallAppButton() {
               <button onClick={() => setShowIOSModal(false)} className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded-full transition-colors"><X className="w-5 h-5" /></button>
             </div>
             <div className="p-6 space-y-6">
-              <p className="text-xs text-slate-500 font-bold">Install Siyanat App on your home screen to enable Native Push Notifications.</p>
+              <p className="text-xs text-slate-500 font-bold">Install Siyanat on your home screen to enable Native Push Notifications.</p>
               <div className="space-y-4">
                 <div className="flex items-center gap-4 p-4 bg-slate-50 rounded-xl border border-slate-100">
                   <div className="w-10 h-10 bg-white rounded-full shadow-sm flex items-center justify-center text-blue-500 shrink-0 border border-slate-200"><Share className="w-5 h-5 mb-1" /></div>
