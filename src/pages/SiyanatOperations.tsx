@@ -48,7 +48,7 @@ export default function SiyanatOperations() {
       let batchQuery = supabase
         .from('work_orders')
         .select(`*, logs:work_order_logs(author_id), items:work_order_items!inner(id, requested_qty, item_type, custom_item_name, status, eta_days, fulfillment_dept, inventory_id, inventory:inventory_items(id, name, physical_stock, freezed_stock))`)
-        .eq('pipeline_state', 'AUTHORIZED') // Universal Pipeline Filter
+        .eq('pipeline_state', 'AUTHORIZED')
         .order('created_at', { ascending: false });
 
       // Apply Strict Departmental Segregation via the inner join
@@ -138,7 +138,7 @@ export default function SiyanatOperations() {
         }
       }
 
-      // THE FIX: Use RPC to advance to ACTION_REQUIRED (Ready for Pickup)
+      // Advance to ACTION_REQUIRED (Ready for Pickup)
       if (hasAvailableItems) {
         await supabase.rpc('advance_pipeline', { target_table: 'work_orders', target_id: reviewBatch.id });
       }
@@ -157,26 +157,6 @@ export default function SiyanatOperations() {
     } finally {
       setProcessingId(null);
     }
-  };
-
-  const dispatchBatch = async (batch: any) => {
-    if (!confirm('Dispatch available items? Stock will remain frozen until the requester confirms receipt.')) return;
-    setProcessingId(batch.id);
-    
-    try {
-      // Advance to action required for requester verification
-      await supabase.rpc('advance_pipeline', { target_table: 'work_orders', target_id: batch.id });
-      
-      await supabase.from('system_logs').insert({
-        action_type: 'STOCK_DISPATCHED',
-        description: `Dispatched ${batch.batch_id}.`,
-        user_email: currentUser?.email || 'Admin'
-      });
-      fetchData();
-    } catch (err: any) {
-      alert(err.message);
-    }
-    setProcessingId(null);
   };
 
   // --- VENDOR PURCHASE ORDER LOGIC ---
@@ -258,7 +238,7 @@ export default function SiyanatOperations() {
       
       if (assignError) throw assignError;
 
-      // THE FIX: RPC Call to shift complaint from AUTHORIZED to PROCESSING
+      // RPC Call to shift complaint from AUTHORIZED to PROCESSING
       if(selectedComplaint.pipeline_state === 'AUTHORIZED') {
          await supabase.rpc('advance_pipeline', { target_table: 'complaints', target_id: selectedComplaint.id });
       } else {
@@ -274,14 +254,6 @@ export default function SiyanatOperations() {
     } finally {
       setProcessingId(null);
     }
-  };
-
-  const closeComplaint = async (id: string, complaintId: string) => {
-    if (!confirm(`Officially close complaint ${complaintId}?`)) return;
-    setProcessingId(id);
-    await supabase.from('complaints').update({ pipeline_state: 'CLOSED' }).eq('id', id);
-    fetchData();
-    setProcessingId(null);
   };
 
   const deleteComplaint = async (id: string, complaintId: string) => {
