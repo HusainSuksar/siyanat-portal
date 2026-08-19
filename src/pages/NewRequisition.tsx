@@ -56,11 +56,12 @@ export default function NewRequisition() {
       }
     }
 
-    // 2. Fetch Catalog with strict Standard User filtering
+    // 2. Fetch Catalog with strict Requester filtering
     let query = supabase.from('inventory_items').select('*').order('name');
     
-    if (role === 'STANDARD_USER') {
-      // Standard users only see Stationery and AVIT
+    // Updated to check for REQUESTER instead of STANDARD_USER
+    if (role === 'REQUESTER') {
+      // Requesters only see Stationery and AVIT
       query = query.in('category', ['Office & Administrative Supplies', 'IT & Networking Hardware']);
     }
 
@@ -113,16 +114,15 @@ export default function NewRequisition() {
       if (!userData.user) throw new Error("Not authenticated");
 
       // 1. Insert Work Order
+      // THE FIX: Removed approval_status & dispatch_status. DB handles pipeline_state.
       const { data: orderData, error: orderError } = await supabase
         .from('work_orders')
         .insert({
           requester_id: userData.user.id,
-          department: userRole === 'STANDARD_USER' ? 'General Staff' : 'Maintenance', 
+          department: userRole === 'REQUESTER' ? 'General Staff' : 'Maintenance', 
           location,
           urgency,
-          reason,
-          approval_status: 'Pending Approval',
-          dispatch_status: 'Pending'
+          reason
         })
         .select()
         .single();
@@ -134,7 +134,8 @@ export default function NewRequisition() {
         work_order_id: orderData.id,
         inventory_id: c.item.id,
         requested_qty: c.qty,
-        item_type: 'Catalog'
+        item_type: 'Catalog',
+        fulfillment_dept: c.item.fulfillment_dept // Pass the DB tag up to the order
       }));
 
       // 3. Insert Custom Items
@@ -143,6 +144,7 @@ export default function NewRequisition() {
         custom_item_name: c.name,
         requested_qty: c.qty,
         item_type: 'Custom'
+        // Custom items fallback to the DB default (SIYANAT_HEAD)
       }));
 
       const allItemsToInsert = [...orderItems, ...customOrderItems];
@@ -164,7 +166,7 @@ export default function NewRequisition() {
 
       setSuccessBatch(orderData.batch_id || orderData.id);
       
-      // Reset Form (Preserving Supervisor Location)
+      // Reset Form
       setCart({});
       setCustomItems([]);
       if (!isSupervisor) setLocation('');
@@ -178,7 +180,7 @@ export default function NewRequisition() {
   };
 
   const totalSelected = Object.keys(cart).length + customItems.length;
-  const isStandardUser = userRole === 'STANDARD_USER';
+  const isStandardUser = userRole === 'REQUESTER';
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto pb-24">
@@ -257,7 +259,7 @@ export default function NewRequisition() {
               const available = Math.max(0, item.physical_stock - item.freezed_stock);
               const isOutOfStock = available <= 0;
               const currentQty = cart[item.id]?.qty || 0;
-              const canSeeStock = userRole === 'ADMIN' || userRole === 'SUPERVISOR' || userRole === 'SIYANAT_HEAD' || userRole === 'TANZEEM_HEAD' || userRole === 'AVIT_HEAD' || userRole === 'SUPER_ADMIN';
+              const canSeeStock = userRole === 'SUPER_ADMIN' || userRole === 'SUPERVISOR' || userRole === 'SIYANAT_HEAD' || userRole === 'TANZEEM_HEAD' || userRole === 'AVIT_HEAD';
 
               return (
                 <div key={item.id} className={`rounded-2xl p-4 border flex flex-col justify-between transition-all ${currentQty > 0 ? 'border-brand-maroon bg-brand-maroon/5 shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300'}`}>

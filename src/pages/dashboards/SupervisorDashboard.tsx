@@ -12,13 +12,32 @@ export default function SupervisorDashboard() {
   useEffect(() => {
     async function fetchSupervisorData() {
       setLoading(true);
-      const { count: pendingCount } = await supabase.from('complaints').select('*', { count: 'exact', head: true }).eq('status', 'Pending');
-      const { count: activeCount } = await supabase.from('complaints').select('*', { count: 'exact', head: true }).in('status', ['Approved by Supervisor', 'Assigned', 'Waiting for Material']);
-      const { count: completedCount } = await supabase.from('complaints').select('*', { count: 'exact', head: true }).eq('status', 'Completed');
+      
+      const { data: authData } = await supabase.auth.getUser();
+      const { data: profile } = await supabase.from('profiles').select('zone').eq('id', authData.user?.id).single();
+      const zoneFilter = profile?.zone || '';
+
+      // Base Queries
+      let pendingQ = supabase.from('complaints').select('*', { count: 'exact', head: true }).eq('pipeline_state', 'SUBMITTED');
+      let activeQ = supabase.from('complaints').select('*', { count: 'exact', head: true }).eq('pipeline_state', 'PROCESSING');
+      let completedQ = supabase.from('complaints').select('*', { count: 'exact', head: true }).eq('pipeline_state', 'ACTION_REQUIRED');
+      let recentQ = supabase.from('complaints').select('complaint_id, category, venue, created_at').eq('pipeline_state', 'SUBMITTED').order('created_at', { ascending: true }).limit(5);
+
+      // Apply Zone Filtering if Supervisor has a domain assigned
+      // Apply Multi-Zone Filtering if Supervisor has domains assigned
+      if (zoneFilter) {
+        const assignedZones = zoneFilter.split(',').map((z: string) => z.trim());
+        pendingQ = pendingQ.in('zone', assignedZones);
+        activeQ = activeQ.in('zone', assignedZones);
+        completedQ = completedQ.in('zone', assignedZones);
+        recentQ = recentQ.in('zone', assignedZones);
+      }
+
+      const [{ count: pendingCount }, { count: activeCount }, { count: completedCount }, { data: recent }] = await Promise.all([
+        pendingQ, activeQ, completedQ, recentQ
+      ]);
 
       setMetrics({ pending: pendingCount || 0, active: activeCount || 0, completed: completedCount || 0 });
-
-      const { data: recent } = await supabase.from('complaints').select('complaint_id, category, venue, created_at').eq('status', 'Pending').order('created_at', { ascending: true }).limit(5);
       if (recent) setRecentPending(recent);
       setLoading(false);
     }

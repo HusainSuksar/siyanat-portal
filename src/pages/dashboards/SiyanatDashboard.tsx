@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
-import {  ShoppingCart, Truck, Clock, AlertTriangle, SplitSquareHorizontal } from 'lucide-react';
+import { ShoppingCart, Truck, Clock, AlertTriangle, SplitSquareHorizontal } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 export default function SiyanatDashboard() {
@@ -14,14 +14,32 @@ export default function SiyanatDashboard() {
   useEffect(() => {
     async function fetchSiyanatData() {
       setLoading(true);
-      const { count: dispatchCount } = await supabase.from('work_orders').select('*', { count: 'exact', head: true }).eq('approval_status', 'Approved').eq('dispatch_status', 'Pending');
+      
+      const { data: authData } = await supabase.auth.getUser();
+      if (!authData.user) return;
+      const { data: profile } = await supabase.from('profiles').select('role').eq('id', authData.user.id).single();
+      const currentRole = profile?.role || 'SIYANAT_HEAD';
+
+      // 1. Fetch live counts for Siyanat KPIs
+      let dispatchQuery = supabase.from('work_orders').select('*, items:work_order_items!inner(fulfillment_dept)', { count: 'exact', head: true }).eq('pipeline_state', 'AUTHORIZED');
+      if (currentRole === 'SIYANAT_HEAD') dispatchQuery = dispatchQuery.eq('items.fulfillment_dept', 'SIYANAT_HEAD');
+      else if (currentRole === 'AVIT_HEAD') dispatchQuery = dispatchQuery.eq('items.fulfillment_dept', 'AVIT_HEAD');
+      
+      const { count: dispatchCount } = await dispatchQuery;
+      
       const { count: rtoCount } = await supabase.from('work_order_items').select('*', { count: 'exact', head: true }).eq('status', 'Pending');
       const { count: poCount } = await supabase.from('purchase_orders').select('*', { count: 'exact', head: true }).eq('status', 'PO Issued');
 
       setMetrics({ pendingDispatch: dispatchCount || 0, pendingRTO: rtoCount || 0, activePOs: poCount || 0 });
 
-      const { data: recent } = await supabase.from('work_orders').select('batch_id, department, location, created_at').eq('approval_status', 'Pending Approval').order('created_at', { ascending: true }).limit(5);
+      // 2. Fetch action required batches
+      let actionQuery = supabase.from('work_orders').select('batch_id, department, location, created_at, items:work_order_items!inner(fulfillment_dept)').eq('pipeline_state', 'AUTHORIZED').order('created_at', { ascending: true }).limit(5);
+      if (currentRole === 'SIYANAT_HEAD') actionQuery = actionQuery.eq('items.fulfillment_dept', 'SIYANAT_HEAD');
+      else if (currentRole === 'AVIT_HEAD') actionQuery = actionQuery.eq('items.fulfillment_dept', 'AVIT_HEAD');
+
+      const { data: recent } = await actionQuery;
       if (recent) setActionBatches(recent);
+      
       setLoading(false);
     }
     fetchSiyanatData();
@@ -47,7 +65,7 @@ export default function SiyanatDashboard() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex items-center justify-between hover:border-emerald-300 transition cursor-pointer" onClick={() => navigate('/siyanat-operations')}>
           <div>
-            <span className="text-[10px] font-extrabold uppercase text-emerald-600 tracking-wider">Pending Dispatches</span>
+            <span className="text-[10px] font-extrabold uppercase text-emerald-600 tracking-wider">Pending Batches</span>
             <div className="text-3xl font-black text-emerald-600 mt-1">{loading ? '-' : metrics.pendingDispatch}</div>
           </div>
           <div className="w-12 h-12 bg-emerald-50 rounded-full flex items-center justify-center"><Truck className="w-6 h-6 text-emerald-500" /></div>

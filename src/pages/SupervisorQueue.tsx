@@ -34,17 +34,18 @@ export default function SupervisorQueue() {
         `)
         .order('created_at', { ascending: true });
 
-      // Apply Zone Filter
+      // Apply Domain/Zone Filter
       if (profile?.role === 'SUPERVISOR' && profile?.zone) {
-        baseQuery = baseQuery.ilike('zone', `%${profile.zone.trim()}%`);
+        const assignedZones = profile.zone.split(',').map((z: string) => z.trim());
+        baseQuery = baseQuery.in('zone', assignedZones);
       }
 
       const { data, error } = await baseQuery;
       
       if (data && !error) {
-        // Split data into the two queues
-        setComplaints(data.filter(c => c.status === 'Pending Approval'));
-        setVerifications(data.filter(c => c.status === 'Completed'));
+        // Split data using the new Universal Pipeline states
+        setComplaints(data.filter(c => c.pipeline_state === 'SUBMITTED'));
+        setVerifications(data.filter(c => c.pipeline_state === 'ACTION_REQUIRED'));
       }
     }
     setLoading(false);
@@ -59,7 +60,8 @@ export default function SupervisorQueue() {
     if (!confirm('Forward this complaint to Siyanat Operations for maintenance scheduling?')) return;
     setProcessingId(id);
 
-    const { error } = await supabase.from('complaints').update({ status: 'Approved by Supervisor' }).eq('id', id);
+    // THE FIX: Smart RPC Call
+    const { error } = await supabase.rpc('advance_pipeline', { target_table: 'complaints', target_id: id });
 
     if (!error) {
       await supabase.from('system_logs').insert({
@@ -69,7 +71,7 @@ export default function SupervisorQueue() {
       });
       fetchQueue();
     } else {
-      alert('Error updating status.');
+      alert('Error advancing pipeline.');
     }
     setProcessingId(null);
   };
@@ -82,7 +84,7 @@ export default function SupervisorQueue() {
     }
     
     setProcessingId(id);
-    const { error } = await supabase.from('complaints').update({ status: 'Not Processed' }).eq('id', id);
+    const { error } = await supabase.from('complaints').update({ pipeline_state: 'REJECTED' }).eq('id', id);
 
     if (!error) {
       await supabase.from('system_logs').insert({
@@ -100,7 +102,8 @@ export default function SupervisorQueue() {
     if (!confirm('Officially verify that the technician has successfully completed this maintenance? This will close the ticket.')) return;
     setProcessingId(id);
 
-    const { error } = await supabase.from('complaints').update({ status: 'Verified' }).eq('id', id);
+    // THE FIX: Smart RPC Call (Advances to CLOSED)
+    const { error } = await supabase.rpc('advance_pipeline', { target_table: 'complaints', target_id: id });
 
     if (!error) {
       await supabase.from('system_logs').insert({
@@ -124,8 +127,8 @@ export default function SupervisorQueue() {
     
     setProcessingId(id);
     
-    // Set complaint status back to Assigned/Reopened
-    const { error: compError } = await supabase.from('complaints').update({ status: 'Complaint Reopened' }).eq('id', id);
+    // Set complaint status back to PROCESSING
+    const { error: compError } = await supabase.from('complaints').update({ pipeline_state: 'PROCESSING' }).eq('id', id);
     // Set the assignment status back
     await supabase.from('technician_assignments').update({ status: 'Assigned' }).eq('complaint_id', id).eq('status', 'Completed');
 
@@ -139,7 +142,6 @@ export default function SupervisorQueue() {
     }
     setProcessingId(null);
   };
-
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto pb-24">
@@ -156,7 +158,7 @@ export default function SupervisorQueue() {
             </p>
           </div>
         </div>
-        {userProfile?.zone && (
+        {userProfile?.domain && (
           <div className="px-5 py-2.5 bg-brand-maroon text-brand-gold font-black text-xs uppercase tracking-widest rounded-xl shadow-md border border-brand-dark/20 flex items-center gap-2 w-full sm:w-auto justify-center">
             <MapPin className="w-4 h-4" /> Zone: {userProfile.zone}
           </div>

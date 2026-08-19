@@ -19,6 +19,7 @@ export type Profile = {
 };
 
 export type InventoryItem = {
+  fulfillment_dept: any;
   id: string;
   item_id: string;
   name: string;

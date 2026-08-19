@@ -17,18 +17,9 @@ const BETWEEN_CLASS_PERIODS = [
 ];
 
 const AFTER_CLASS_SLOTS = [
-  '15:46 - 16:30',
-  '16:31 - 17:00',
-  '17:01 - 17:30',
-  '17:31 - 18:00',
-  '18:01 - 18:30',
-  '18:31 - 19:00',
-  '19:01 - 19:30',
-  '19:31 - 20:00',
-  '20:31 - 21:00',
-  '21:01 - 21:30',
-  '21:31 - 22:00',
-  '22:01 - 22:30'
+  '15:46 - 16:30', '16:31 - 17:00', '17:01 - 17:30', '17:31 - 18:00',
+  '18:01 - 18:30', '18:31 - 19:00', '19:01 - 19:30', '19:31 - 20:00',
+  '20:31 - 21:00', '21:01 - 21:30', '21:31 - 22:00', '22:01 - 22:30'
 ];
 
 const VENUES: Record<string, string[]> = {
@@ -41,24 +32,18 @@ const VENUES: Record<string, string[]> = {
 };
 
 const PRESET_CLASSES: Record<string, { male: number, female: number }> = {
-  "1AM": { male: 25, female: 0 },
-  "1AF": { male: 0, female: 20 },
-  "1BF": { male: 0, female: 19 },
-  "1BM": { male: 25, female: 0 },
-  "1CF": { male: 0, female: 19 },
-  "1CM": { male: 23, female: 0 },
-  "1DF": { male: 0, female: 19 },
-  "1DM": { male: 24, female: 0 },
-  "6AF": { male: 0, female: 23 },
-  "6AM": { male: 26, female: 0 },
-  "Random": { male: 0, female: 0 },
-  "Faculty / Staff": { male: 0, female: 0 }
+  "1AM": { male: 25, female: 0 }, "1AF": { male: 0, female: 20 },
+  "1BF": { male: 0, female: 19 }, "1BM": { male: 25, female: 0 },
+  "1CF": { male: 0, female: 19 }, "1CM": { male: 23, female: 0 },
+  "1DF": { male: 0, female: 19 }, "1DM": { male: 24, female: 0 },
+  "6AF": { male: 0, female: 23 }, "6AM": { male: 26, female: 0 },
+  "Random": { male: 0, female: 0 }, "Faculty / Staff": { male: 0, female: 0 }
 };
 
 export default function BookEvent() {
   const [loading, setLoading] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
-  const [userRole, setUserRole] = useState<string>('STANDARD_USER');
+  const [userRole, setUserRole] = useState<string>('REQUESTER');
   const [isAdmin, setIsAdmin] = useState(false);
   
   // Admin God Mode States
@@ -67,7 +52,7 @@ export default function BookEvent() {
   
   // Standard Assets Management States
   const [standardAssets, setStandardAssets] = useState<any[]>([]);
-  const [newAssetDept, setNewAssetDept] = useState('AVIT');
+  const [newAssetDept, setNewAssetDept] = useState('AVIT_HEAD'); // Updated to new DB standard
   const [newAssetName, setNewAssetName] = useState('');
 
   // Form Details
@@ -92,7 +77,7 @@ export default function BookEvent() {
   const [requirements, setRequirements] = useState<{dept: string, item: string, qty?: number}[]>([]);
 
   const totalCount = maleCount + femaleCount + othersCount;
-  const isStandardUser = userRole === 'STANDARD_USER';
+  const isStandardUser = userRole === 'REQUESTER';
 
   useEffect(() => {
     fetchInitialData();
@@ -118,18 +103,15 @@ export default function BookEvent() {
       setCurrentUser(authData.user);
       const { data: profile } = await supabase.from('profiles').select('role').eq('id', authData.user.id).single();
       
-      const role = profile?.role || 'STANDARD_USER';
+      const role = profile?.role || 'REQUESTER';
       setUserRole(role);
       
-      const adminCheck = role === 'ADMIN' || role === 'SUPER_ADMIN';
+      const adminCheck = role === 'SUPER_ADMIN';
       setIsAdmin(adminCheck);
 
       if (adminCheck) fetchAllEvents();
       
-      // Enforce Standard User Restrictions
-      if (role === 'STANDARD_USER') {
-        setTimingType('Between Classes');
-      }
+      if (role === 'REQUESTER') setTimingType('Between Classes');
     }
 
     const { data: invData } = await supabase.from('inventory_items').select('*').order('name');
@@ -172,7 +154,7 @@ export default function BookEvent() {
     const available = item.physical_stock - item.freezed_stock;
     if (assetQty > available) return alert(`Only ${available} ${item.unit} available in stock!`);
 
-    setRequirements(prev => [...prev, { dept: 'Inventory Catalog', item: item.name, qty: assetQty }]);
+    setRequirements(prev => [...prev, { dept: item.fulfillment_dept || 'SIYANAT_HEAD', item: item.name, qty: assetQty }]);
     setSelectedAssetId('');
     setAssetQty(1);
   };
@@ -187,7 +169,6 @@ export default function BookEvent() {
     if (totalCount === 0) return alert("Total headcount cannot be zero.");
     
     let finalTimeSlot = '';
-    
     if (timingType === 'Between Classes') {
       if (selectedPeriods.length === 0) return alert("Please select at least one timetable period.");
       finalTimeSlot = selectedPeriods.map(pId => {
@@ -202,6 +183,7 @@ export default function BookEvent() {
     setLoading(true);
 
     try {
+      // THE FIX: Removed hardcoded `status` field. DB automatically flags as AUTHORIZED
       const payload = {
         requester_id: currentUser.id,
         event_title: title,
@@ -235,11 +217,11 @@ export default function BookEvent() {
 
       await supabase.from('system_logs').insert({
         action_type: editingEventId ? 'EVENT_UPDATED' : 'EVENT_REQUESTED',
-        description: `${editingEventId ? 'Admin updated' : 'Requested'} venue booking for ${title} on ${date}.`,
+        description: `${editingEventId ? 'Admin updated' : 'Requested'} venue booking for ${title}. Routed to Tanzeem.`,
         user_email: currentUser.email
       });
 
-      alert(`Event Booking ${editingEventId ? 'Updated' : 'Submitted'} Successfully!`);
+      alert(`Event Booking ${editingEventId ? 'Updated' : 'Submitted'}! Routed to Tanzeem Operations.`);
       resetForm();
       if (isAdmin) fetchAllEvents();
 
@@ -253,7 +235,7 @@ export default function BookEvent() {
   const resetForm = () => {
     setEditingEventId(null);
     setTitle(''); setDate(''); setLocation(''); setSubLocation('');
-    setTimingType(isStandardUser ? 'Between Classes' : 'Between Classes'); 
+    setTimingType('Between Classes'); 
     setSelectedPeriods([]); setSelectedAfterClass([]);
     setDarajah(''); setMaleCount(0); setFemaleCount(0); setOthersCount(0); setRequirements([]);
   };
@@ -311,8 +293,8 @@ export default function BookEvent() {
     fetchStandardAssets();
   };
 
-  const avitAssets = standardAssets.filter(a => a.department === 'AVIT');
-  const supportAssets = standardAssets.filter(a => a.department === 'Support');
+  const avitAssets = standardAssets.filter(a => a.department === 'AVIT_HEAD');
+  const supportAssets = standardAssets.filter(a => a.department === 'SIYANAT_HEAD' || a.department === 'TANZEEM_HEAD');
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto pb-24">
@@ -496,7 +478,7 @@ export default function BookEvent() {
               <div className="space-y-2">
                 {avitAssets.map(asset => (
                   <label key={asset.id} className="flex items-center space-x-2 p-2 bg-white rounded-lg cursor-pointer border border-slate-200 hover:border-slate-300 transition shadow-sm">
-                    <input type="checkbox" checked={requirements.some(r => r.item === asset.item_name)} onChange={() => toggleStandardRequirement('AVIT', asset.item_name)} className="w-4 h-4 text-brand-maroon rounded focus:ring-brand-maroon" />
+                    <input type="checkbox" checked={requirements.some(r => r.item === asset.item_name)} onChange={() => toggleStandardRequirement('AVIT_HEAD', asset.item_name)} className="w-4 h-4 text-brand-maroon rounded focus:ring-brand-maroon" />
                     <span className="text-xs font-bold text-slate-700">{asset.item_name}</span>
                   </label>
                 ))}
@@ -508,7 +490,7 @@ export default function BookEvent() {
               <div className="space-y-2">
                 {supportAssets.map(asset => (
                   <label key={asset.id} className="flex items-center space-x-2 p-2 bg-white rounded-lg cursor-pointer border border-slate-200 hover:border-slate-300 transition shadow-sm">
-                    <input type="checkbox" checked={requirements.some(r => r.item === asset.item_name)} onChange={() => toggleStandardRequirement('Support', asset.item_name)} className="w-4 h-4 text-brand-maroon rounded focus:ring-brand-maroon" />
+                    <input type="checkbox" checked={requirements.some(r => r.item === asset.item_name)} onChange={() => toggleStandardRequirement('SIYANAT_HEAD', asset.item_name)} className="w-4 h-4 text-brand-maroon rounded focus:ring-brand-maroon" />
                     <span className="text-xs font-bold text-slate-700">{asset.item_name}</span>
                   </label>
                 ))}
@@ -560,7 +542,7 @@ export default function BookEvent() {
         </div>
 
         {/* FLEET TRANSPORTATION CALLOUT */}
-        {userRole !== 'STANDARD_USER' && (
+        {userRole !== 'REQUESTER' && (
           <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-200 flex items-start gap-4">
             <div className="bg-white p-2 rounded-lg shadow-sm border border-indigo-100 shrink-0">
               <Car className="w-6 h-6 text-indigo-600" />
@@ -599,7 +581,7 @@ export default function BookEvent() {
                       <div key={asset.id} className="flex justify-between items-center bg-slate-50 p-3 rounded-xl border border-slate-100 shadow-sm">
                         <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
                           <span className="font-bold text-slate-800 text-xs">{asset.item_name}</span> 
-                          <span className="text-[9px] text-slate-500 font-black uppercase tracking-wider bg-slate-200 px-1.5 py-0.5 rounded w-max">{asset.department}</span>
+                          <span className="text-[9px] text-slate-500 font-black uppercase tracking-wider bg-slate-200 px-1.5 py-0.5 rounded w-max">{asset.department.replace('_HEAD', '')}</span>
                         </div>
                         <button onClick={() => deleteStandardAsset(asset.id, asset.item_name)} className="text-slate-400 hover:text-red-500 bg-white p-1.5 rounded-lg border border-slate-200 shadow-sm transition"><Trash2 className="w-4 h-4" /></button>
                       </div>
@@ -610,8 +592,9 @@ export default function BookEvent() {
                  <h4 className="text-xs font-bold text-slate-700 mb-3 uppercase tracking-wide">Add New Item</h4>
                  <div className="space-y-3">
                    <select value={newAssetDept} onChange={e => setNewAssetDept(e.target.value)} className="w-full p-2.5 text-xs font-bold border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-brand-maroon">
-                     <option value="AVIT">AVIT Department</option>
-                     <option value="Support">Siyanat / Tanzeem Support</option>
+                     <option value="AVIT_HEAD">AVIT Department</option>
+                     <option value="SIYANAT_HEAD">Siyanat Support</option>
+                     <option value="TANZEEM_HEAD">Tanzeem Support</option>
                    </select>
                    <input type="text" value={newAssetName} onChange={e => setNewAssetName(e.target.value)} placeholder="e.g. Laser Pointer" className="w-full p-2.5 text-xs font-semibold border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-brand-maroon" />
                    <button onClick={addStandardAsset} className="w-full py-2.5 bg-indigo-600 text-white font-bold text-xs uppercase tracking-wide rounded-lg hover:bg-indigo-700 transition shadow-sm">Add Item</button>

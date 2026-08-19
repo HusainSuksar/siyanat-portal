@@ -32,6 +32,7 @@ export default function TechnicianPortal() {
       
       setUserProfile(profile);
 
+      // THE FIX: Querying specifically for the universal pipeline_state
       const { data, error } = await supabase
         .from('technician_assignments')
         .select(`
@@ -39,13 +40,17 @@ export default function TechnicianPortal() {
           complaint:complaints(*)
         `)
         .eq('technician_id', authData.user.id)
+        .in('complaint.pipeline_state', ['PROCESSING', 'ACTION_REQUIRED'])
         .order('assigned_at', { ascending: false });
 
       if (error) {
         console.error("Database Error fetching assignments:", error.message);
       }
       
-      if (data) setAssignments(data);
+      if (data) {
+        // Filter out any assignments where the joined complaint is null (due to inner join filtering logic)
+        setAssignments(data.filter(a => a.complaint !== null));
+      }
     }
     setLoading(false);
   };
@@ -63,8 +68,9 @@ export default function TechnicianPortal() {
   const completeTask = async (assignmentId: string, complaintId: string) => {
     if (!confirm(`Mark this task as fully completed? The Supervisor will be notified to verify.`)) return;
 
+    // THE FIX: RPC Call to advance from PROCESSING to ACTION_REQUIRED
+    await supabase.rpc('advance_pipeline', { target_table: 'complaints', target_id: complaintId });
     await supabase.from('technician_assignments').update({ status: 'Completed' }).eq('id', assignmentId);
-    await supabase.from('complaints').update({ status: 'Completed' }).eq('id', complaintId);
     
     await supabase.from('system_logs').insert({
       action_type: 'TASK_COMPLETED',
@@ -121,7 +127,7 @@ export default function TechnicianPortal() {
         location: activeAssignment.complaint.venue,
         urgency: 'High',
         reason: `Material required for Complaint: ${activeAssignment.complaint.complaint_id}`,
-        approval_status: 'Pending Admin PO', // Special status for Technician Requests
+        approval_status: 'Pending Admin PO', 
         dispatch_status: 'Pending'
       }).select().single();
 
@@ -139,9 +145,7 @@ export default function TechnicianPortal() {
       const { error: itemsError } = await supabase.from('work_order_items').insert(itemsToInsert);
       if (itemsError) throw itemsError;
 
-      // 3. Update task status to "Waiting for Material"
       await supabase.from('technician_assignments').update({ status: 'Waiting for Material' }).eq('id', activeAssignment.id);
-      await supabase.from('complaints').update({ status: 'Waiting for Material' }).eq('id', activeAssignment.complaint_id);
 
       await supabase.from('system_logs').insert({
         action_type: 'TECH_MATERIAL_REQUEST',
@@ -170,7 +174,7 @@ export default function TechnicianPortal() {
         <p><strong>Category:</strong> ${a.complaint.category}</p>
         <p><strong>Location:</strong> ${a.complaint.zone} - ${a.complaint.venue} (${a.complaint.floor}, ${a.complaint.room_area})</p>
         <p><strong>Description:</strong> ${a.complaint.description}</p>
-        <p><strong>Status:</strong> ${a.status}</p>
+        <p><strong>Pipeline Status:</strong> ${a.complaint.pipeline_state}</p>
       </div>
     `).join("");
 
@@ -239,7 +243,7 @@ export default function TechnicianPortal() {
         </div>
         <div className="bg-white p-4 md:p-5 rounded-2xl shadow-sm border border-slate-200 text-center">
           <div className="text-2xl md:text-3xl font-black text-emerald-600">
-            {assignments.filter(a => a.status === 'Completed').length}
+            {assignments.filter(a => a.complaint.pipeline_state === 'ACTION_REQUIRED').length}
           </div>
           <div className="text-[9px] md:text-[10px] font-black tracking-widest text-slate-400 uppercase mt-1">Completed</div>
         </div>
@@ -253,7 +257,7 @@ export default function TechnicianPortal() {
         ) : (
           assignments.map(a => {
             const isUrgent = a.complaint.priority.includes('URGENT');
-            const isCompleted = a.status === 'Completed';
+            const isCompleted = a.complaint.pipeline_state === 'ACTION_REQUIRED' || a.complaint.pipeline_state === 'CLOSED';
             const isWaiting = a.status === 'Waiting for Material';
 
             return (
@@ -269,7 +273,7 @@ export default function TechnicianPortal() {
                       isWaiting ? 'bg-amber-100 text-amber-800' : 
                       'bg-indigo-100 text-indigo-800'
                     }`}>
-                      {a.status}
+                      {isCompleted ? 'Pending Verification' : a.complaint.pipeline_state}
                     </span>
                   </div>
 
@@ -298,7 +302,7 @@ export default function TechnicianPortal() {
                       Request Material
                     </button>
                     <button 
-                      onClick={() => completeTask(a.id, a.complaint_id)}
+                      onClick={() => completeTask(a.id, a.complaint.id)}
                       className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] uppercase tracking-wider rounded-xl shadow-md transition flex flex-col justify-center items-center gap-1"
                     >
                       <CheckCircle className="w-4 h-4" />

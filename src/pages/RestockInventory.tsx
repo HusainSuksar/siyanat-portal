@@ -1,7 +1,17 @@
 import { useState, useEffect } from 'react';
-import { supabase, type InventoryItem } from '../lib/supabase';
+import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { Warehouse, Plus, Trash2, Save, Search, PackageSearch, Edit, X, Hash, ShoppingCart, Truck, Building2 } from 'lucide-react';
+
+type InventoryItem = {
+  id: string;
+  name: string;
+  category: string;
+  physical_stock: number;
+  freezed_stock: number;
+  unit: string;
+  fulfillment_dept: string;
+};
 
 type RestockRow = {
   id: string;
@@ -10,6 +20,7 @@ type RestockRow = {
   name: string;
   category: string;
   qty: number;
+  fulfillment_dept: string; // Added for new tags
 };
 
 const SIYANAT_CATEGORIES = [
@@ -56,7 +67,7 @@ export default function RestockInventory() {
   const fetchData = async () => {
     setLoading(true);
     
-    // 1. Fetch Catalog with Departmental Filtering
+    // 1. Fetch Catalog
     let catQuery = supabase.from('inventory_items').select('*').order('name');
     if (isTanzeemOnly) {
       catQuery = catQuery.in('category', TANZEEM_CATEGORIES);
@@ -73,7 +84,7 @@ export default function RestockInventory() {
     const { data: vendorData } = await supabase.from('vendors').select('*').order('name');
     if (vendorData) setVendors(vendorData);
 
-    // 3. Fetch Pending POs (FIXED QUERY: Removed created_at sort)
+    // 3. Fetch Pending POs
     const { data: poData, error: poError } = await supabase
       .from('purchase_orders')
       .select('*, vendor:vendors(name, category), items:purchase_order_items(*)')
@@ -96,6 +107,7 @@ export default function RestockInventory() {
       name: '',
       category: availableCategories[0],
       qty: 10,
+      fulfillment_dept: 'SIYANAT_HEAD' // Default tag
     }]);
   };
 
@@ -111,9 +123,15 @@ export default function RestockInventory() {
 
       for (const row of rows) {
         if (row.type === 'NEW') {
+          // THE FIX: Inject the fulfillment_dept tag when creating new stock
           const { error } = await supabase.from('inventory_items').insert({
             item_id: `CAT-${Math.floor(10000 + Math.random() * 90000)}`,
-            name: row.name, category: row.category, physical_stock: row.qty, freezed_stock: 0, unit: 'Pcs'
+            name: row.name, 
+            category: row.category, 
+            physical_stock: row.qty, 
+            freezed_stock: 0, 
+            unit: 'Pcs',
+            fulfillment_dept: row.fulfillment_dept
           });
           if (error) throw error;
           totalItemsRestocked += row.qty;
@@ -174,10 +192,8 @@ export default function RestockInventory() {
     setProcessingId(po.id);
 
     try {
-      // 1. Update PO Status
       await supabase.from('purchase_orders').update({ status: 'Fulfilled & Received' }).eq('id', po.id);
 
-      // 2. Increment physical stock for each item in the PO
       for (const item of po.items) {
         if (item.inventory_id) {
           const { data: inv } = await supabase.from('inventory_items').select('physical_stock').eq('id', item.inventory_id).single();
@@ -187,15 +203,15 @@ export default function RestockInventory() {
         }
       }
 
-      // 3. THE AUTO-FULFILLMENT ENGINE: Wake up the technician's ticket!
+      // Automatically advance tickets waiting for this material
       if (po.complaint_id) {
         await supabase.from('technician_assignments').update({ status: 'Assigned' }).eq('complaint_id', po.complaint_id);
-        await supabase.from('complaints').update({ status: 'Assigned' }).eq('id', po.complaint_id);
+        await supabase.rpc('advance_pipeline', { target_table: 'complaints', target_id: po.complaint_id });
       }
 
       await supabase.from('system_logs').insert({
         action_type: 'PO_FULFILLED',
-        description: `Received shipment for PO ${po.po_number}. Auto-fulfillment triggered for ticket.`,
+        description: `Received shipment for PO ${po.po_number}. Auto-fulfillment triggered.`,
         user_email: user?.email || 'System Admin'
       });
 
@@ -213,9 +229,14 @@ export default function RestockInventory() {
     if (!editingItem) return;
     setProcessingId(editingItem.id);
 
+    // THE FIX: Save the fulfillment_dept tag when editing
     const { error } = await supabase.from('inventory_items').update({
-      name: editingItem.name, category: editingItem.category, unit: editingItem.unit,
-      physical_stock: editingItem.physical_stock, freezed_stock: editingItem.freezed_stock
+      name: editingItem.name, 
+      category: editingItem.category, 
+      unit: editingItem.unit,
+      physical_stock: editingItem.physical_stock, 
+      freezed_stock: editingItem.freezed_stock,
+      fulfillment_dept: editingItem.fulfillment_dept
     }).eq('id', editingItem.id);
 
     if (!error) {
@@ -279,7 +300,10 @@ export default function RestockInventory() {
                         </span>
                       </div>
                       <h4 className="font-bold text-slate-800 text-sm leading-tight">{item.name}</h4>
-                      <p className="text-[10px] text-slate-500 font-semibold uppercase mt-1">{item.category}</p>
+                      <div className="flex flex-col gap-0.5 mt-1">
+                        <p className="text-[10px] text-slate-500 font-semibold uppercase">{item.category}</p>
+                        <p className="text-[9px] text-indigo-500 font-black uppercase tracking-wider">{item.fulfillment_dept?.replace('_HEAD', '') || 'SIYANAT'}</p>
+                      </div>
                     </div>
                     <div className="mt-4 pt-3 border-t border-slate-200 flex justify-between items-center">
                       <span className="text-[10px] font-bold text-slate-400">Phy: {item.physical_stock} | Frz: {item.freezed_stock}</span>
@@ -320,7 +344,7 @@ export default function RestockInventory() {
                     </select>
                   </div>
                   
-                  <div className="md:col-span-4">
+                  <div className={row.type === 'NEW' ? "md:col-span-3" : "md:col-span-4"}>
                     <label className="block text-[10px] font-black text-slate-500 uppercase mb-1.5">Item Name</label>
                     {row.type === 'EXISTING' ? (
                       <select value={row.itemId} onChange={(e) => updateRow(row.id, 'itemId', e.target.value)} className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-semibold outline-none">
@@ -331,15 +355,26 @@ export default function RestockInventory() {
                     )}
                   </div>
 
+                  {row.type === 'NEW' && (
+                    <div className="md:col-span-2">
+                      <label className="block text-[10px] font-black text-indigo-600 uppercase mb-1.5">Route To</label>
+                      <select value={row.fulfillment_dept} onChange={(e) => updateRow(row.id, 'fulfillment_dept', e.target.value)} className="w-full p-2.5 bg-indigo-50 border border-indigo-200 rounded-xl text-xs font-bold text-indigo-900 outline-none focus:ring-2 focus:ring-indigo-500">
+                        <option value="SIYANAT_HEAD">Siyanat</option>
+                        <option value="TANZEEM_HEAD">Tanzeem</option>
+                        <option value="AVIT_HEAD">AVIT</option>
+                      </select>
+                    </div>
+                  )}
+
                   <div className="md:col-span-3">
                     <label className="block text-[10px] font-black text-slate-500 uppercase mb-1.5">Category</label>
-                    <select value={row.category} onChange={(e) => updateRow(row.id, 'category', e.target.value)} className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-semibold outline-none">
+                    <select value={row.category} onChange={(e) => updateRow(row.id, 'category', e.target.value)} className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-semibold outline-none disabled:opacity-50" disabled={row.type === 'EXISTING'}>
                       {availableCategories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
                     </select>
                   </div>
 
-                  <div className="md:col-span-2">
-                    <label className="block text-[10px] font-black text-slate-500 uppercase mb-1.5">Quantity</label>
+                  <div className={row.type === 'NEW' ? "md:col-span-1" : "md:col-span-2"}>
+                    <label className="block text-[10px] font-black text-slate-500 uppercase mb-1.5">Qty</label>
                     <input type="number" min="1" value={row.qty} onChange={(e) => updateRow(row.id, 'qty', parseInt(e.target.value) || 0)} className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-sm font-black text-center outline-none" />
                   </div>
                 </div>
@@ -475,6 +510,17 @@ export default function RestockInventory() {
                 <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Name</label>
                 <input type="text" value={editingItem.name} onChange={e => setEditingItem({...editingItem, name: e.target.value})} className="w-full p-3 border border-slate-300 rounded-xl text-xs font-bold outline-none" />
               </div>
+              
+              {/* THE FIX: Added Department Routing Selection to Edit Modal */}
+              <div>
+                <label className="block text-[10px] font-bold text-indigo-600 uppercase mb-1">Department Route</label>
+                <select value={editingItem.fulfillment_dept || 'SIYANAT_HEAD'} onChange={e => setEditingItem({...editingItem, fulfillment_dept: e.target.value})} className="w-full p-3 bg-indigo-50 border border-indigo-200 rounded-xl text-xs font-bold text-indigo-900 outline-none focus:ring-2 focus:ring-indigo-500">
+                  <option value="SIYANAT_HEAD">Siyanat Operations</option>
+                  <option value="TANZEEM_HEAD">Tanzeem Operations</option>
+                  <option value="AVIT_HEAD">AVIT Operations</option>
+                </select>
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Physical</label>

@@ -16,11 +16,11 @@ export default function AdminDashboard() {
     async function fetchAdminData() {
       setLoading(true);
       
-      // 1. Fetch Global System KPIs
-      const { count: compCount } = await supabase.from('complaints').select('*', { count: 'exact', head: true }).not('status', 'in', '("Closed","Verified","Rejected")');
+      // 1. Fetch Global System KPIs using new Pipeline States
+      const { count: compCount } = await supabase.from('complaints').select('*', { count: 'exact', head: true }).in('pipeline_state', ['SUBMITTED', 'AUTHORIZED', 'PROCESSING', 'ACTION_REQUIRED']);
       const { count: poCount } = await supabase.from('purchase_orders').select('*', { count: 'exact', head: true }).eq('status', 'PO Issued');
-      const { count: dispatchCount } = await supabase.from('work_orders').select('*', { count: 'exact', head: true }).eq('dispatch_status', 'Pending');
-      const { count: eventCount } = await supabase.from('events').select('*', { count: 'exact', head: true }).in('status', ['Pending', 'Pending Approval', 'Pending Tanzeem Approval']);
+      const { count: dispatchCount } = await supabase.from('work_orders').select('*', { count: 'exact', head: true }).in('pipeline_state', ['AUTHORIZED', 'PROCESSING', 'ACTION_REQUIRED']);
+      const { count: eventCount } = await supabase.from('events').select('*', { count: 'exact', head: true }).in('pipeline_state', ['AUTHORIZED', 'PROCESSING']);
 
       setMetrics({
         activeComplaints: compCount || 0,
@@ -37,8 +37,8 @@ export default function AdminDashboard() {
 
       // 3. Fetch Active Maintenance Routing Tickets
       const { data: maintenance } = await supabase.from('complaints')
-        .select('complaint_id, category, venue, status, created_at')
-        .not('status', 'in', '("Closed","Verified","Rejected")')
+        .select('complaint_id, category, venue, pipeline_state, created_at')
+        .in('pipeline_state', ['SUBMITTED', 'AUTHORIZED', 'PROCESSING', 'ACTION_REQUIRED'])
         .order('created_at', { ascending: false })
         .limit(6);
       if (maintenance) setMaintenanceRouting(maintenance);
@@ -102,7 +102,7 @@ export default function AdminDashboard() {
       {/* Grid Layout for Logs and Maintenance Routing */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
         
-        {/* Active Maintenance Routing Widget (Now Clickable) */}
+        {/* Active Maintenance Routing Widget */}
         <div 
           className="bg-white rounded-3xl p-6 shadow-sm border border-slate-200 hover:border-amber-300 transition cursor-pointer group"
           onClick={() => navigate('/siyanat-operations')}
@@ -124,7 +124,7 @@ export default function AdminDashboard() {
                 <div key={ticket.complaint_id} className="flex flex-col p-3.5 bg-slate-50 rounded-xl border border-slate-100 group-hover:bg-amber-50/50 transition">
                   <div className="flex justify-between items-start mb-1">
                     <h4 className="font-black text-brand-maroon text-sm">{ticket.complaint_id}</h4>
-                    <span className="text-[9px] font-black text-amber-700 bg-amber-100 px-2 py-0.5 rounded uppercase tracking-wider">{ticket.status}</span>
+                    <span className="text-[9px] font-black text-amber-700 bg-amber-100 px-2 py-0.5 rounded uppercase tracking-wider">{ticket.pipeline_state}</span>
                   </div>
                   <p className="text-[10px] font-bold text-slate-500 uppercase">{ticket.category} • {ticket.venue}</p>
                 </div>

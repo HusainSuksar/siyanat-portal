@@ -2,6 +2,18 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { Users, Shield, UserCog, Edit, Trash2, X, Save, UserPlus } from 'lucide-react';
 
+const AVAILABLE_ZONES = [
+  "Main Jamea Complex",
+  "Rabwat (Girls Hostel)",
+  "Masakin (Boys Hostel)",
+  "Mawaid",
+  "Khaimat al-Riyadat"
+];
+
+const AVAILABLE_TRADES = [
+  "Plumbing", "Electrical", "Carpentry", "Civil", "HVAC", "Housekeeping", "Cleaning", "General"
+];
+
 export default function TeamManagement() {
   const [team, setTeam] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -15,6 +27,10 @@ export default function TeamManagement() {
   const [newUser, setNewUser] = useState({
     full_name: '', email: '', department: '', its_number: '', role: 'REQUESTER', zone: '', trade: ''
   });
+
+  // Multi-Select States
+  const [selectedZones, setSelectedZones] = useState<string[]>([]);
+  const [selectedTrades, setSelectedTrades] = useState<string[]>([]);
 
   useEffect(() => {
     fetchTeam();
@@ -32,51 +48,50 @@ export default function TeamManagement() {
     setLoading(false);
   };
 
-  // --- ADD NEW MEMBER LOGIC ---
+  // --- MULTI-SELECT HELPERS ---
+  const toggleZone = (zone: string) => {
+    setSelectedZones(prev => prev.includes(zone) ? prev.filter(z => z !== zone) : [...prev, zone]);
+  };
+
+  const toggleTrade = (trade: string) => {
+    setSelectedTrades(prev => prev.includes(trade) ? prev.filter(t => t !== trade) : [...prev, trade]);
+  };
+
   // --- ADD NEW MEMBER LOGIC ---
   const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
     setProcessingId('new-user');
 
     const cleanEmail = newUser.email.trim().toLowerCase();
-    const cleanPassword = '786110';
+    const cleanPassword = '786110'; 
 
     try {
-      // 1. Create the user
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: cleanEmail,
         password: cleanPassword,
-        options: {
-          data: {
-            full_name: newUser.full_name,
-          }
-        }
+        options: { data: { full_name: newUser.full_name } }
       });
 
       if (authError) throw authError;
 
       if (authData.user) {
+        // Prepare arrays into CSV strings
+        const zoneString = newUser.role === 'SUPERVISOR' ? selectedZones.join(', ') : null;
+        const tradeString = newUser.role === 'EXECUTOR' ? selectedTrades.join(', ') : null;
+
         const payload = {
-          id: authData.user.id, // Explicitly pass ID for upsert
+          id: authData.user.id,
           full_name: newUser.full_name,
           department: newUser.department,
-          its_number: newUser.its_number || null, // Handle empty ITS
+          its_number: newUser.its_number || null,
           role: newUser.role,
-          zone: newUser.role === 'SUPERVISOR' ? newUser.zone : null,
-          trade: newUser.role === 'TECHNICIAN' ? newUser.trade : null,
+          zone: zoneString,
+          trade: tradeString,
         };
 
-        // 2. FORCE UPSERT: This guarantees the profile row is created/updated immediately
-        const { error: profileError } = await supabase
-          .from('profiles')
-          .upsert(payload);
+        const { error: profileError } = await supabase.from('profiles').upsert(payload);
+        if (profileError) throw profileError;
 
-        if (profileError) {
-             console.error("Profile Upsert Error:", profileError);
-             throw new Error("Account created, but profile data failed to save.");
-        }
-
-        // 3. Log to audit history
         const { data: adminData } = await supabase.auth.getUser();
         await supabase.from('system_logs').insert({
           action_type: 'USER_CREATED',
@@ -87,8 +102,7 @@ export default function TeamManagement() {
         alert(`User Registered Successfully!\n\nEmail: ${cleanEmail}\nPassword: ${cleanPassword}`);
         setAddModalOpen(false);
         setNewUser({ full_name: '', email: '', department: '', its_number: '', role: 'REQUESTER', zone: '', trade: '' });
-        
-        // Refresh immediately
+        setSelectedZones([]); setSelectedTrades([]);
         fetchTeam();
       }
     } catch (err: any) {
@@ -98,9 +112,23 @@ export default function TeamManagement() {
     }
   };
 
-  // --- EDIT & DELETE LOGIC ---
+  // --- EDIT LOGIC ---
   const openEditModal = (user: any) => {
     setEditingUser({ ...user });
+    
+    // Parse existing CSV strings back into arrays for the checkboxes
+    if (user.role === 'SUPERVISOR' && user.zone) {
+      setSelectedZones(user.zone.split(',').map((s: string) => s.trim()));
+    } else {
+      setSelectedZones([]);
+    }
+
+    if (user.role === 'EXECUTOR' && user.trade) {
+      setSelectedTrades(user.trade.split(',').map((s: string) => s.trim()));
+    } else {
+      setSelectedTrades([]);
+    }
+
     setEditModalOpen(true);
   };
 
@@ -109,13 +137,17 @@ export default function TeamManagement() {
     if (!editingUser) return;
     setProcessingId(editingUser.id);
 
+    // Re-pack arrays into CSV strings
+    const zoneString = editingUser.role === 'SUPERVISOR' ? selectedZones.join(', ') : null;
+    const tradeString = editingUser.role === 'EXECUTOR' ? selectedTrades.join(', ') : null;
+
     const payload = {
       full_name: editingUser.full_name,
       department: editingUser.department,
       its_number: editingUser.its_number,
       role: editingUser.role,
-      zone: editingUser.role === 'SUPERVISOR' ? editingUser.zone : null,
-      trade: editingUser.role === 'TECHNICIAN' ? editingUser.trade : null,
+      zone: zoneString,
+      trade: tradeString,
     };
 
     const { error } = await supabase.from('profiles').update(payload).eq('id', editingUser.id);
@@ -154,7 +186,7 @@ export default function TeamManagement() {
       alert('User deleted successfully.');
       fetchTeam();
     } else {
-      alert("Cannot delete user. They likely have existing complaints or work orders tied to their account. Demote them to 'REQUESTER' instead.");
+      alert("Cannot delete user. They likely have existing data tied to their account. Demote them to 'REQUESTER' instead.");
     }
     setProcessingId(null);
   };
@@ -167,10 +199,14 @@ export default function TeamManagement() {
             <Users className="w-6 h-6" />
             Team & Access Management
           </h2>
-          <p className="text-xs text-slate-500 mt-1">Manage personnel, assign trades/zones, and control portal access levels.</p>
+          <p className="text-xs text-slate-500 mt-1">Manage personnel, assign multi-trades/zones, and control access levels.</p>
         </div>
         <button 
-          onClick={() => setAddModalOpen(true)}
+          onClick={() => {
+            setNewUser({ full_name: '', email: '', department: '', its_number: '', role: 'REQUESTER', zone: '', trade: '' });
+            setSelectedZones([]); setSelectedTrades([]);
+            setAddModalOpen(true);
+          }}
           className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs uppercase tracking-wider rounded-lg shadow-sm transition flex items-center space-x-2"
         >
           <UserPlus className="w-4 h-4" />
@@ -201,7 +237,8 @@ export default function TeamManagement() {
                 <tr><td colSpan={4} className="p-6 text-center text-slate-500 font-medium italic">No users found.</td></tr>
               ) : (
                 team.map((user) => {
-                  const isAdmin = user.role === 'ADMIN';
+                  const isAdmin = user.role === 'SUPER_ADMIN';
+                  const isHead = user.role.includes('_HEAD');
 
                   return (
                     <tr key={user.id} className="hover:bg-slate-50 transition">
@@ -216,16 +253,17 @@ export default function TeamManagement() {
                       <td className="p-3">
                         <div className="flex flex-col gap-1 items-start">
                           <span className={`px-2 py-1 rounded text-[10px] font-bold flex items-center w-max space-x-1 ${
-                            isAdmin ? 'bg-brand-maroon text-brand-gold' : 'bg-slate-100 text-slate-700'
+                            isAdmin ? 'bg-brand-maroon text-brand-gold' : isHead ? 'bg-indigo-100 text-indigo-800' : 'bg-slate-100 text-slate-700'
                           }`}>
-                            {isAdmin && <Shield className="w-3 h-3" />}
-                            <span>{user.role}</span>
+                            {(isAdmin || isHead) && <Shield className="w-3 h-3" />}
+                            <span>{user.role.replace('_', ' ')}</span>
                           </span>
+                          {/* THE FIX: Render zone column */}
                           {user.role === 'SUPERVISOR' && user.zone && (
-                            <span className="text-[9px] font-bold text-indigo-600 uppercase bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">Zone: {user.zone}</span>
+                            <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">Zone: {user.zone}</span>
                           )}
-                          {user.role === 'TECHNICIAN' && user.trade && (
-                            <span className="text-[9px] font-bold text-emerald-600 uppercase bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100">Trade: {user.trade}</span>
+                          {user.role === 'EXECUTOR' && user.trade && (
+                            <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100">Trade: {user.trade}</span>
                           )}
                         </div>
                       </td>
@@ -258,39 +296,43 @@ export default function TeamManagement() {
         </div>
       </div>
 
-      {/* --- ADD NEW MEMBER MODAL --- */}
-      {addModalOpen && (
+      {/* --- ADD / EDIT USER MODAL --- */}
+      {(addModalOpen || editModalOpen) && (
         <div className="fixed inset-0 bg-black/50 z-50 flex justify-center items-center p-4">
           <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden">
-            <div className="bg-brand-maroon p-4 flex justify-between items-center text-white">
-              <h3 className="font-extrabold text-sm uppercase">Register New Team Member</h3>
-              <button onClick={() => setAddModalOpen(false)}><X className="w-5 h-5 hover:text-red-300" /></button>
+            <div className={addModalOpen ? "bg-brand-maroon p-4 flex justify-between items-center text-white" : "bg-slate-800 p-4 flex justify-between items-center text-white"}>
+              <h3 className="font-extrabold text-sm uppercase">{addModalOpen ? 'Register New Team Member' : `Edit Profile: ${editingUser?.full_name}`}</h3>
+              <button onClick={() => { setAddModalOpen(false); setEditModalOpen(false); }}><X className="w-5 h-5 hover:text-red-300" /></button>
             </div>
             
-            <form onSubmit={handleAddUser} className="p-5 space-y-4 max-h-[80vh] overflow-y-auto">
-              <div className="bg-amber-50 border border-amber-200 p-3 rounded-lg text-[10px] text-amber-800 font-bold mb-4">
-                Note: The user will be created with the default password <span className="bg-amber-200 px-1 rounded">786110</span>. They can use this to login immediately.
-              </div>
+            <form onSubmit={addModalOpen ? handleAddUser : handleUpdateUser} className="p-5 space-y-4 max-h-[80vh] overflow-y-auto">
+              {addModalOpen && (
+                <div className="bg-amber-50 border border-amber-200 p-3 rounded-lg text-[10px] text-amber-800 font-bold mb-4">
+                  Note: The user will be created with the default password <span className="bg-amber-200 px-1 rounded">786110</span>.
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-2">
                   <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">Full Name *</label>
-                  <input required type="text" value={newUser.full_name} onChange={e => setNewUser({...newUser, full_name: e.target.value})} className="w-full p-2 border border-slate-300 rounded-lg text-xs outline-none focus:ring-2 focus:ring-brand-maroon"/>
+                  <input required type="text" value={addModalOpen ? newUser.full_name : editingUser.full_name} onChange={e => addModalOpen ? setNewUser({...newUser, full_name: e.target.value}) : setEditingUser({...editingUser, full_name: e.target.value})} className="w-full p-2 border border-slate-300 rounded-lg text-xs outline-none focus:ring-2 focus:ring-brand-maroon"/>
                 </div>
                 
-                <div className="col-span-2">
-                  <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">Email Address (Login ID) *</label>
-                  <input required type="email" value={newUser.email} onChange={e => setNewUser({...newUser, email: e.target.value})} className="w-full p-2 border border-slate-300 rounded-lg text-xs outline-none focus:ring-2 focus:ring-brand-maroon"/>
-                </div>
+                {addModalOpen && (
+                  <div className="col-span-2">
+                    <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">Email Address (Login ID) *</label>
+                    <input required type="email" value={newUser.email} onChange={e => setNewUser({...newUser, email: e.target.value})} className="w-full p-2 border border-slate-300 rounded-lg text-xs outline-none focus:ring-2 focus:ring-brand-maroon"/>
+                  </div>
+                )}
 
                 <div>
                   <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">Department</label>
-                  <input type="text" value={newUser.department} onChange={e => setNewUser({...newUser, department: e.target.value})} className="w-full p-2 border border-slate-300 rounded-lg text-xs outline-none focus:ring-2 focus:ring-brand-maroon"/>
+                  <input type="text" value={addModalOpen ? newUser.department : editingUser.department || ''} onChange={e => addModalOpen ? setNewUser({...newUser, department: e.target.value}) : setEditingUser({...editingUser, department: e.target.value})} className="w-full p-2 border border-slate-300 rounded-lg text-xs outline-none focus:ring-2 focus:ring-brand-maroon"/>
                 </div>
                 
                 <div>
                   <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">ITS Number</label>
-                  <input type="text" value={newUser.its_number} onChange={e => setNewUser({...newUser, its_number: e.target.value})} className="w-full p-2 border border-slate-300 rounded-lg text-xs outline-none focus:ring-2 focus:ring-brand-maroon"/>
+                  <input type="text" value={addModalOpen ? newUser.its_number : editingUser.its_number || ''} onChange={e => addModalOpen ? setNewUser({...newUser, its_number: e.target.value}) : setEditingUser({...editingUser, its_number: e.target.value})} className="w-full p-2 border border-slate-300 rounded-lg text-xs outline-none focus:ring-2 focus:ring-brand-maroon"/>
                 </div>
               </div>
 
@@ -300,138 +342,63 @@ export default function TeamManagement() {
                 </label>
                 <select 
                   required
-                  value={newUser.role} 
-                  onChange={e => setNewUser({...newUser, role: e.target.value})} 
+                  value={addModalOpen ? newUser.role : editingUser.role} 
+                  onChange={e => {
+                    const r = e.target.value;
+                    addModalOpen ? setNewUser({...newUser, role: r}) : setEditingUser({...editingUser, role: r});
+                    // Reset multi-selects when changing roles
+                    setSelectedZones([]); setSelectedTrades([]);
+                  }} 
                   className="w-full p-2 border border-slate-300 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-brand-maroon"
                 >
                   <option value="REQUESTER">Standard Requester</option>
                   <option value="SUPERVISOR">Zone Supervisor</option>
-                  <option value="TECHNICIAN">Technician</option>
-                  <option value="ADMIN">System Administrator</option>
+                  <option value="EXECUTOR">Field Technician / Executor</option>
+                  <option value="SIYANAT_HEAD">Siyanat Head</option>
+                  <option value="TANZEEM_HEAD">Tanzeem Head</option>
+                  <option value="AVIT_HEAD">AVIT Head</option>
+                  <option value="SUPER_ADMIN">System Administrator</option>
                 </select>
               </div>
 
-              {newUser.role === 'SUPERVISOR' && (
+              {/* DYNAMIC MULTI-SELECT FOR SUPERVISORS */}
+              {(addModalOpen ? newUser.role : editingUser.role) === 'SUPERVISOR' && (
                 <div className="bg-indigo-50 p-3 rounded-lg border border-indigo-100">
-                  <label className="block text-[11px] font-bold text-indigo-900 uppercase mb-1">Assigned Zone *</label>
-                  <select required value={newUser.zone} onChange={e => setNewUser({...newUser, zone: e.target.value})} className="w-full p-2 border border-indigo-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-indigo-500">
-                    <option value="" disabled>-- Select Zone --</option>
-                    <option value="Main Jamea Complex">Main Jamea Complex</option>
-                    <option value="Rabwat">Rabwat</option>
-                    <option value="Masakin">Masakin</option>
-                    <option value="Mawaid">Mawaid</option>
-                  </select>
+                  <label className="block text-[11px] font-bold text-indigo-900 uppercase mb-2">Assign Zones (Select Multiple)</label>
+                  <div className="space-y-2 max-h-32 overflow-y-auto">
+                    {AVAILABLE_ZONES.map(zone => (
+                      <label key={zone} className="flex items-center space-x-2 p-1 cursor-pointer hover:bg-indigo-100 rounded transition">
+                        <input type="checkbox" checked={selectedZones.includes(zone)} onChange={() => toggleZone(zone)} className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500" />
+                        <span className="text-xs font-bold text-indigo-900">{zone}</span>
+                      </label>
+                    ))}
+                  </div>
+                  {selectedZones.length === 0 && <p className="text-[9px] text-red-500 font-bold mt-2 uppercase">Please select at least one zone.</p>}
                 </div>
               )}
 
-              {newUser.role === 'TECHNICIAN' && (
+              {/* DYNAMIC MULTI-SELECT FOR EXECUTORS (TECHNICIANS) */}
+              {(addModalOpen ? newUser.role : editingUser.role) === 'EXECUTOR' && (
                 <div className="bg-emerald-50 p-3 rounded-lg border border-emerald-100">
-                  <label className="block text-[11px] font-bold text-emerald-900 uppercase mb-1">Technician Trade *</label>
-                  <select required value={newUser.trade} onChange={e => setNewUser({...newUser, trade: e.target.value})} className="w-full p-2 border border-emerald-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-emerald-500">
-                    <option value="" disabled>-- Select Trade --</option>
-                    <option value="Plumbing">Plumbing</option>
-                    <option value="Electrical">Electrical</option>
-                    <option value="Carpentry">Carpentry</option>
-                    <option value="Civil">Civil</option>
-                    <option value="HVAC / AC">HVAC / AC</option>
-                    <option value="Cleaning">Cleaning</option>
-                    <option value="General">General</option>
-                  </select>
+                  <label className="block text-[11px] font-bold text-emerald-900 uppercase mb-2">Assign Trades (Select Multiple)</label>
+                  <div className="space-y-2 max-h-32 overflow-y-auto">
+                    {AVAILABLE_TRADES.map(trade => (
+                      <label key={trade} className="flex items-center space-x-2 p-1 cursor-pointer hover:bg-emerald-100 rounded transition">
+                        <input type="checkbox" checked={selectedTrades.includes(trade)} onChange={() => toggleTrade(trade)} className="w-4 h-4 text-emerald-600 rounded focus:ring-emerald-500" />
+                        <span className="text-xs font-bold text-emerald-900">{trade}</span>
+                      </label>
+                    ))}
+                  </div>
+                  {selectedTrades.length === 0 && <p className="text-[9px] text-red-500 font-bold mt-2 uppercase">Please select at least one trade.</p>}
                 </div>
               )}
 
               <button 
                 type="submit" 
-                disabled={processingId === 'new-user'}
-                className="w-full py-3 mt-4 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs uppercase rounded-xl shadow-md transition disabled:opacity-50 flex items-center justify-center gap-2"
+                disabled={processingId === 'new-user' || processingId === editingUser?.id || ( ((addModalOpen ? newUser.role : editingUser?.role) === 'SUPERVISOR' && selectedZones.length === 0) || ((addModalOpen ? newUser.role : editingUser?.role) === 'EXECUTOR' && selectedTrades.length === 0) )}
+                className={`w-full py-3 mt-4 text-white font-extrabold text-xs uppercase rounded-xl shadow-md transition disabled:opacity-50 flex items-center justify-center gap-2 ${addModalOpen ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-slate-900 hover:bg-black'}`}
               >
-                {processingId === 'new-user' ? 'Creating Account...' : <><UserPlus className="w-4 h-4" /> Register User</>}
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* --- EDIT USER MODAL --- */}
-      {editModalOpen && editingUser && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex justify-center items-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden">
-            <div className="bg-slate-800 p-4 flex justify-between items-center text-white">
-              <h3 className="font-extrabold text-sm uppercase">Edit Profile: {editingUser.full_name}</h3>
-              <button onClick={() => setEditModalOpen(false)}><X className="w-5 h-5 hover:text-red-300" /></button>
-            </div>
-            
-            <form onSubmit={handleUpdateUser} className="p-5 space-y-4 max-h-[80vh] overflow-y-auto">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="col-span-2">
-                  <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">Full Name</label>
-                  <input type="text" value={editingUser.full_name || ''} onChange={e => setEditingUser({...editingUser, full_name: e.target.value})} className="w-full p-2 border border-slate-300 rounded-lg text-xs outline-none focus:ring-2 focus:ring-brand-maroon"/>
-                </div>
-                
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">Department</label>
-                  <input type="text" value={editingUser.department || ''} onChange={e => setEditingUser({...editingUser, department: e.target.value})} className="w-full p-2 border border-slate-300 rounded-lg text-xs outline-none focus:ring-2 focus:ring-brand-maroon"/>
-                </div>
-                
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">ITS Number</label>
-                  <input type="text" value={editingUser.its_number || ''} onChange={e => setEditingUser({...editingUser, its_number: e.target.value})} className="w-full p-2 border border-slate-300 rounded-lg text-xs outline-none focus:ring-2 focus:ring-brand-maroon"/>
-                </div>
-              </div>
-
-              <div className="pt-4 border-t border-slate-100">
-                <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1 flex items-center gap-1">
-                  <Shield className="w-3 h-3 text-brand-maroon" /> System Role
-                </label>
-                <select 
-                  value={editingUser.role} 
-                  onChange={e => setEditingUser({...editingUser, role: e.target.value})} 
-                  className="w-full p-2 border border-slate-300 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-brand-maroon"
-                >
-                  <option value="REQUESTER">Standard Requester</option>
-                  <option value="SUPERVISOR">Zone Supervisor</option>
-                  <option value="TECHNICIAN">Technician</option>
-                  <option value="ADMIN">System Administrator</option>
-                </select>
-              </div>
-
-              {/* Conditional Field: Zone for Supervisors */}
-              {editingUser.role === 'SUPERVISOR' && (
-                <div className="bg-indigo-50 p-3 rounded-lg border border-indigo-100">
-                  <label className="block text-[11px] font-bold text-indigo-900 uppercase mb-1">Assigned Zone *</label>
-                  <select required value={editingUser.zone || ''} onChange={e => setEditingUser({...editingUser, zone: e.target.value})} className="w-full p-2 border border-indigo-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-indigo-500">
-                    <option value="" disabled>-- Select Zone --</option>
-                    <option value="Main Jamea Complex">Main Jamea Complex</option>
-                    <option value="Rabwat">Rabwat</option>
-                    <option value="Masakin">Masakin</option>
-                    <option value="Mawaid">Mawaid</option>
-                  </select>
-                </div>
-              )}
-
-              {/* Conditional Field: Trade for Technicians */}
-              {editingUser.role === 'TECHNICIAN' && (
-                <div className="bg-emerald-50 p-3 rounded-lg border border-emerald-100">
-                  <label className="block text-[11px] font-bold text-emerald-900 uppercase mb-1">Technician Trade *</label>
-                  <select required value={editingUser.trade || ''} onChange={e => setEditingUser({...editingUser, trade: e.target.value})} className="w-full p-2 border border-emerald-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-emerald-500">
-                    <option value="" disabled>-- Select Trade --</option>
-                    <option value="Plumbing">Plumbing</option>
-                    <option value="Electrical">Electrical</option>
-                    <option value="Carpentry">Carpentry</option>
-                    <option value="Civil">Civil</option>
-                    <option value="HVAC / AC">HVAC / AC</option>
-                    <option value="Cleaning">Cleaning</option>
-                    <option value="General">General</option>
-                  </select>
-                </div>
-              )}
-
-              <button 
-                type="submit" 
-                disabled={processingId === editingUser.id}
-                className="w-full py-3 mt-4 bg-slate-900 hover:bg-black text-white font-extrabold text-xs uppercase rounded-xl shadow-md transition disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                <Save className="w-4 h-4" /> Save Profile Changes
+                {addModalOpen ? <><UserPlus className="w-4 h-4" /> Register User</> : <><Save className="w-4 h-4" /> Save Profile Changes</>}
               </button>
             </form>
           </div>

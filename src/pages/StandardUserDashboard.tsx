@@ -8,7 +8,7 @@ export default function StandardUserDashboard() {
   const [activeTab, setActiveTab] = useState<'materials' | 'maintenance' | 'events' | 'fleet'>('materials');
   const [loading, setLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState<any>(null);
-  const [userRole, setUserRole] = useState<string>('STANDARD_USER');
+  const [userRole, setUserRole] = useState<string>('REQUESTER');
   const [processingId, setProcessingId] = useState<string | null>(null);
   const navigate = useNavigate();
 
@@ -39,9 +39,9 @@ export default function StandardUserDashboard() {
 
       const { data: profile } = await supabase.from("profiles").select("role").eq("id", authData.user.id).single();
         
-      const role = profile?.role || 'STANDARD_USER';
+      const role = profile?.role || 'REQUESTER';
       setUserRole(role);
-      const isGodMode = role === "ADMIN" || role === "GOD_MODE";
+      const isGodMode = role === "SUPER_ADMIN" || role === "ADMIN";
 
       // Build Queries
       let matQuery = supabase.from("work_orders").select("*, logs:work_order_logs(author_id)").order("created_at", { ascending: false }).limit(30);
@@ -66,10 +66,10 @@ export default function StandardUserDashboard() {
       if (fleetRes.data) setFleet(fleetRes.data);
 
       setStats({
-        materialsActive: matRes.data?.filter((w) => w.dispatch_status !== "Received" && w.dispatch_status !== "Cancelled" && w.approval_status !== "Rejected").length || 0,
-        complaintsActive: compRes.data?.filter((c) => !['Closed', 'Rejected', 'Verified'].includes(c.status)).length || 0,
-        eventsActive: evRes.data?.filter((e) => e.status.includes("Pending")).length || 0,
-        fleetActive: fleetRes.data?.filter((f) => f.status.includes("Pending")).length || 0,
+        materialsActive: matRes.data?.filter((w) => !['CLOSED', 'REJECTED'].includes(w.pipeline_state)).length || 0,
+        complaintsActive: compRes.data?.filter((c) => !['CLOSED', 'REJECTED'].includes(c.pipeline_state)).length || 0,
+        eventsActive: evRes.data?.filter((e) => !['CLOSED', 'REJECTED'].includes(e.pipeline_state)).length || 0,
+        fleetActive: fleetRes.data?.filter((f) => !['CLOSED', 'REJECTED'].includes(f.pipeline_state)).length || 0,
       });
     }
     setLoading(false);
@@ -81,7 +81,7 @@ export default function StandardUserDashboard() {
 
   // --- MATERIAL ACTIONS ---
   const confirmReceipt = async (batch: any) => {
-    if (!confirm("Confirm you have physically received these items? This will finalize the inventory deduction.")) return;
+    if (!confirm("Confirm you have physically received these items? This will finalize the inventory deduction and close the request.")) return;
     setProcessingId(batch.id);
 
     try {
@@ -98,14 +98,16 @@ export default function StandardUserDashboard() {
         }
       }
 
-      await supabase.from("work_orders").update({ dispatch_status: "Received" }).eq("id", batch.id);
+      // THE FIX: Move to CLOSED upon receipt
+      await supabase.rpc('advance_pipeline', { target_table: 'work_orders', target_id: batch.id });
+      
       await supabase.from("system_logs").insert({
         action_type: "ITEMS_RECEIVED",
-        description: `Batch ${batch.batch_id} marked as received. Physical stock successfully deducted.`,
+        description: `Batch ${batch.batch_id} marked as received. Request closed.`,
         user_email: currentUser?.email || "Requester",
       });
 
-      alert("Receipt confirmed! Inventory finalized.");
+      alert("Receipt confirmed! Request completed.");
       fetchDashboardData();
     } catch (err: any) {
       alert("Error confirming receipt: " + err.message);
@@ -119,7 +121,7 @@ export default function StandardUserDashboard() {
     setIsChatOpen(true);
   };
 
-  const isStandardUser = userRole === 'STANDARD_USER';
+  const isStandardUser = userRole === 'REQUESTER';
 
   return (
     <div className="space-y-6 pb-24 max-w-6xl mx-auto">
@@ -242,14 +244,11 @@ export default function StandardUserDashboard() {
                         <td className="p-4 font-black text-brand-maroon">{req.batch_id}</td>
                         <td className="p-4 font-bold text-slate-700">{req.location}</td>
                         <td className="p-4">
-                          <div className="flex flex-col space-y-1.5 items-start">
-                            <span className="px-2 py-1 rounded text-[9px] font-black uppercase tracking-wider bg-slate-100 text-slate-600 border border-slate-200">{req.approval_status}</span>
-                            <span className={`px-2 py-1 rounded text-[9px] font-black uppercase tracking-wider shadow-sm border ${req.dispatch_status === 'Received' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : req.dispatch_status === 'Dispatched' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>{req.dispatch_status}</span>
-                          </div>
+                          <span className={`px-2 py-1 rounded text-[9px] font-black uppercase tracking-wider shadow-sm border ${req.pipeline_state === 'CLOSED' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : req.pipeline_state === 'ACTION_REQUIRED' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>{req.pipeline_state}</span>
                         </td>
                         <td className="p-4 text-right">
                           <div className="flex items-center justify-end gap-2">
-                            {req.dispatch_status === "Dispatched" && (
+                            {req.pipeline_state === "ACTION_REQUIRED" && (
                               <button onClick={() => confirmReceipt(req)} disabled={processingId === req.id} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black uppercase tracking-wider rounded-lg text-[10px] flex items-center gap-1.5 shadow-sm transition disabled:opacity-50"><CheckSquare className="w-3.5 h-3.5" /><span className="hidden sm:inline">Receive</span></button>
                             )}
                             <button onClick={() => openChat(req)} className="relative px-3 py-2 bg-slate-800 hover:bg-black text-white font-black uppercase tracking-wider rounded-lg text-[10px] flex items-center gap-1.5 shadow-sm transition">
@@ -265,7 +264,7 @@ export default function StandardUserDashboard() {
               </>
             )}
 
-            {/* --- MAINTENANCE TAB (Strict Role Enforcement) --- */}
+            {/* --- MAINTENANCE TAB --- */}
             {activeTab === 'maintenance' && (
               <>
                 <thead className="bg-slate-50 text-slate-500 uppercase font-black tracking-widest text-[9px]">
@@ -288,16 +287,9 @@ export default function StandardUserDashboard() {
                       </td>
                       <td className="p-4 text-right">
                         <div className="flex flex-col items-end gap-1.5">
-                          <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider border shadow-sm ${c.status === 'Verified' || c.status === 'Closed' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : c.status === 'Rejected' || c.status === 'Not Processed' ? 'bg-red-50 text-red-700 border-red-200' : c.status === 'Completed' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
-                            {c.status}
+                          <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider border shadow-sm ${c.pipeline_state === 'CLOSED' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : c.pipeline_state === 'REJECTED' ? 'bg-red-50 text-red-700 border-red-200' : c.pipeline_state === 'ACTION_REQUIRED' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                            {c.pipeline_state}
                           </span>
-                          {/* User Note indicating Supervisor Authority */}
-                          {c.status === 'Completed' && (
-                            <span className="text-[9px] text-slate-400 font-bold mt-1 max-w-[150px]">
-                              Awaiting Supervisor verification.
-                            </span>
-                          )}
-                          {c.rejection_reason && <div className="text-[9px] font-bold text-red-600 mt-1 max-w-[150px] truncate" title={c.rejection_reason}>Reason: {c.rejection_reason}</div>}
                         </div>
                       </td>
                     </tr>
@@ -327,8 +319,7 @@ export default function StandardUserDashboard() {
                       </td>
                       <td className="p-4 font-medium text-slate-600">{e.location} {e.sub_location && <span className="block text-[10px] text-slate-400">({e.sub_location})</span>}</td>
                       <td className="p-4 text-right">
-                        <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider border shadow-sm ${e.status === 'Approved & Scheduled' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : e.status === 'Not Confirmed' ? 'bg-red-50 text-red-700 border-red-200' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>{e.status}</span>
-                        {e.rejection_reason && <div className="text-[9px] font-bold text-red-600 mt-1.5 text-right max-w-[150px] ml-auto truncate" title={e.rejection_reason}>Reason: {e.rejection_reason}</div>}
+                        <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider border shadow-sm ${e.pipeline_state === 'PROCESSING' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : e.pipeline_state === 'REJECTED' ? 'bg-red-50 text-red-700 border-red-200' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>{e.pipeline_state}</span>
                       </td>
                     </tr>
                   ))}
@@ -359,8 +350,7 @@ export default function StandardUserDashboard() {
                         <div className="text-[10px] font-black text-emerald-600 uppercase mt-0.5">Reach By: {f.arrival_time}</div>
                       </td>
                       <td className="p-4">
-                        <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider border shadow-sm ${f.status === 'Fleet Dispatched' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : f.status === 'Not Serviced' ? 'bg-red-50 text-red-700 border-red-200' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>{f.status}</span>
-                        {f.rejection_reason && <div className="text-[9px] font-bold text-red-600 mt-1.5 max-w-[150px] truncate" title={f.rejection_reason}>Reason: {f.rejection_reason}</div>}
+                        <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider border shadow-sm ${f.pipeline_state === 'PROCESSING' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : f.pipeline_state === 'REJECTED' ? 'bg-red-50 text-red-700 border-red-200' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>{f.pipeline_state}</span>
                       </td>
                       <td className="p-4 text-right">
                         {f.assigned_vehicles ? (

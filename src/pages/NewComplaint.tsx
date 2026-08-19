@@ -4,55 +4,26 @@ import { Camera, Send, MapPin, Wrench, ImagePlus, Trash2, CheckCircle } from 'lu
 
 const ZONES: Record<string, string[]> = {
   "Main Jamea Complex": [
-    "Zainee Masjid/Sehen Ground Floor",
-    "Zainee Masjid First Floor (Classes)",
-    "Zainee Masjid - Offices",
-    "Zainee Masjid Bathrooms",
-    "Zainee Masjid Outer Area",
-    "Zainee Masjid (IT Room)",
-    "Najmi Hall Ground Floor (Classes)",
-    "Najmi Hall First Floor (Classes)",
-    "Najmi Hall - Offices",
-    "Najmi Hall Bathrooms",
-    "Najmi Hall Outer Area",
-    "Najmi Hall Multi Purpose",
-    "Najmi Hall - Library",
-    "Saifee Masjid Ground Floor (Classes)",
-    "Saifee Masjid Bathrooms",
-    "Rajas Office",
-    "Rajas Office Bathroom"
+    "Zainee Masjid/Sehen Ground Floor", "Zainee Masjid First Floor (Classes)", "Zainee Masjid - Offices", 
+    "Zainee Masjid Bathrooms", "Zainee Masjid Outer Area", "Zainee Masjid (IT Room)",
+    "Najmi Hall Ground Floor (Classes)", "Najmi Hall First Floor (Classes)", "Najmi Hall - Offices", 
+    "Najmi Hall Bathrooms", "Najmi Hall Outer Area", "Najmi Hall Multi Purpose", "Najmi Hall - Library",
+    "Saifee Masjid Ground Floor (Classes)", "Saifee Masjid Bathrooms", "Rajas Office", "Rajas Office Bathroom"
   ],
   "Rabwat (Girls Hostel)": [
-    "Rabwat residence building",
-    "Naashta Mawaid/Garden Room",
-    "Mawaid Hall (Dinner Mawaid)",
-    "Mawaid Hall 1st floor (Maamal, library etc:-)",
-    "Laundry"
+    "Rabwat residence building", "Naashta Mawaid/Garden Room", "Mawaid Hall (Dinner Mawaid)", 
+    "Mawaid Hall 1st floor (Maamal, library etc:-)", "Laundry"
   ],
   "Masakin (Boys Hostel)": [
-    "Masakin Residence Building",
-    "Computer Room",
-    "Qasida Room",
-    "Pantry",
-    "Bathrooms Ground Floor",
-    "Bathrooms First Floor",
-    "Bathrooms Second Floor",
-    "Reception/Office",
-    "Luggage Room"
+    "Masakin Residence Building", "Computer Room", "Qasida Room", "Pantry", 
+    "Bathrooms Ground Floor", "Bathrooms First Floor", "Bathrooms Second Floor", 
+    "Reception/Office", "Luggage Room"
   ],
   "Mawaid": [
-    "Mawaid Hall",
-    "Kitchen",
-    "Office",
-    "Mawaid Bathrooms",
-    "Zabihat Room",
-    "Roti Room"
+    "Mawaid Hall", "Kitchen", "Office", "Mawaid Bathrooms", "Zabihat Room", "Roti Room"
   ],
   "Khaimat al-Riyadat": [
-    "Football/Cricket Ground",
-    "Volleyball Court",
-    "Indore Games Room",
-    "Swimming Pool"
+    "Football/Cricket Ground", "Volleyball Court", "Indore Games Room", "Swimming Pool"
   ]
 };
 
@@ -76,7 +47,7 @@ export default function NewComplaint() {
   const [successRef, setSuccessRef] = useState<string | null>(null);
   
   // RBAC State
-  const [, setUserRole] = useState('STANDARD_USER');
+  const [, setUserRole] = useState('REQUESTER');
   const [isSupervisor, setIsSupervisor] = useState(false);
   
   const [form, setForm] = useState({
@@ -97,6 +68,7 @@ export default function NewComplaint() {
   const fetchUserProfile = async () => {
     const { data: authData } = await supabase.auth.getUser();
     if (authData.user) {
+      // Changed 'domain' to 'zone'
       const { data: profile } = await supabase.from('profiles').select('role, zone').eq('id', authData.user.id).single();
       if (profile) {
         setUserRole(profile.role);
@@ -105,7 +77,8 @@ export default function NewComplaint() {
         if (profile.role === 'SUPERVISOR') {
           setIsSupervisor(true);
           if (profile.zone) {
-            setForm(prev => ({ ...prev, zone: profile.zone.trim() }));
+            // Take the first zone if they are assigned multiple (e.g. "Mawaid, Masakin" -> "Mawaid")
+            setForm(prev => ({ ...prev, zone: profile.zone.split(',')[0].trim() }));
           }
         }
       }
@@ -113,7 +86,7 @@ export default function NewComplaint() {
   };
 
   const handleZoneChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    setForm({ ...form, zone: e.target.value, venue: '' }); // Reset venue when zone changes
+    setForm({ ...form, zone: e.target.value, venue: '' });
   };
 
   const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -139,7 +112,8 @@ export default function NewComplaint() {
       const { data: authData } = await supabase.auth.getUser();
       if (!authData.user) throw new Error("Authentication required.");
 
-      // 1. Insert Complaint Record
+      // 1. Insert Complaint Record 
+      // THE FIX: Removed hardcoded status. DB sets pipeline_state to SUBMITTED automatically.
       const { data: complaintData, error: complaintError } = await supabase
         .from('complaints')
         .insert({
@@ -151,8 +125,7 @@ export default function NewComplaint() {
           student_tr_no: form.studentTr,
           category: form.category,
           priority: form.priority,
-          description: form.description,
-          status: 'Pending Approval' // Will route to Zone Supervisor
+          description: form.description
         })
         .select()
         .single();
@@ -187,7 +160,7 @@ export default function NewComplaint() {
       // Log to Audit Trail
       await supabase.from('system_logs').insert({
         action_type: 'COMPLAINT_REGISTERED',
-        description: `Registered structural complaint ${complaintData.complaint_id} with ${photos.length} photos.`,
+        description: `Registered structural complaint ${complaintData.complaint_id} in ${form.zone}.`,
         user_email: authData.user.email || 'Requester'
       });
 
@@ -197,13 +170,8 @@ export default function NewComplaint() {
       // Reset Form (Preserving Supervisor Zone)
       setForm(prev => ({ 
         zone: isSupervisor ? prev.zone : '', 
-        venue: '', 
-        floor: '', 
-        roomArea: '', 
-        studentTr: '', 
-        category: '', 
-        priority: 'Medium (12–24 hrs)', 
-        description: '' 
+        venue: '', floor: '', roomArea: '', studentTr: '', 
+        category: '', priority: 'Medium (12–24 hrs)', description: '' 
       }));
       setPhotos([]);
       setPhotoPreviews([]);
@@ -229,7 +197,7 @@ export default function NewComplaint() {
 
       <form onSubmit={submitComplaint} className="space-y-6">
         
-        {/* SECTION 1: LOCATION (Mobile-First Cards) */}
+        {/* SECTION 1: LOCATION */}
         <div className="bg-white rounded-3xl p-5 md:p-8 shadow-sm border border-slate-200">
           <div className="flex items-center space-x-2 border-b border-slate-100 pb-4 mb-6">
             <div className="bg-brand-maroon/10 p-2 rounded-xl">
@@ -253,7 +221,7 @@ export default function NewComplaint() {
                   <option key={zone} value={zone}>{zone}</option>
                 ))}
               </select>
-              {isSupervisor && <p className="text-[9px] font-bold text-brand-maroon mt-1.5 uppercase">Locked to assigned zone</p>}
+              {isSupervisor && <p className="text-[9px] font-bold text-brand-maroon mt-1.5 uppercase">Locked to assigned domain</p>}
             </div>
             <div>
               <label className="block text-[11px] font-black text-slate-500 uppercase mb-2">Building / Venue *</label>
@@ -375,7 +343,7 @@ export default function NewComplaint() {
             </div>
             <h3 className="text-2xl font-black text-slate-800 text-center mb-2">Complaint Logged!</h3>
             <p className="text-sm text-slate-500 text-center font-medium">
-              Your maintenance request has been submitted to the Zone Supervisor for review.
+              Your maintenance request has been routed to the local Gatekeeper for review.
             </p>
             <div className="mt-5 w-full bg-slate-50 p-4 rounded-xl border border-slate-100 flex flex-col items-center">
               <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Reference ID</span>

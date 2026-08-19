@@ -6,6 +6,7 @@ export default function RequestToOrder() {
   const [pendingItems, setPendingItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const [userRole, setUserRole] = useState<string>('');
   const [processingId, setProcessingId] = useState<string | null>(null);
 
   // Edit ETA Modal State
@@ -16,8 +17,18 @@ export default function RequestToOrder() {
   const fetchData = async () => {
     setLoading(true);
     
-    // Fetch all items across all batches that are currently pending procurement
-    const { data, error } = await supabase
+    const { data: authData } = await supabase.auth.getUser();
+    let currentRole = '';
+
+    if (authData.user) {
+      setCurrentUser(authData.user);
+      const { data: profile } = await supabase.from('profiles').select('role').eq('id', authData.user.id).single();
+      currentRole = profile?.role || '';
+      setUserRole(currentRole);
+    }
+    
+    // Fetch items with ROLE-BASED FILTERING
+    let query = supabase
       .from('work_order_items')
       .select(`
         *,
@@ -27,13 +38,23 @@ export default function RequestToOrder() {
       .in('status', ['Pending', 'Ordered'])
       .order('id', { ascending: false });
 
+    // Apply strict department segregation for the RTO Queue
+    if (currentRole === 'SIYANAT_HEAD') {
+      query = query.eq('fulfillment_dept', 'SIYANAT_HEAD');
+    } else if (currentRole === 'TANZEEM_HEAD') {
+      query = query.eq('fulfillment_dept', 'TANZEEM_HEAD');
+    } else if (currentRole === 'AVIT_HEAD') {
+      query = query.eq('fulfillment_dept', 'AVIT_HEAD');
+    }
+
+    const { data, error } = await query;
+
     if (data && !error) setPendingItems(data);
     setLoading(false);
   };
 
   useEffect(() => {
     fetchData();
-    supabase.auth.getUser().then(({ data }) => setCurrentUser(data.user));
   }, []);
 
   // --- ACTIONS ---
@@ -185,6 +206,7 @@ export default function RequestToOrder() {
                       ) : (
                         <span className="px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded text-[9px] font-bold uppercase">Catalog</span>
                       )}
+                      <span className="ml-2 px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded text-[9px] font-bold uppercase">{item.fulfillment_dept.replace('_HEAD', '')}</span>
                     </div>
                   </td>
                   <td className="p-3">
@@ -214,9 +236,11 @@ export default function RequestToOrder() {
                       </button>
                       
                       {/* GOD MODE: Hard Delete */}
-                      <button onClick={() => deleteItem(item.id, item.work_order?.batch_id)} disabled={processingId === item.id} className="p-1.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg transition" title="Delete from Database">
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      {userRole === 'SUPER_ADMIN' && (
+                        <button onClick={() => deleteItem(item.id, item.work_order?.batch_id)} disabled={processingId === item.id} className="p-1.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg transition" title="Delete from Database">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>

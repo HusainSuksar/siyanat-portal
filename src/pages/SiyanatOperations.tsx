@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
-import { RefreshCw, MessageSquare, Truck, UserPlus, X, SplitSquareHorizontal, Archive, Trash2, CheckCircle, Package, Wrench, ShoppingCart, FileText } from 'lucide-react';
+import { RefreshCw, MessageSquare, Truck, UserPlus, X, SplitSquareHorizontal, Trash2, CheckCircle, Package, Wrench, ShoppingCart, FileText } from 'lucide-react';
 import BatchDetailsModal from '../components/BatchDetailsModal';
 
 export default function SiyanatOperations() {
@@ -33,7 +33,6 @@ export default function SiyanatOperations() {
   const [poBatch, setPoBatch] = useState<any>(null);
   const [selectedVendorId, setSelectedVendorId] = useState('');
 
-  // UseCallback ensures this function is perfectly stable for useEffect
   const fetchData = useCallback(async () => {
     setLoading(true);
     
@@ -45,17 +44,27 @@ export default function SiyanatOperations() {
       const currentRole = profile?.role || '';
       setUserRole(currentRole);
 
-      // 1. Fetch Materials (Filtered by Department Rules)
+      // 1. Fetch Materials (Filtered by Universal Pipeline & Department Tags)
       let batchQuery = supabase
         .from('work_orders')
-        .select(`*, logs:work_order_logs(author_id), items:work_order_items(id, requested_qty, item_type, custom_item_name, status, eta_days, inventory_id, inventory:inventory_items(id, name, physical_stock, freezed_stock))`)
+        .select(`*, logs:work_order_logs(author_id), items:work_order_items!inner(id, requested_qty, item_type, custom_item_name, status, eta_days, fulfillment_dept, inventory_id, inventory:inventory_items(id, name, physical_stock, freezed_stock))`)
+        .eq('pipeline_state', 'AUTHORIZED') // Universal Pipeline Filter
         .order('created_at', { ascending: false });
+
+      // Apply Strict Departmental Segregation via the inner join
+      if (currentRole === 'SIYANAT_HEAD') {
+        batchQuery = batchQuery.eq('items.fulfillment_dept', 'SIYANAT_HEAD');
+      } else if (currentRole === 'AVIT_HEAD') {
+        batchQuery = batchQuery.eq('items.fulfillment_dept', 'AVIT_HEAD');
+      } else if (currentRole === 'TANZEEM_HEAD') {
+        batchQuery = batchQuery.eq('items.fulfillment_dept', 'TANZEEM_HEAD');
+      }
         
       const { data: batchData, error: batchError } = await batchQuery;
       if (batchError) throw batchError;
       if (batchData) setBatches(batchData);
 
-      // 2. Fetch Maintenance (Filtered by Role)
+      // 2. Fetch Maintenance (Filtered by role and pipeline state)
       let complaintQuery = supabase
         .from('complaints')
         .select(`
@@ -63,10 +72,9 @@ export default function SiyanatOperations() {
           requester:profiles(full_name, department), 
           assignments:technician_assignments(status, technician:profiles!technician_assignments_technician_id_fkey(full_name, trade))
         `)
-        .in('status', ['Approved by Supervisor', 'Assigned', 'Waiting for Material', 'Completed', 'Verified', 'Complaint Reopened'])
+        .in('pipeline_state', ['AUTHORIZED', 'PROCESSING', 'ACTION_REQUIRED'])
         .order('created_at', { ascending: false });
 
-      // Apply Strict Departmental Segregation
       if (currentRole === 'SIYANAT_HEAD') {
         complaintQuery = complaintQuery.neq('category', 'AVIT');
       } else if (currentRole === 'AVIT_HEAD') {
@@ -78,7 +86,7 @@ export default function SiyanatOperations() {
       if (complaintData) setComplaints(complaintData);
 
       // 3. Fetch Technicians
-      const { data: techData } = await supabase.from('profiles').select('id, full_name, trade').eq('role', 'TECHNICIAN');
+      const { data: techData } = await supabase.from('profiles').select('id, full_name, trade').eq('role', 'EXECUTOR');
       if (techData) setTechnicians(techData);
 
       // 4. Fetch Vendors for PO Engine
@@ -130,10 +138,10 @@ export default function SiyanatOperations() {
         }
       }
 
-      await supabase.from('work_orders').update({
-        approval_status: 'Approved',
-        dispatch_status: hasAvailableItems ? 'Pending' : 'Awaiting Stock'
-      }).eq('id', reviewBatch.id);
+      // THE FIX: Use RPC to advance to ACTION_REQUIRED (Ready for Pickup)
+      if (hasAvailableItems) {
+        await supabase.rpc('advance_pipeline', { target_table: 'work_orders', target_id: reviewBatch.id });
+      }
 
       await supabase.from('system_logs').insert({
         action_type: 'BATCH_REVIEWED',
@@ -156,7 +164,9 @@ export default function SiyanatOperations() {
     setProcessingId(batch.id);
     
     try {
-      await supabase.from('work_orders').update({ dispatch_status: 'Dispatched' }).eq('id', batch.id);
+      // Advance to action required for requester verification
+      await supabase.rpc('advance_pipeline', { target_table: 'work_orders', target_id: batch.id });
+      
       await supabase.from('system_logs').insert({
         action_type: 'STOCK_DISPATCHED',
         description: `Dispatched ${batch.batch_id}.`,
@@ -176,10 +186,7 @@ export default function SiyanatOperations() {
     setProcessingId(poBatch.id);
 
     try {
-      // 1. Generate PO Number
       const poNumber = `PO-${Math.floor(100000 + Math.random() * 900000)}`;
-      
-      // 2. Extract original Complaint ID from reason string
       const complaintMatch = poBatch.reason.match(/Complaint:\s*([A-Za-z0-9-]+)/);
       const complaintRef = complaintMatch ? complaintMatch[1] : null;
 
@@ -189,7 +196,6 @@ export default function SiyanatOperations() {
         if (comp) actualComplaintId = comp.id;
       }
 
-      // 3. Create PO Record
       const { data: newPo, error: poError } = await supabase.from('purchase_orders').insert({
         po_number: poNumber,
         complaint_id: actualComplaintId,
@@ -200,7 +206,6 @@ export default function SiyanatOperations() {
 
       if (poError) throw poError;
 
-      // 4. Create PO Items
       const poItems = poBatch.items.map((item: any) => ({
         po_id: newPo.id,
         inventory_id: item.item_type === 'Catalog' ? item.inventory_id : null,
@@ -210,8 +215,8 @@ export default function SiyanatOperations() {
 
       await supabase.from('purchase_order_items').insert(poItems);
 
-      // 5. Update the dummy Work Order status so it disappears from queue
-      await supabase.from('work_orders').update({ approval_status: 'PO Generated', dispatch_status: 'PO Sent to Vendor' }).eq('id', poBatch.id);
+      // Advance the dummy WO so it clears the queue
+      await supabase.rpc('advance_pipeline', { target_table: 'work_orders', target_id: poBatch.id });
 
       await supabase.from('system_logs').insert({
         action_type: 'PO_GENERATED',
@@ -245,24 +250,26 @@ export default function SiyanatOperations() {
     setProcessingId(selectedComplaint.id);
 
     try {
-      // 1. MUST destructure and check the 'error' object directly!
       const { error: assignError } = await supabase.from('technician_assignments').insert({
         complaint_id: selectedComplaint.id,
         technician_id: selectedTechId,
         assigned_by: currentUser?.id
       });
       
-      if (assignError) throw assignError; // Force the app to catch the error
+      if (assignError) throw assignError;
 
-      // 2. Only update the complaint if the assignment actually succeeded
-      const { error: updateError } = await supabase.from('complaints').update({ status: 'Assigned' }).eq('id', selectedComplaint.id);
-      if (updateError) throw updateError;
+      // THE FIX: RPC Call to shift complaint from AUTHORIZED to PROCESSING
+      if(selectedComplaint.pipeline_state === 'AUTHORIZED') {
+         await supabase.rpc('advance_pipeline', { target_table: 'complaints', target_id: selectedComplaint.id });
+      } else {
+         // Manual fallback if already processing and just re-assigning
+         await supabase.from('complaints').update({ status: 'Assigned' }).eq('id', selectedComplaint.id);
+      }
       
       setAssignModalOpen(false);
       setSelectedTechId('');
       fetchData();
     } catch(err: any) {
-       // This will now successfully alert you if a DB Trigger blocks the insert
        alert("DATABASE ERROR Assigning Technician: " + err.message);
     } finally {
       setProcessingId(null);
@@ -272,7 +279,7 @@ export default function SiyanatOperations() {
   const closeComplaint = async (id: string, complaintId: string) => {
     if (!confirm(`Officially close complaint ${complaintId}?`)) return;
     setProcessingId(id);
-    await supabase.from('complaints').update({ status: 'Closed' }).eq('id', id);
+    await supabase.from('complaints').update({ pipeline_state: 'CLOSED' }).eq('id', id);
     fetchData();
     setProcessingId(null);
   };
@@ -291,7 +298,7 @@ export default function SiyanatOperations() {
         <div>
           <h2 className="text-xl font-extrabold text-brand-maroon flex items-center gap-2">
             <Truck className="w-6 h-6" />
-            Siyanat Operations Control
+            Operations Control
           </h2>
           <p className="text-xs text-slate-500 mt-1">Manage material dispatches, vendor POs, and maintenance routing.</p>
         </div>
@@ -316,11 +323,11 @@ export default function SiyanatOperations() {
           {loading ? (
              <div className="p-8 text-center font-medium text-slate-500 bg-white rounded-2xl border border-slate-200 animate-pulse">Loading batches...</div>
           ) : batches.length === 0 ? (
-             <div className="p-8 text-center font-medium italic text-slate-500 bg-white rounded-2xl border border-slate-200">No active batches.</div>
+             <div className="p-8 text-center font-medium italic text-slate-500 bg-white rounded-2xl border border-slate-200">No active batches for your department.</div>
           ) : (
              <div className="grid grid-cols-1 gap-4">
                {batches.map(b => {
-                 const isTechPORequest = b.approval_status === 'Pending Admin PO';
+                 const isTechPORequest = b.department === 'Technician Procurement';
 
                  return (
                   <div key={b.id} className={`bg-white rounded-2xl p-5 shadow-sm border-2 flex flex-col md:flex-row md:items-center justify-between gap-4 ${isTechPORequest ? 'border-indigo-400' : 'border-slate-200'}`}>
@@ -343,11 +350,8 @@ export default function SiyanatOperations() {
                          <div>
                            <div className="text-[10px] text-slate-400 uppercase font-bold mb-1">Status</div>
                            <div className="flex flex-wrap gap-1.5 items-center">
-                             <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${isTechPORequest ? 'bg-indigo-100 text-indigo-800' : b.approval_status === 'Approved' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
-                               {b.approval_status}
-                             </span>
-                             <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-200 text-slate-700">
-                               {b.dispatch_status}
+                             <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${isTechPORequest ? 'bg-indigo-100 text-indigo-800' : 'bg-amber-100 text-amber-800'}`}>
+                               Awaiting Split
                              </span>
                            </div>
                          </div>
@@ -365,25 +369,16 @@ export default function SiyanatOperations() {
                             <ShoppingCart className="w-3.5 h-3.5"/> Gen PO
                           </button>
                         ) : (
-                          <>
-                            {b.approval_status === 'Pending Approval' && (
-                              <button onClick={() => openReviewModal(b)} className="flex-1 md:w-full py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs shadow-sm flex items-center justify-center gap-1.5 transition">
-                                <SplitSquareHorizontal className="w-3.5 h-3.5"/> Split
-                              </button>
-                            )}
-                            {b.approval_status === 'Approved' && b.dispatch_status === 'Pending' && (
-                              <button onClick={() => dispatchBatch(b)} disabled={processingId === b.id} className="flex-1 md:w-full py-2.5 px-3 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-xl text-xs shadow-sm flex items-center justify-center gap-1.5 disabled:opacity-50 transition">
-                                <Truck className="w-3.5 h-3.5"/> Dispatch
-                              </button>
-                            )}
-                          </>
+                          <button onClick={() => openReviewModal(b)} className="flex-1 md:w-full py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs shadow-sm flex items-center justify-center gap-1.5 transition">
+                            <SplitSquareHorizontal className="w-3.5 h-3.5"/> Split & Dispatch
+                          </button>
                         )}
                         
                         <button onClick={() => { setActiveBatch(b); setIsChatOpen(true); }} className="flex-1 md:w-full py-2.5 px-3 bg-slate-800 hover:bg-black text-white font-bold rounded-xl text-xs shadow-sm flex items-center justify-center gap-1.5 transition">
                           <MessageSquare className="w-3.5 h-3.5"/> Chat
                         </button>
                         
-                        {(userRole === 'SUPER_ADMIN' || userRole === 'ADMIN') && (
+                        {(userRole === 'SUPER_ADMIN') && (
                           <button onClick={() => deleteBatch(b.id, b.batch_id)} disabled={processingId === b.id} className="py-2.5 px-3 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl transition disabled:opacity-50 flex items-center justify-center">
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -403,7 +398,7 @@ export default function SiyanatOperations() {
           {loading ? (
              <div className="p-8 text-center font-medium text-slate-500 bg-white rounded-2xl border border-slate-200 animate-pulse">Loading complaints...</div>
           ) : complaints.length === 0 ? (
-             <div className="p-8 text-center font-medium italic text-slate-500 bg-white rounded-2xl border border-slate-200">No maintenance tasks pending assignment or closure.</div>
+             <div className="p-8 text-center font-medium italic text-slate-500 bg-white rounded-2xl border border-slate-200">No maintenance tasks pending assignment.</div>
           ) : (
             <div className="grid grid-cols-1 gap-4">
               {complaints.map(c => {
@@ -421,10 +416,10 @@ export default function SiyanatOperations() {
                            <div className="text-[10px] text-slate-600 mt-0.5">{c.zone} - {c.venue}</div>
                          </div>
                          <div>
-                           <div className="text-[10px] text-slate-400 uppercase font-bold mb-1">Current Status</div>
+                           <div className="text-[10px] text-slate-400 uppercase font-bold mb-1">Pipeline State</div>
                            <div className="flex flex-col gap-1 items-start">
-                             <span className={`px-2 py-0.5 rounded font-bold text-[10px] ${c.status === 'Verified' ? 'bg-emerald-200 text-emerald-900' : 'bg-slate-200 text-slate-800'}`}>
-                               {c.status}
+                             <span className={`px-2 py-0.5 rounded font-bold text-[10px] uppercase ${c.pipeline_state === 'PROCESSING' ? 'bg-indigo-200 text-indigo-900' : 'bg-slate-200 text-slate-800'}`}>
+                               {c.pipeline_state}
                              </span>
                              {isAssigned && (
                                <span className="text-[9px] font-bold text-indigo-600 uppercase bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">
@@ -436,21 +431,17 @@ export default function SiyanatOperations() {
                        </div>
                      </div>
                      <div className="flex flex-row md:flex-col gap-2 w-full md:w-auto mt-2 md:mt-0 pt-3 md:pt-0 border-t md:border-t-0 border-slate-100 flex-wrap">
-                        {(c.status === 'Approved by Supervisor' || c.status === 'Assigned') && (
-  <button 
-    onClick={() => { setSelectedComplaint(c); setAssignModalOpen(true); }} 
-    className="flex-1 md:w-full py-2.5 px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-sm flex items-center justify-center gap-1.5 transition"
-  >
-    <UserPlus className="w-3.5 h-3.5" /> 
-    <span>{c.status === 'Assigned' ? 'Reassign' : 'Assign'}</span>
-  </button>
-)}
-                        {c.status === 'Verified' && (
-                          <button onClick={() => closeComplaint(c.id, c.complaint_id)} disabled={processingId === c.id} className="flex-1 md:w-full py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs shadow-sm flex items-center justify-center gap-1.5 disabled:opacity-50 transition">
-                            <Archive className="w-3.5 h-3.5" /> Close
+                        {(c.pipeline_state === 'AUTHORIZED' || c.pipeline_state === 'PROCESSING') && (
+                          <button 
+                            onClick={() => { setSelectedComplaint(c); setAssignModalOpen(true); }} 
+                            className="flex-1 md:w-full py-2.5 px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-sm flex items-center justify-center gap-1.5 transition"
+                          >
+                            <UserPlus className="w-3.5 h-3.5" /> 
+                            <span>{c.pipeline_state === 'PROCESSING' ? 'Reassign' : 'Assign'}</span>
                           </button>
                         )}
-                        {(userRole === 'SUPER_ADMIN' || userRole === 'ADMIN') && (
+                        
+                        {(userRole === 'SUPER_ADMIN') && (
                           <button onClick={() => deleteComplaint(c.id, c.complaint_id)} disabled={processingId === c.id} className="py-2.5 px-3 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl transition disabled:opacity-50 flex items-center justify-center">
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -528,7 +519,7 @@ export default function SiyanatOperations() {
             </div>
             <form onSubmit={handleReviewSubmit} className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
               <p className="text-xs text-slate-500 font-bold mb-4 bg-slate-50 p-3 rounded-xl border border-slate-100">
-                Determine availability for each requested item. Available items will be frozen in inventory.
+                Determine availability for each requested item. Available items will be frozen in inventory and routed to the Requester for pickup.
               </p>
               
               {reviewBatch.items.map((item: any) => {
@@ -580,7 +571,7 @@ export default function SiyanatOperations() {
               })}
 
               <button type="submit" disabled={processingId === reviewBatch.id} className="w-full py-4 md:py-3 mt-6 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs uppercase tracking-wide rounded-xl shadow-lg transition disabled:opacity-50">
-                Confirm Split & Freeze Stock
+                Confirm Split & Advance Pipeline
               </button>
             </form>
           </div>

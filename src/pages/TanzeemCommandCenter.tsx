@@ -1,17 +1,18 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { CalendarCheck, Car, CheckCircle, XCircle, MapPin, Clock, Send, X, Users, ShieldCheck, Plus, Calculator } from 'lucide-react';
+import { CalendarCheck, Car, CheckCircle, XCircle, MapPin, Clock, Send, X, Users, ShieldCheck, Plus, Calculator, Package, SplitSquareHorizontal } from 'lucide-react';
 
 export default function TanzeemCommandCenter() {
-  const { user, role } = useAuth();
-  const [activeTab, setActiveTab] = useState<'events' | 'fleet'>('events');
+  const { user } = useAuth();
+  const [activeTab, setActiveTab] = useState<'events' | 'fleet' | 'stationery'>('events');
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState<string | null>(null);
   
   // Data States
   const [events, setEvents] = useState<any[]>([]);
   const [vehicles, setVehicles] = useState<any[]>([]);
+  const [stationeryBatches, setStationeryBatches] = useState<any[]>([]);
   const [internalFleet, setInternalFleet] = useState<any[]>([]);
   
   // Fleet Assignment Modal & Engine State
@@ -22,19 +23,33 @@ export default function TanzeemCommandCenter() {
   // The Fleet Calculation Engine State
   type Assignment = { id: string; type: 'INTERNAL' | 'RENTAL'; vehicleId?: string; name: string; capacity: number; rounds: number };
   const [assignments, setAssignments] = useState<Assignment[]>([]);
-  
-  // Rental Form State
   const [customRentalName, setCustomRentalName] = useState('');
   const [customRentalCapacity, setCustomRentalCapacity] = useState(4);
+
+  // Stationery Review Modal State
+  const [reviewModalOpen, setReviewModalOpen] = useState(false);
+  const [reviewBatch, setReviewBatch] = useState<any>(null);
+  const [itemDecisions, setItemDecisions] = useState<any>({});
 
   const fetchData = async () => {
     setLoading(true);
     
-    const { data: eventData } = await supabase.from('events').select(`*, requester:profiles(full_name, department), requirements:event_requirements(department, item_name)`).eq('status', 'Pending Tanzeem Approval').order('event_date', { ascending: true });
+    // 1. Fetch Events
+    const { data: eventData } = await supabase.from('events').select(`*, requester:profiles(full_name, department), requirements:event_requirements(department, item_name)`).eq('pipeline_state', 'AUTHORIZED').order('event_date', { ascending: true });
     if (eventData) setEvents(eventData);
 
-    const { data: vehicleData } = await supabase.from('vehicle_requests').select(`*, requester:profiles(full_name, department)`).eq('status', 'Pending Tanzeem Approval').order('request_date', { ascending: true });
+    // 2. Fetch Fleet
+    const { data: vehicleData } = await supabase.from('vehicle_requests').select(`*, requester:profiles(full_name, department)`).eq('pipeline_state', 'AUTHORIZED').order('request_date', { ascending: true });
     if (vehicleData) setVehicles(vehicleData);
+
+    // 3. Fetch Stationery Material Batches
+    const { data: batchData } = await supabase
+      .from('work_orders')
+      .select(`*, requester:profiles(full_name, department), items:work_order_items!inner(id, requested_qty, item_type, custom_item_name, status, eta_days, fulfillment_dept, inventory_id, inventory:inventory_items(id, name, physical_stock, freezed_stock))`)
+      .eq('pipeline_state', 'AUTHORIZED')
+      .eq('items.fulfillment_dept', 'TANZEEM_HEAD')
+      .order('created_at', { ascending: false });
+    if (batchData) setStationeryBatches(batchData);
 
     const { data: fleetData } = await supabase.from('fleet_inventory').select('*').eq('is_active', true).order('vehicle_type');
     if (fleetData) setInternalFleet(fleetData);
@@ -48,7 +63,7 @@ export default function TanzeemCommandCenter() {
   const approveEvent = async (id: string, title: string) => {
     if (!confirm('Confirm and approve this event booking?')) return;
     setProcessingId(id);
-    await supabase.from('events').update({ status: 'Approved & Scheduled' }).eq('id', id);
+    await supabase.rpc('advance_pipeline', { target_table: 'events', target_id: id });
     await supabase.from('system_logs').insert({ action_type: 'EVENT_APPROVED', description: `Approved venue booking: ${title}.`, user_email: user?.email || 'Admin' });
     fetchData(); setProcessingId(null);
   };
@@ -57,7 +72,7 @@ export default function TanzeemCommandCenter() {
     const reason = prompt('Reason for non-confirmation:');
     if (!reason) return alert('A reason is mandatory.');
     setProcessingId(id);
-    await supabase.from('events').update({ status: 'Not Confirmed', rejection_reason: reason }).eq('id', id);
+    await supabase.from('events').update({ pipeline_state: 'REJECTED', rejection_reason: reason }).eq('id', id);
     fetchData(); setProcessingId(null);
   };
 
@@ -67,7 +82,7 @@ export default function TanzeemCommandCenter() {
   const isDeficit = passengersRemaining > 0;
 
   const addInternalVehicle = (v: any) => {
-    if (assignments.find(a => a.vehicleId === v.id)) return; // Prevent duplicates
+    if (assignments.find(a => a.vehicleId === v.id)) return;
     setAssignments([...assignments, { id: Math.random().toString(), type: 'INTERNAL', vehicleId: v.id, name: `${v.vehicle_type} (${v.license_plate})`, capacity: v.seat_capacity, rounds: 1 }]);
   };
 
@@ -84,21 +99,20 @@ export default function TanzeemCommandCenter() {
 
   const removeAssignment = (id: string) => setAssignments(assignments.filter(a => a.id !== id));
 
-  // --- FLEET DISPATCH LOGIC ---
   const handleFleetDispatch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedReq || assignments.length === 0 || !departureTime) return alert("Must assign at least one vehicle and set departure time.");
     if (isDeficit && !confirm(`WARNING: You are dispatching a fleet with a deficit of ${passengersRemaining} seats. Continue anyway?`)) return;
     setProcessingId(selectedReq.id);
 
-    // Format the assignment string for the backend
     const assignmentString = assignments.map(a => `${a.name} (x${a.rounds} rounds)`).join(' | ');
 
     await supabase.from('vehicle_requests').update({
-      status: 'Fleet Dispatched',
       assigned_vehicles: assignmentString,
       departure_time: departureTime
     }).eq('id', selectedReq.id);
+
+    await supabase.rpc('advance_pipeline', { target_table: 'vehicle_requests', target_id: selectedReq.id });
 
     await supabase.from('system_logs').insert({
       action_type: 'FLEET_DISPATCHED',
@@ -115,7 +129,7 @@ export default function TanzeemCommandCenter() {
     const reason = prompt('Reason for rejection:');
     if (!reason) return alert('A reason is mandatory.');
     setProcessingId(id);
-    await supabase.from('vehicle_requests').update({ status: 'Not Serviced', rejection_reason: reason }).eq('id', id);
+    await supabase.from('vehicle_requests').update({ pipeline_state: 'REJECTED', rejection_reason: reason }).eq('id', id);
     fetchData(); setProcessingId(null);
   };
 
@@ -123,10 +137,54 @@ export default function TanzeemCommandCenter() {
     setSelectedReq(v); setAssignments([]); setDepartureTime(''); setFleetModalOpen(true);
   };
 
+  // --- STATIONERY FULFILLMENT LOGIC ---
+  const openReviewModal = (batch: any) => {
+    setReviewBatch(batch);
+    const initialDecisions: any = {};
+    const tanzeemItems = batch.items.filter((i: any) => i.fulfillment_dept === 'TANZEEM_HEAD');
+    tanzeemItems.forEach((item: any) => {
+      initialDecisions[item.id] = { status: 'Available', eta: 0 };
+    });
+    setItemDecisions(initialDecisions);
+    setReviewModalOpen(true);
+  };
+
+  const handleReviewSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setProcessingId(reviewBatch.id);
+
+    try {
+      let hasAvailableItems = false;
+      const tanzeemItems = reviewBatch.items.filter((i: any) => i.fulfillment_dept === 'TANZEEM_HEAD');
+      
+      for (const item of tanzeemItems) {
+        const decision = itemDecisions[item.id];
+        await supabase.from('work_order_items').update({ status: decision.status, eta_days: decision.eta }).eq('id', item.id);
+
+        if (decision.status === 'Available' && item.item_type === 'Catalog' && item.inventory_id) {
+          const inv = item.inventory;
+          const newFreezedStock = (inv.freezed_stock || 0) + item.requested_qty;
+          await supabase.from('inventory_items').update({ freezed_stock: newFreezedStock }).eq('id', item.inventory_id);
+          hasAvailableItems = true;
+        }
+      }
+
+      if (hasAvailableItems) {
+        await supabase.rpc('advance_pipeline', { target_table: 'work_orders', target_id: reviewBatch.id });
+      }
+
+      alert("Stationery batch processed and stock frozen for pickup!");
+      setReviewModalOpen(false);
+      fetchData();
+    } catch (err: any) {
+      alert("Error processing stationery batch: " + err.message);
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
   return (
     <div className="space-y-6 max-w-6xl mx-auto pb-24">
-      {/* ... (Keep existing Header and Tabs code the exact same as previously provided) ... */}
-      
       {/* Header Banner */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-5 rounded-3xl shadow-sm border border-slate-200">
         <div className="flex items-center gap-4">
@@ -135,17 +193,15 @@ export default function TanzeemCommandCenter() {
           </div>
           <div>
             <h2 className="text-xl font-black text-slate-800 tracking-tight">Tanzeem Command Center</h2>
-            <p className="text-[11px] font-bold text-slate-500 uppercase tracking-widest mt-1">Dual-approval for campus events and dynamic fleet logistics.</p>
+            <p className="text-[11px] font-bold text-slate-500 uppercase tracking-widest mt-1">Events, Fleet Logistics, and Stationery Dispatch.</p>
           </div>
         </div>
-        {(role === 'TANZEEM_HEAD' || role === 'SUPER_ADMIN') && (
-          <div className="px-5 py-2.5 bg-brand-maroon text-brand-gold font-black text-xs uppercase tracking-widest rounded-xl shadow-md border border-brand-dark/20 flex items-center gap-2 w-full sm:w-auto justify-center">
-            {role.replace('_', ' ')}
-          </div>
-        )}
+        <div className="px-5 py-2.5 bg-brand-maroon text-brand-gold font-black text-xs uppercase tracking-widest rounded-xl shadow-md border border-brand-dark/20 flex items-center gap-2 w-full sm:w-auto justify-center">
+          TANZEEM HEAD
+        </div>
       </div>
 
-      {/* Tabs */}
+      {/* Tabs with 3rd Stationery Option */}
       <div className="flex space-x-2 border-b border-slate-200 overflow-x-auto pb-1">
         <button onClick={() => setActiveTab('events')} className={`px-5 py-3 text-xs uppercase tracking-widest font-black border-b-2 transition flex items-center gap-2 whitespace-nowrap ${activeTab === 'events' ? 'border-brand-maroon text-brand-maroon' : 'border-transparent text-slate-400 hover:text-slate-700'}`}>
           <CalendarCheck className="w-4 h-4" /> Event Approvals
@@ -155,9 +211,13 @@ export default function TanzeemCommandCenter() {
           <Car className="w-4 h-4" /> Fleet Logistics
           {vehicles.length > 0 && <span className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full ml-1">{vehicles.length}</span>}
         </button>
+        <button onClick={() => setActiveTab('stationery')} className={`px-5 py-3 text-xs uppercase tracking-widest font-black border-b-2 transition flex items-center gap-2 whitespace-nowrap ${activeTab === 'stationery' ? 'border-brand-maroon text-brand-maroon' : 'border-transparent text-slate-400 hover:text-slate-700'}`}>
+          <Package className="w-4 h-4" /> Stationery Orders
+          {stationeryBatches.length > 0 && <span className="bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full ml-1">{stationeryBatches.length}</span>}
+        </button>
       </div>
 
-      {/* --- TAB 1: EVENT APPROVALS --- */}
+      {/* TAB 1: EVENTS */}
       {activeTab === 'events' && (
         <div className="space-y-4">
           {loading ? (
@@ -171,7 +231,6 @@ export default function TanzeemCommandCenter() {
             <div className="grid grid-cols-1 gap-4">
               {events.map(e => (
                 <div key={e.id} className="bg-white rounded-3xl p-5 shadow-sm border border-slate-200 flex flex-col lg:flex-row justify-between gap-5 transition hover:shadow-md">
-                  {/* ... (Keep existing Event Card content the exact same) ... */}
                   <div className="space-y-4 flex-1 w-full">
                     <div>
                       <h3 className="font-black text-brand-maroon text-lg md:text-base leading-tight tracking-wide">{e.event_title}</h3>
@@ -210,7 +269,7 @@ export default function TanzeemCommandCenter() {
         </div>
       )}
 
-      {/* --- TAB 2: FLEET LOGISTICS --- */}
+      {/* TAB 2: FLEET */}
       {activeTab === 'fleet' && (
         <div className="space-y-4">
           {loading ? (
@@ -224,7 +283,6 @@ export default function TanzeemCommandCenter() {
             <div className="grid grid-cols-1 gap-4">
               {vehicles.map(v => (
                  <div key={v.id} className="bg-white rounded-3xl p-5 shadow-sm border border-slate-200 flex flex-col lg:flex-row justify-between gap-5 transition hover:shadow-md">
-                    {/* ... (Keep existing Fleet Card content the exact same) ... */}
                     <div className="space-y-4 flex-1 w-full">
                        <div>
                          <h3 className="font-black text-brand-maroon text-lg md:text-base leading-tight tracking-wide flex items-center gap-1.5"><MapPin className="w-4 h-4" /> {v.destination}</h3>
@@ -260,19 +318,57 @@ export default function TanzeemCommandCenter() {
         </div>
       )}
 
-      {/* --- COMPLEX FLEET CALCULATION MODAL --- */}
+      {/* TAB 3: STATIONERY ORDERS */}
+      {activeTab === 'stationery' && (
+        <div className="space-y-4">
+          {loading ? (
+             <div className="p-8 text-center font-medium text-slate-500 bg-white rounded-3xl border border-slate-200 shadow-sm animate-pulse">Loading stationery batches...</div>
+          ) : stationeryBatches.length === 0 ? (
+             <div className="p-12 text-center bg-white rounded-3xl border border-slate-200 shadow-sm">
+               <Package className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+               <p className="text-slate-500 font-bold uppercase tracking-wider text-xs">No pending stationery requisitions.</p>
+             </div>
+          ) : (
+             <div className="grid grid-cols-1 gap-4">
+               {stationeryBatches.map(b => (
+                 <div key={b.id} className="bg-white rounded-3xl p-5 shadow-sm border border-slate-200 flex flex-col lg:flex-row justify-between gap-5 transition hover:shadow-md">
+                    <div className="space-y-3 flex-1 w-full">
+                       <div className="flex items-center gap-2">
+                         <h3 className="font-black text-brand-maroon text-base">Batch: {b.batch_id}</h3>
+                         <span className="px-2 py-0.5 bg-amber-100 text-amber-800 text-[9px] font-black uppercase rounded">Awaiting Dispatch</span>
+                       </div>
+                       <p className="text-xs text-slate-500 font-bold uppercase">{b.requester?.full_name} • {b.location}</p>
+                       <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                         <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Stationery Items in Batch:</span>
+                         {b.items.filter((i: any) => i.fulfillment_dept === 'TANZEEM_HEAD').map((item: any) => (
+                           <div key={item.id} className="text-xs font-bold text-slate-700 flex justify-between py-0.5">
+                             <span>{item.inventory?.name || item.custom_item_name}</span>
+                             <span className="text-brand-maroon">Qty: {item.requested_qty}</span>
+                           </div>
+                         ))}
+                       </div>
+                    </div>
+                    <div className="flex items-center lg:w-48">
+                      <button onClick={() => openReviewModal(b)} className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black uppercase tracking-wider rounded-xl text-xs shadow-sm flex items-center justify-center gap-1.5 transition">
+                        <SplitSquareHorizontal className="w-4 h-4"/> Split & Dispatch
+                      </button>
+                    </div>
+                 </div>
+               ))}
+             </div>
+          )}
+        </div>
+      )}
+
+      {/* FLEET MODAL */}
       {fleetModalOpen && selectedReq && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex justify-center items-start pt-10 sm:items-center p-4">
-          <div className="bg-white rounded-3xl w-full max-w-3xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom sm:slide-in-from-bottom-0 sm:zoom-in-95 duration-300 max-h-[90vh] flex flex-col">
-            
+          <div className="bg-white rounded-3xl w-full max-w-3xl shadow-2xl overflow-hidden animate-in duration-300 max-h-[90vh] flex flex-col">
             <div className="bg-indigo-600 p-5 flex justify-between items-center text-white shrink-0">
               <h3 className="font-extrabold text-sm uppercase flex items-center gap-2"><Calculator className="w-5 h-5"/> Fleet Calculation Engine</h3>
               <button onClick={() => setFleetModalOpen(false)} className="p-1 hover:bg-white/20 rounded-lg transition"><X className="w-5 h-5" /></button>
             </div>
-
             <div className="flex-1 overflow-y-auto p-6 space-y-6">
-              
-              {/* Top Summary Bar */}
               <div className="grid grid-cols-3 gap-4">
                 <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 text-center">
                   <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">Total Pax Needed</div>
@@ -284,19 +380,12 @@ export default function TanzeemCommandCenter() {
                 </div>
                 <div className={`p-4 rounded-2xl border text-center ${isDeficit ? 'bg-red-50 border-red-100' : 'bg-emerald-50 border-emerald-100'}`}>
                   <div className={`text-[10px] font-black uppercase tracking-widest ${isDeficit ? 'text-red-500' : 'text-emerald-600'}`}>Status</div>
-                  <div className={`text-2xl font-black mt-1 ${isDeficit ? 'text-red-600' : 'text-emerald-700'}`}>
-                    {isDeficit ? `-${passengersRemaining} Deficit` : 'Capacity Met'}
-                  </div>
+                  <div className={`text-2xl font-black mt-1 ${isDeficit ? 'text-red-600' : 'text-emerald-700'}`}>{isDeficit ? `-${passengersRemaining} Deficit` : 'Capacity Met'}</div>
                 </div>
               </div>
-
-              {/* Assignment Engine Workspace */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                
-                {/* Left Col: Vehicle Selection */}
                 <div className="space-y-4">
                   <h4 className="font-black text-xs uppercase tracking-widest text-slate-800 border-b border-slate-100 pb-2">1. Select Vehicles</h4>
-                  
                   <div className="space-y-2 max-h-48 overflow-y-auto pr-2">
                     {internalFleet.map(v => (
                       <div key={v.id} onClick={() => addInternalVehicle(v)} className="flex justify-between items-center p-3 border border-slate-200 rounded-xl hover:border-indigo-400 hover:bg-indigo-50 transition cursor-pointer group">
@@ -308,7 +397,6 @@ export default function TanzeemCommandCenter() {
                       </div>
                     ))}
                   </div>
-
                   <div className="pt-4 border-t border-slate-100">
                     <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Inject Rental Vehicle</p>
                     <div className="flex gap-2">
@@ -318,19 +406,15 @@ export default function TanzeemCommandCenter() {
                     </div>
                   </div>
                 </div>
-
-                {/* Right Col: Active Assignments & Rounds */}
                 <div className="space-y-4">
                   <h4 className="font-black text-xs uppercase tracking-widest text-slate-800 border-b border-slate-100 pb-2">2. Manage Multi-Rounds</h4>
-                  
                   {assignments.length === 0 ? (
-                    <div className="p-8 text-center bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold text-slate-400 italic">No vehicles assigned yet. Click a vehicle on the left to add it.</div>
+                    <div className="p-8 text-center bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold text-slate-400 italic">Click a vehicle on the left to add.</div>
                   ) : (
                     <div className="space-y-3">
                       {assignments.map(a => (
                         <div key={a.id} className="p-3 bg-white border border-indigo-200 rounded-xl shadow-sm relative">
                           <button onClick={() => removeAssignment(a.id)} className="absolute -top-2 -right-2 bg-red-100 text-red-600 rounded-full p-1 hover:bg-red-200 transition"><X className="w-3 h-3"/></button>
-                          
                           <div className="flex justify-between items-start mb-3">
                             <div>
                               <p className="text-xs font-bold text-slate-800">{a.name}</p>
@@ -341,9 +425,8 @@ export default function TanzeemCommandCenter() {
                               <span className="text-sm font-black text-indigo-700">{a.capacity * a.rounds} seats</span>
                             </div>
                           </div>
-
                           <div className="flex items-center justify-between bg-slate-50 p-2 rounded-lg border border-slate-100">
-                            <span className="text-[10px] font-black uppercase text-slate-500">Number of Rounds:</span>
+                            <span className="text-[10px] font-black uppercase text-slate-500">Rounds:</span>
                             <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-md overflow-hidden">
                               <button onClick={() => updateRounds(a.id, a.rounds - 1)} className="px-2 py-1 bg-slate-100 hover:bg-slate-200 font-bold text-slate-600">-</button>
                               <span className="px-2 text-xs font-black text-slate-800">{a.rounds}</span>
@@ -354,26 +437,57 @@ export default function TanzeemCommandCenter() {
                       ))}
                     </div>
                   )}
-
                   <div className="pt-4 border-t border-slate-100">
-                    <label className="block text-[10px] font-black text-slate-500 uppercase mb-2 tracking-widest">Calculated Departure Time *</label>
+                    <label className="block text-[10px] font-black text-slate-500 uppercase mb-2 tracking-widest">Departure Time *</label>
                     <input required type="time" value={departureTime} onChange={e => setDepartureTime(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500 transition"/>
-                    <p className="text-[9px] text-slate-400 mt-1 font-bold uppercase">Back-calculate this based on the number of rounds and transit distance.</p>
                   </div>
                 </div>
               </div>
             </div>
-
-            {/* Modal Footer */}
             <div className="p-5 border-t border-slate-100 bg-white shrink-0">
-              <button 
-                onClick={handleFleetDispatch}
-                disabled={processingId === selectedReq.id || assignments.length === 0 || !departureTime}
-                className="w-full py-4 bg-slate-900 hover:bg-black text-white font-black text-xs uppercase tracking-widest rounded-2xl shadow-xl transition flex justify-center items-center gap-2 disabled:opacity-50"
-              >
+              <button onClick={handleFleetDispatch} disabled={processingId === selectedReq.id || assignments.length === 0 || !departureTime} className="w-full py-4 bg-slate-900 hover:bg-black text-white font-black text-xs uppercase tracking-widest rounded-2xl shadow-xl transition flex justify-center items-center gap-2 disabled:opacity-50">
                 <Send className="w-4 h-4" /> Finalize Dispatch Setup
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* STATIONERY SPLIT MODAL */}
+      {reviewModalOpen && reviewBatch && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex justify-center items-end sm:items-center p-4">
+          <div className="bg-white rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden animate-in duration-300">
+            <div className="bg-brand-maroon p-5 flex justify-between items-center text-white">
+              <h3 className="font-extrabold text-sm uppercase">Stationery Dispatch: {reviewBatch.batch_id}</h3>
+              <button onClick={() => setReviewModalOpen(false)} className="p-1 hover:bg-white/20 rounded-lg transition"><X className="w-5 h-5 hover:text-red-300" /></button>
+            </div>
+            <form onSubmit={handleReviewSubmit} className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
+              {reviewBatch.items.filter((i: any) => i.fulfillment_dept === 'TANZEEM_HEAD').map((item: any) => {
+                const itemName = item.item_type === 'Catalog' && item.inventory ? item.inventory.name : item.custom_item_name;
+                const physicalStock = item.inventory?.physical_stock || 0;
+                const frozenStock = item.inventory?.freezed_stock || 0;
+                const availableStock = Math.max(0, physicalStock - frozenStock);
+                
+                return (
+                  <div key={item.id} className="p-4 border border-slate-200 rounded-2xl bg-white shadow-sm grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
+                    <div className="md:col-span-6">
+                      <div className="font-bold text-slate-800 text-sm">{itemName}</div>
+                      <div className="text-[11px] text-slate-500">Requested: <span className="font-bold text-brand-maroon">{item.requested_qty}</span> | Avail: {availableStock}</div>
+                    </div>
+                    <div className="md:col-span-6">
+                      <select value={itemDecisions[item.id]?.status || 'Available'} onChange={(e) => setItemDecisions({...itemDecisions, [item.id]: { ...itemDecisions[item.id], status: e.target.value }})} className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-brand-maroon">
+                        <option value="Available">Available (Freeze Stock)</option>
+                        <option value="Pending">Pending (Procure)</option>
+                        <option value="Not Provided">Not Provided (Reject)</option>
+                      </select>
+                    </div>
+                  </div>
+                );
+              })}
+              <button type="submit" disabled={processingId === reviewBatch.id} className="w-full py-4 mt-6 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs uppercase tracking-wide rounded-xl shadow-lg transition disabled:opacity-50">
+                Confirm Stationery Dispatch
+              </button>
+            </form>
           </div>
         </div>
       )}

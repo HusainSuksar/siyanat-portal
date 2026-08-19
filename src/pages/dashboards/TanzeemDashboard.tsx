@@ -14,14 +14,16 @@ export default function TanzeemDashboard() {
   useEffect(() => {
     async function fetchTanzeemData() {
       setLoading(true);
-      const { count: eventsCount } = await supabase.from('events').select('*', { count: 'exact', head: true }).in('status', ['Pending', 'Pending Approval', 'Pending Tanzeem Approval', 'Not Confirmed']);
-      const { count: fleetCount } = await supabase.from('vehicle_requests').select('*', { count: 'exact', head: true }).in('status', ['Pending', 'Pending Approval']);
-      const { count: scheduledCount } = await supabase.from('events').select('*', { count: 'exact', head: true }).eq('status', 'Approved & Scheduled');
+      
+      const { count: eventsCount } = await supabase.from('events').select('*', { count: 'exact', head: true }).eq('pipeline_state', 'AUTHORIZED');
+      const { count: fleetCount } = await supabase.from('vehicle_requests').select('*', { count: 'exact', head: true }).eq('pipeline_state', 'AUTHORIZED');
+      const { count: scheduledCount } = await supabase.from('events').select('*', { count: 'exact', head: true }).eq('pipeline_state', 'PROCESSING');
 
       setMetrics({ pendingEvents: eventsCount || 0, pendingFleet: fleetCount || 0, scheduledEvents: scheduledCount || 0 });
 
-      const { data: recent } = await supabase.from('events').select('id, event_title, location, event_date, status').in('status', ['Pending', 'Pending Approval', 'Pending Tanzeem Approval', 'Not Confirmed']).order('created_at', { ascending: true }).limit(5);
+      const { data: recent } = await supabase.from('events').select('id, event_title, location, event_date, pipeline_state').eq('pipeline_state', 'AUTHORIZED').order('created_at', { ascending: true }).limit(5);
       if (recent) setActionEvents(recent);
+      
       setLoading(false);
     }
     fetchTanzeemData();

@@ -50,8 +50,8 @@ export default function BookVehicle() {
 
   const totalCount = maleCount + femaleCount;
 
-  // COMPONENT-LEVEL SECURITY CHECK
-  const isStandardUser = role === 'STANDARD_USER' || role === 'REQUESTER';
+  // COMPONENT-LEVEL SECURITY CHECK (Updated to new role matrix)
+  const isStandardUser = role === 'REQUESTER';
   if (isStandardUser) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] text-center p-6">
@@ -64,7 +64,7 @@ export default function BookVehicle() {
 
   const handleZoneChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     setZone(e.target.value);
-    setPickupVenue(''); // Reset dependent venue
+    setPickupVenue('');
   };
 
   const submitVehicleRequest = async (e: React.FormEvent) => {
@@ -79,18 +79,18 @@ export default function BookVehicle() {
 
       const fullDestination = `From: ${pickupVenue} | To: ${destination}`;
 
+      // THE FIX: We no longer send status. The DB assigns pipeline_state = 'AUTHORIZED' automatically.
       const { error } = await supabase.from('vehicle_requests').insert({
         requester_id: user.id,
         request_date: date,
         purpose,
         arrival_time: arrivalTime,
         release_time: releaseTime,
-        destination: fullDestination, // Combine them for the backend
+        destination: fullDestination,
         darajah,
         male_count: maleCount,
         female_count: femaleCount,
-        total_count: totalCount,
-        status: 'Pending Tanzeem Approval'
+        total_count: totalCount
       });
 
       if (error) throw error;
@@ -101,12 +101,10 @@ export default function BookVehicle() {
         user_email: user.email
       });
 
-      alert('Vehicle Booking Submitted! Pending Tanzeem Fleet Approval.');
+      alert('Vehicle Booking Submitted! Routed to Tanzeem Fleet Operations.');
       
-      // Reset Form
       setDate(''); setPurpose(''); setZone(''); setPickupVenue(''); setDestination(''); 
-      setArrivalTime(''); setReleaseTime('');
-      setMaleCount(0); setFemaleCount(0);
+      setArrivalTime(''); setReleaseTime(''); setMaleCount(0); setFemaleCount(0);
 
     } catch (err: any) {
       alert("Error booking vehicle: " + err.message);
