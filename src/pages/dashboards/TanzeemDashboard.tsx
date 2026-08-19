@@ -1,13 +1,13 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
-import {  Car, Clock, AlertTriangle, CheckCircle, ArrowRight } from 'lucide-react';
+import {  Car, Clock, AlertTriangle, CheckCircle, ArrowRight, Package } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 export default function TanzeemDashboard() {
   const { role } = useAuth();
   const navigate = useNavigate();
-  const [metrics, setMetrics] = useState({ pendingEvents: 0, pendingFleet: 0, scheduledEvents: 0 });
+  const [metrics, setMetrics] = useState({ pendingEvents: 0, pendingFleet: 0, scheduledEvents: 0, pendingMaterials: 0 });
   const [actionEvents, setActionEvents] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -18,8 +18,19 @@ export default function TanzeemDashboard() {
       const { count: eventsCount } = await supabase.from('events').select('*', { count: 'exact', head: true }).eq('pipeline_state', 'AUTHORIZED');
       const { count: fleetCount } = await supabase.from('vehicle_requests').select('*', { count: 'exact', head: true }).eq('pipeline_state', 'AUTHORIZED');
       const { count: scheduledCount } = await supabase.from('events').select('*', { count: 'exact', head: true }).eq('pipeline_state', 'PROCESSING');
+      
+      // THE FIX: Added Materials KPI specific to Tanzeem (Stationery)
+      const { count: materialsCount } = await supabase.from('work_orders')
+        .select('*, items:work_order_items!inner(fulfillment_dept)', { count: 'exact', head: true })
+        .eq('pipeline_state', 'AUTHORIZED')
+        .eq('items.fulfillment_dept', 'TANZEEM_HEAD');
 
-      setMetrics({ pendingEvents: eventsCount || 0, pendingFleet: fleetCount || 0, scheduledEvents: scheduledCount || 0 });
+      setMetrics({ 
+        pendingEvents: eventsCount || 0, 
+        pendingFleet: fleetCount || 0, 
+        scheduledEvents: scheduledCount || 0,
+        pendingMaterials: materialsCount || 0
+      });
 
       const { data: recent } = await supabase.from('events').select('id, event_title, location, event_date, pipeline_state').eq('pipeline_state', 'AUTHORIZED').order('created_at', { ascending: true }).limit(5);
       if (recent) setActionEvents(recent);
@@ -46,27 +57,34 @@ export default function TanzeemDashboard() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
         <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex items-center justify-between hover:border-amber-300 transition cursor-pointer" onClick={() => navigate('/tanzeem')}>
           <div>
             <span className="text-[10px] font-extrabold uppercase text-amber-600 tracking-wider">Pending Events</span>
             <div className="text-3xl font-black text-amber-600 mt-1">{loading ? '-' : metrics.pendingEvents}</div>
           </div>
-          <div className="w-12 h-12 bg-amber-50 rounded-full flex items-center justify-center"><AlertTriangle className="w-6 h-6 text-amber-500" /></div>
+          <div className="w-10 h-10 bg-amber-50 rounded-full flex items-center justify-center"><AlertTriangle className="w-5 h-5 text-amber-500" /></div>
         </div>
         <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex items-center justify-between hover:border-indigo-300 transition cursor-pointer" onClick={() => navigate('/tanzeem')}>
           <div>
             <span className="text-[10px] font-extrabold uppercase text-indigo-600 tracking-wider">Pending Fleet</span>
             <div className="text-3xl font-black text-indigo-600 mt-1">{loading ? '-' : metrics.pendingFleet}</div>
           </div>
-          <div className="w-12 h-12 bg-indigo-50 rounded-full flex items-center justify-center"><Car className="w-6 h-6 text-indigo-500" /></div>
+          <div className="w-10 h-10 bg-indigo-50 rounded-full flex items-center justify-center"><Car className="w-5 h-5 text-indigo-500" /></div>
+        </div>
+        <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex items-center justify-between hover:border-brand-maroon/50 transition cursor-pointer" onClick={() => navigate('/siyanat-operations')}>
+          <div>
+            <span className="text-[10px] font-extrabold uppercase text-brand-maroon tracking-wider">Stationery Req.</span>
+            <div className="text-3xl font-black text-brand-maroon mt-1">{loading ? '-' : metrics.pendingMaterials}</div>
+          </div>
+          <div className="w-10 h-10 bg-brand-maroon/10 rounded-full flex items-center justify-center"><Package className="w-5 h-5 text-brand-maroon" /></div>
         </div>
         <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex items-center justify-between hover:border-emerald-300 transition cursor-pointer" onClick={() => navigate('/tanzeem')}>
           <div>
             <span className="text-[10px] font-extrabold uppercase text-emerald-600 tracking-wider">Scheduled Events</span>
             <div className="text-3xl font-black text-emerald-600 mt-1">{loading ? '-' : metrics.scheduledEvents}</div>
           </div>
-          <div className="w-12 h-12 bg-emerald-50 rounded-full flex items-center justify-center"><CheckCircle className="w-6 h-6 text-emerald-500" /></div>
+          <div className="w-10 h-10 bg-emerald-50 rounded-full flex items-center justify-center"><CheckCircle className="w-5 h-5 text-emerald-500" /></div>
         </div>
       </div>
 

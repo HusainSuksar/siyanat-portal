@@ -45,23 +45,30 @@ export default function SiyanatOperations() {
       setUserRole(currentRole);
 
       // 1. Fetch Materials
-      let batchQuery = supabase
+      const { data: batchData, error: batchError } = await supabase
         .from('work_orders')
-        .select(`*, logs:work_order_logs(author_id), items:work_order_items!inner(id, requested_qty, item_type, custom_item_name, status, eta_days, fulfillment_dept, inventory_id, inventory:inventory_items(id, name, physical_stock, freezed_stock))`)
-        .eq('pipeline_state', 'AUTHORIZED')
+        .select(`
+          *, 
+          requester:profiles(full_name, department),
+          logs:work_order_logs(author_id), 
+          items:work_order_items(
+            id, requested_qty, item_type, custom_item_name, status, eta_days, fulfillment_dept, inventory_id, 
+            inventory:inventory_items(id, name, physical_stock, freezed_stock)
+          )
+        `)
+        .in('pipeline_state', ['AUTHORIZED', 'PROCESSING'])
         .order('created_at', { ascending: false });
 
-      if (currentRole === 'SIYANAT_HEAD') {
-        batchQuery = batchQuery.eq('items.fulfillment_dept', 'SIYANAT_HEAD');
-      } else if (currentRole === 'AVIT_HEAD') {
-        batchQuery = batchQuery.eq('items.fulfillment_dept', 'AVIT_HEAD');
-      } else if (currentRole === 'TANZEEM_HEAD') {
-        batchQuery = batchQuery.eq('items.fulfillment_dept', 'TANZEEM_HEAD');
-      }
-        
-      const { data: batchData, error: batchError } = await batchQuery;
       if (batchError) throw batchError;
-      if (batchData) setBatches(batchData);
+
+      if (batchData) {
+        // Filter batches that contain items assigned to the current department
+        const filteredBatches = batchData.filter(batch => {
+          if (currentRole === 'SUPER_ADMIN' || currentRole === 'ADMIN') return true;
+          return batch.items && batch.items.some((item: any) => item.fulfillment_dept === currentRole);
+        });
+        setBatches(filteredBatches);
+      }
 
       // 2. Fetch Maintenance
       let complaintQuery = supabase
@@ -106,7 +113,6 @@ export default function SiyanatOperations() {
 
   // --- STANDARD MATERIAL LOGIC ---
   const openReviewModal = (batch: any) => {
-    // THE FIX: Filter items so the Head ONLY sees their department's items
     const relevantItems = (userRole === 'SUPER_ADMIN' || userRole === 'ADMIN') 
       ? batch.items 
       : batch.items.filter((i: any) => i.fulfillment_dept === userRole);
@@ -115,7 +121,7 @@ export default function SiyanatOperations() {
     
     const initialDecisions: any = {};
     relevantItems.forEach((item: any) => {
-      initialDecisions[item.id] = { status: 'Available', eta: 0 };
+      initialDecisions[item.id] = { status: item.status || 'Available', eta: item.eta_days || 0 };
     });
     setItemDecisions(initialDecisions);
     setReviewModalOpen(true);
@@ -130,8 +136,6 @@ export default function SiyanatOperations() {
     setProcessingId(reviewBatch.id);
 
     try {
-      let hasAvailableItems = false;
-      
       // 1. Process only the items visible in the modal
       for (const item of reviewBatch.items) {
         const decision = itemDecisions[item.id];
@@ -141,27 +145,36 @@ export default function SiyanatOperations() {
 
         if (decision.status === 'Available' && item.item_type === 'Catalog' && item.inventory_id) {
           const inv = item.inventory;
-          const newFreezedStock = (inv.freezed_stock || 0) + item.requested_qty;
+          const newFreezedStock = (inv?.freezed_stock || 0) + item.requested_qty;
           await supabase.from('inventory_items').update({ freezed_stock: newFreezedStock }).eq('id', item.inventory_id);
-          hasAvailableItems = true;
         }
       }
 
-      // 2. THE FIX: Smart Pipeline Check. Only advance if ALL departments have processed their items.
+      // 2. THE FIX: Smart Pipeline Evaluation
+      // We look at EVERY item in the batch (across all departments) to decide the fate of the Batch.
       const { data: allItems } = await supabase.from('work_order_items').select('status').eq('work_order_id', reviewBatch.id);
-      const allProcessed = allItems?.every(i => i.status !== 'Pending') ?? true;
+      
+      const hasPending = allItems?.some(i => i.status === 'Pending' || i.status === 'Ordered');
+      const hasAvailable = allItems?.some(i => i.status === 'Available');
 
-      if (allProcessed && hasAvailableItems) {
-        await supabase.rpc('advance_pipeline', { target_table: 'work_orders', target_id: reviewBatch.id });
+      if (hasPending) {
+        // Some items are waiting on RTO or another department head. Park it in PROCESSING.
+        await supabase.from('work_orders').update({ pipeline_state: 'PROCESSING' }).eq('id', reviewBatch.id);
+      } else if (hasAvailable) {
+        // All departments have finished, and there is at least one item ready for pickup!
+        await supabase.from('work_orders').update({ pipeline_state: 'ACTION_REQUIRED' }).eq('id', reviewBatch.id);
+      } else {
+        // Every single item was rejected
+        await supabase.from('work_orders').update({ pipeline_state: 'REJECTED' }).eq('id', reviewBatch.id);
       }
 
       await supabase.from('system_logs').insert({
         action_type: 'BATCH_REVIEWED',
-        description: `Processed ${reviewBatch.items.length} items for material batch ${reviewBatch.batch_id}.`,
+        description: `Department processed items for material batch ${reviewBatch.batch_id}.`,
         user_email: currentUser?.email || 'Admin'
       });
 
-      setSuccessMsg("Batch items processed and stock frozen successfully!");
+      setSuccessMsg("Batch items processed and stock updated successfully!");
       setReviewModalOpen(false);
       fetchData();
     } catch (err: any) {
@@ -207,8 +220,7 @@ export default function SiyanatOperations() {
 
       await supabase.from('purchase_order_items').insert(poItems);
 
-      // Advance the dummy WO so it clears the queue
-      await supabase.rpc('advance_pipeline', { target_table: 'work_orders', target_id: poBatch.id });
+      await supabase.from('work_orders').update({ pipeline_state: 'PROCESSING' }).eq('id', poBatch.id);
 
       await supabase.from('system_logs').insert({
         action_type: 'PO_GENERATED',
@@ -216,7 +228,7 @@ export default function SiyanatOperations() {
         user_email: currentUser?.email || 'Admin'
       });
 
-      setSuccessMsg(`Official Purchase Order (${poNumber}) successfully generated and assigned to vendor!`);
+      setSuccessMsg(`Official Purchase Order (${poNumber}) successfully generated!`);
       setPoModalOpen(false);
       fetchData();
 
@@ -292,10 +304,10 @@ export default function SiyanatOperations() {
 
       <div className="flex space-x-2 border-b border-slate-200 overflow-x-auto pb-1">
         <button onClick={() => setActiveTab('materials')} className={`px-4 py-2 text-sm font-bold border-b-2 transition flex items-center gap-2 whitespace-nowrap ${activeTab === 'materials' ? 'border-brand-maroon text-brand-maroon' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
-          <Package className="w-4 h-4" /> Material Dispatch
+          <Package className="w-4 h-4" /> Material Dispatch ({batches.length})
         </button>
         <button onClick={() => setActiveTab('maintenance')} className={`px-4 py-2 text-sm font-bold border-b-2 transition flex items-center gap-2 whitespace-nowrap ${activeTab === 'maintenance' ? 'border-brand-maroon text-brand-maroon' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
-          <Wrench className="w-4 h-4" /> Maintenance Routing
+          <Wrench className="w-4 h-4" /> Maintenance Routing ({complaints.length})
         </button>
       </div>
 
@@ -310,6 +322,9 @@ export default function SiyanatOperations() {
              <div className="grid grid-cols-1 gap-4">
                {batches.map(b => {
                  const isTechPORequest = b.department === 'Technician Procurement';
+                 const relevantItemsCount = (userRole === 'SUPER_ADMIN' || userRole === 'ADMIN')
+                   ? b.items?.length || 0
+                   : b.items?.filter((i: any) => i.fulfillment_dept === userRole).length || 0;
 
                  return (
                   <div key={b.id} className={`bg-white rounded-2xl p-5 shadow-sm border-2 flex flex-col md:flex-row md:items-center justify-between gap-4 ${isTechPORequest ? 'border-indigo-400' : 'border-slate-200'}`}>
@@ -320,22 +335,19 @@ export default function SiyanatOperations() {
                            <h3 className="font-black text-brand-maroon text-sm md:text-base leading-tight">Batch: {b.batch_id}</h3>
                            {isTechPORequest && <span className="px-2 py-0.5 bg-indigo-100 text-indigo-800 text-[9px] font-black uppercase tracking-wider rounded border border-indigo-200">Field Request</span>}
                          </div>
-                         <p className="text-xs text-slate-600 font-semibold">{b.department}</p>
+                         <p className="text-xs text-slate-600 font-semibold">{b.requester?.full_name || 'Requester'} • {b.department}</p>
                        </div>
 
                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-50 p-3 rounded-xl border border-slate-100">
                          <div>
-                           <div className="text-[10px] text-slate-400 uppercase font-bold mb-0.5">Location / Context</div>
+                           <div className="text-[10px] text-slate-400 uppercase font-bold mb-0.5">Location</div>
                            <div className="font-bold text-slate-700 text-xs">{b.location}</div>
-                           {isTechPORequest && <div className="text-[10px] text-indigo-600 font-bold mt-1 line-clamp-1">{b.reason}</div>}
                          </div>
                          <div>
-                           <div className="text-[10px] text-slate-400 uppercase font-bold mb-1">Status</div>
-                           <div className="flex flex-wrap gap-1.5 items-center">
-                             <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${isTechPORequest ? 'bg-indigo-100 text-indigo-800' : 'bg-amber-100 text-amber-800'}`}>
-                               Awaiting Split
-                             </span>
-                           </div>
+                           <div className="text-[10px] text-slate-400 uppercase font-bold mb-1">Items to Process</div>
+                           <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800">
+                             {relevantItemsCount} Department Item(s)
+                           </span>
                          </div>
                        </div>
                      </div>
@@ -360,7 +372,7 @@ export default function SiyanatOperations() {
                           <MessageSquare className="w-3.5 h-3.5"/> Chat
                         </button>
                         
-                        {(userRole === 'SUPER_ADMIN') && (
+                        {userRole === 'SUPER_ADMIN' && (
                           <button onClick={() => deleteBatch(b.id, b.batch_id)} disabled={processingId === b.id} className="py-2.5 px-3 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl transition disabled:opacity-50 flex items-center justify-center">
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -423,7 +435,7 @@ export default function SiyanatOperations() {
                           </button>
                         )}
                         
-                        {(userRole === 'SUPER_ADMIN') && (
+                        {userRole === 'SUPER_ADMIN' && (
                           <button onClick={() => deleteComplaint(c.id, c.complaint_id)} disabled={processingId === c.id} className="py-2.5 px-3 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl transition disabled:opacity-50 flex items-center justify-center">
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -449,7 +461,6 @@ export default function SiyanatOperations() {
               <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100">
                 <p className="text-[10px] font-black uppercase text-indigo-400 tracking-widest mb-1">Context</p>
                 <p className="text-sm font-bold text-indigo-900">{poBatch.reason}</p>
-                <p className="text-xs text-indigo-700 font-medium mt-1">Requested by field technician. Pending external procurement.</p>
               </div>
               
               <div>
@@ -496,12 +507,12 @@ export default function SiyanatOperations() {
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex justify-center items-end sm:items-center p-4">
           <div className="bg-white rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom sm:slide-in-from-bottom-0 sm:zoom-in-95 duration-300">
             <div className="bg-brand-maroon p-5 flex justify-between items-center text-white">
-              <h3 className="font-extrabold text-sm uppercase">Review & Split Batch: {reviewBatch.batch_id}</h3>
+              <h3 className="font-extrabold text-sm uppercase">Review Batch: {reviewBatch.batch_id}</h3>
               <button onClick={() => setReviewModalOpen(false)} className="p-1 hover:bg-white/20 rounded-lg transition"><X className="w-5 h-5 hover:text-red-300" /></button>
             </div>
             <form onSubmit={handleReviewSubmit} className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
               <p className="text-xs text-slate-500 font-bold mb-4 bg-slate-50 p-3 rounded-xl border border-slate-100">
-                Determine availability for each requested item. Available items will be frozen in inventory and routed to the Requester for pickup.
+                Determine availability for your department's items.
               </p>
               
               {reviewBatch.items.map((item: any) => {
@@ -513,7 +524,12 @@ export default function SiyanatOperations() {
                 return (
                   <div key={item.id} className="p-4 border border-slate-200 rounded-2xl bg-white shadow-sm grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
                     <div className="md:col-span-4">
-                      <div className="font-bold text-slate-800 text-sm md:text-xs">{itemName}</div>
+                      <div className="font-bold text-slate-800 text-sm md:text-xs">
+                        {itemName}
+                        <span className="ml-2 px-1.5 py-0.5 bg-slate-200 text-slate-700 rounded text-[9px] font-bold uppercase tracking-wider">
+                          {item.fulfillment_dept?.replace('_HEAD', '') || 'SIYANAT'}
+                        </span>
+                      </div>
                       <div className="text-[11px] md:text-[10px] text-slate-500 mt-1 md:mt-0">Requested: <span className="font-bold text-brand-maroon">{item.requested_qty}</span></div>
                       {item.item_type === 'Catalog' && (
                         <div className="text-[11px] md:text-[10px] text-emerald-600 font-bold mt-0.5">Avail Stock: {availableStock}</div>
@@ -553,7 +569,7 @@ export default function SiyanatOperations() {
               })}
 
               <button type="submit" disabled={processingId === reviewBatch.id} className="w-full py-4 md:py-3 mt-6 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs uppercase tracking-wide rounded-xl shadow-lg transition disabled:opacity-50">
-                Confirm Split & Advance Pipeline
+                Confirm & Process Items
               </button>
             </form>
           </div>
@@ -587,7 +603,7 @@ export default function SiyanatOperations() {
       {/* Chat Modal */}
       {activeBatch && currentUser && <BatchDetailsModal batchId={activeBatch.batch_id} workOrderId={activeBatch.id} isOpen={isChatOpen} onClose={() => { setIsChatOpen(false); setActiveBatch(null); }} currentUser={currentUser} />}
       
-      {/* CREATIVE SUCCESS MODAL */}
+      {/* Success Modal */}
       {successMsg && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="bg-white p-8 rounded-3xl shadow-2xl flex flex-col items-center max-w-sm w-full animate-in zoom-in-95 duration-300">

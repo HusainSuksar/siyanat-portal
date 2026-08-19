@@ -42,11 +42,11 @@ export default function TanzeemCommandCenter() {
     const { data: vehicleData } = await supabase.from('vehicle_requests').select(`*, requester:profiles(full_name, department)`).eq('pipeline_state', 'AUTHORIZED').order('request_date', { ascending: true });
     if (vehicleData) setVehicles(vehicleData);
 
-    // 3. Fetch Stationery Material Batches
+    // 3. Fetch Stationery Material Batches (Authorized & Processing to catch mixed carts)
     const { data: batchData } = await supabase
       .from('work_orders')
       .select(`*, requester:profiles(full_name, department), items:work_order_items!inner(id, requested_qty, item_type, custom_item_name, status, eta_days, fulfillment_dept, inventory_id, inventory:inventory_items(id, name, physical_stock, freezed_stock))`)
-      .eq('pipeline_state', 'AUTHORIZED')
+      .in('pipeline_state', ['AUTHORIZED', 'PROCESSING'])
       .eq('items.fulfillment_dept', 'TANZEEM_HEAD')
       .order('created_at', { ascending: false });
     if (batchData) setStationeryBatches(batchData);
@@ -143,7 +143,7 @@ export default function TanzeemCommandCenter() {
     const initialDecisions: any = {};
     const tanzeemItems = batch.items.filter((i: any) => i.fulfillment_dept === 'TANZEEM_HEAD');
     tanzeemItems.forEach((item: any) => {
-      initialDecisions[item.id] = { status: 'Available', eta: 0 };
+      initialDecisions[item.id] = { status: item.status || 'Available', eta: item.eta_days || 0 };
     });
     setItemDecisions(initialDecisions);
     setReviewModalOpen(true);
@@ -154,23 +154,35 @@ export default function TanzeemCommandCenter() {
     setProcessingId(reviewBatch.id);
 
     try {
-      let hasAvailableItems = false;
       const tanzeemItems = reviewBatch.items.filter((i: any) => i.fulfillment_dept === 'TANZEEM_HEAD');
       
+      // 1. Process items
       for (const item of tanzeemItems) {
         const decision = itemDecisions[item.id];
         await supabase.from('work_order_items').update({ status: decision.status, eta_days: decision.eta }).eq('id', item.id);
 
         if (decision.status === 'Available' && item.item_type === 'Catalog' && item.inventory_id) {
           const inv = item.inventory;
-          const newFreezedStock = (inv.freezed_stock || 0) + item.requested_qty;
+          const newFreezedStock = (inv?.freezed_stock || 0) + item.requested_qty;
           await supabase.from('inventory_items').update({ freezed_stock: newFreezedStock }).eq('id', item.inventory_id);
-          hasAvailableItems = true;
         }
       }
 
-      if (hasAvailableItems) {
-        await supabase.rpc('advance_pipeline', { target_table: 'work_orders', target_id: reviewBatch.id });
+      // 2. Smart Pipeline Evaluation
+      const { data: allItems } = await supabase.from('work_order_items').select('status').eq('work_order_id', reviewBatch.id);
+      
+      const hasPending = allItems?.some(i => i.status === 'Pending' || i.status === 'Ordered');
+      const hasAvailable = allItems?.some(i => i.status === 'Available');
+
+      if (hasPending) {
+        // Some items are waiting on RTO or another department head. Park it in PROCESSING.
+        await supabase.from('work_orders').update({ pipeline_state: 'PROCESSING' }).eq('id', reviewBatch.id);
+      } else if (hasAvailable) {
+        // All departments have finished, and there is at least one item ready for pickup!
+        await supabase.from('work_orders').update({ pipeline_state: 'ACTION_REQUIRED' }).eq('id', reviewBatch.id);
+      } else {
+        // Every single item was rejected
+        await supabase.from('work_orders').update({ pipeline_state: 'REJECTED' }).eq('id', reviewBatch.id);
       }
 
       alert("Stationery batch processed and stock frozen for pickup!");
@@ -335,7 +347,9 @@ export default function TanzeemCommandCenter() {
                     <div className="space-y-3 flex-1 w-full">
                        <div className="flex items-center gap-2">
                          <h3 className="font-black text-brand-maroon text-base">Batch: {b.batch_id}</h3>
-                         <span className="px-2 py-0.5 bg-amber-100 text-amber-800 text-[9px] font-black uppercase rounded">Awaiting Dispatch</span>
+                         <span className={`px-2 py-0.5 text-[9px] font-black uppercase rounded ${b.pipeline_state === 'PROCESSING' ? 'bg-indigo-100 text-indigo-800' : 'bg-amber-100 text-amber-800'}`}>
+                           {b.pipeline_state === 'PROCESSING' ? 'Waiting on other Depts' : 'Awaiting Dispatch'}
+                         </span>
                        </div>
                        <p className="text-xs text-slate-500 font-bold uppercase">{b.requester?.full_name} • {b.location}</p>
                        <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
