@@ -44,14 +44,13 @@ export default function SiyanatOperations() {
       const currentRole = profile?.role || '';
       setUserRole(currentRole);
 
-      // 1. Fetch Materials (Filtered by Universal Pipeline & Department Tags)
+      // 1. Fetch Materials
       let batchQuery = supabase
         .from('work_orders')
         .select(`*, logs:work_order_logs(author_id), items:work_order_items!inner(id, requested_qty, item_type, custom_item_name, status, eta_days, fulfillment_dept, inventory_id, inventory:inventory_items(id, name, physical_stock, freezed_stock))`)
         .eq('pipeline_state', 'AUTHORIZED')
         .order('created_at', { ascending: false });
 
-      // Apply Strict Departmental Segregation via the inner join
       if (currentRole === 'SIYANAT_HEAD') {
         batchQuery = batchQuery.eq('items.fulfillment_dept', 'SIYANAT_HEAD');
       } else if (currentRole === 'AVIT_HEAD') {
@@ -64,7 +63,7 @@ export default function SiyanatOperations() {
       if (batchError) throw batchError;
       if (batchData) setBatches(batchData);
 
-      // 2. Fetch Maintenance (Filtered by role and pipeline state)
+      // 2. Fetch Maintenance
       let complaintQuery = supabase
         .from('complaints')
         .select(`
@@ -107,9 +106,15 @@ export default function SiyanatOperations() {
 
   // --- STANDARD MATERIAL LOGIC ---
   const openReviewModal = (batch: any) => {
-    setReviewBatch(batch);
+    // THE FIX: Filter items so the Head ONLY sees their department's items
+    const relevantItems = (userRole === 'SUPER_ADMIN' || userRole === 'ADMIN') 
+      ? batch.items 
+      : batch.items.filter((i: any) => i.fulfillment_dept === userRole);
+
+    setReviewBatch({ ...batch, items: relevantItems });
+    
     const initialDecisions: any = {};
-    batch.items.forEach((item: any) => {
+    relevantItems.forEach((item: any) => {
       initialDecisions[item.id] = { status: 'Available', eta: 0 };
     });
     setItemDecisions(initialDecisions);
@@ -126,8 +131,12 @@ export default function SiyanatOperations() {
 
     try {
       let hasAvailableItems = false;
+      
+      // 1. Process only the items visible in the modal
       for (const item of reviewBatch.items) {
         const decision = itemDecisions[item.id];
+        if (!decision) continue;
+
         await supabase.from('work_order_items').update({ status: decision.status, eta_days: decision.eta }).eq('id', item.id);
 
         if (decision.status === 'Available' && item.item_type === 'Catalog' && item.inventory_id) {
@@ -138,18 +147,21 @@ export default function SiyanatOperations() {
         }
       }
 
-      // Advance to ACTION_REQUIRED (Ready for Pickup)
-      if (hasAvailableItems) {
+      // 2. THE FIX: Smart Pipeline Check. Only advance if ALL departments have processed their items.
+      const { data: allItems } = await supabase.from('work_order_items').select('status').eq('work_order_id', reviewBatch.id);
+      const allProcessed = allItems?.every(i => i.status !== 'Pending') ?? true;
+
+      if (allProcessed && hasAvailableItems) {
         await supabase.rpc('advance_pipeline', { target_table: 'work_orders', target_id: reviewBatch.id });
       }
 
       await supabase.from('system_logs').insert({
         action_type: 'BATCH_REVIEWED',
-        description: `Split and processed material batch ${reviewBatch.batch_id}.`,
+        description: `Processed ${reviewBatch.items.length} items for material batch ${reviewBatch.batch_id}.`,
         user_email: currentUser?.email || 'Admin'
       });
 
-      setSuccessMsg("Batch processed and stock frozen successfully!");
+      setSuccessMsg("Batch items processed and stock frozen successfully!");
       setReviewModalOpen(false);
       fetchData();
     } catch (err: any) {
@@ -238,11 +250,9 @@ export default function SiyanatOperations() {
       
       if (assignError) throw assignError;
 
-      // RPC Call to shift complaint from AUTHORIZED to PROCESSING
       if(selectedComplaint.pipeline_state === 'AUTHORIZED') {
          await supabase.rpc('advance_pipeline', { target_table: 'complaints', target_id: selectedComplaint.id });
       } else {
-         // Manual fallback if already processing and just re-assigning
          await supabase.from('complaints').update({ status: 'Assigned' }).eq('id', selectedComplaint.id);
       }
       

@@ -51,7 +51,7 @@ export default function NewRequisition() {
         
         if (role === 'SUPERVISOR') {
           setIsSupervisor(true);
-          if (assignedZone) setLocation(assignedZone);
+          if (assignedZone) setLocation(assignedZone.split(',')[0].trim());
         }
       }
     }
@@ -59,7 +59,6 @@ export default function NewRequisition() {
     // 2. Fetch Catalog with strict Requester filtering
     let query = supabase.from('inventory_items').select('*').order('name');
     
-    // Updated to check for REQUESTER instead of STANDARD_USER
     if (role === 'REQUESTER') {
       // Requesters only see Stationery and AVIT
       query = query.in('category', ['Office & Administrative Supplies', 'IT & Networking Hardware']);
@@ -114,7 +113,6 @@ export default function NewRequisition() {
       if (!userData.user) throw new Error("Not authenticated");
 
       // 1. Insert Work Order
-      // THE FIX: Removed approval_status & dispatch_status. DB handles pipeline_state.
       const { data: orderData, error: orderError } = await supabase
         .from('work_orders')
         .insert({
@@ -135,7 +133,8 @@ export default function NewRequisition() {
         inventory_id: c.item.id,
         requested_qty: c.qty,
         item_type: 'Catalog',
-        fulfillment_dept: c.item.fulfillment_dept // Pass the DB tag up to the order
+        // THE FIX: Explicitly enforce the tag so it never drops out of the pipeline
+        fulfillment_dept: c.item.fulfillment_dept || 'SIYANAT_HEAD' 
       }));
 
       // 3. Insert Custom Items
@@ -143,8 +142,9 @@ export default function NewRequisition() {
         work_order_id: orderData.id,
         custom_item_name: c.name,
         requested_qty: c.qty,
-        item_type: 'Custom'
-        // Custom items fallback to the DB default (SIYANAT_HEAD)
+        item_type: 'Custom',
+        // Custom items default to Siyanat
+        fulfillment_dept: 'SIYANAT_HEAD' 
       }));
 
       const allItemsToInsert = [...orderItems, ...customOrderItems];
