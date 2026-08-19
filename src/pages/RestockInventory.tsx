@@ -187,6 +187,7 @@ export default function RestockInventory() {
   };
 
   // --- PO FULFILLMENT / RECEIVING DOCK ---
+  // --- PO FULFILLMENT / RECEIVING DOCK ---
   const fulfillPO = async (po: any) => {
     if (!confirm(`Mark Purchase Order ${po.po_number} as Received? This will inject items into warehouse stock.`)) return;
     setProcessingId(po.id);
@@ -203,19 +204,19 @@ export default function RestockInventory() {
         }
       }
 
-      // Automatically advance tickets waiting for this material
+      // Wake up the technician assignment back to active 'Assigned' status
       if (po.complaint_id) {
         await supabase.from('technician_assignments').update({ status: 'Assigned' }).eq('complaint_id', po.complaint_id);
-        await supabase.rpc('advance_pipeline', { target_table: 'complaints', target_id: po.complaint_id });
+        await supabase.from('complaints').update({ pipeline_state: 'PROCESSING' }).eq('id', po.complaint_id);
       }
 
       await supabase.from('system_logs').insert({
         action_type: 'PO_FULFILLED',
-        description: `Received shipment for PO ${po.po_number}. Auto-fulfillment triggered.`,
+        description: `Received shipment for PO ${po.po_number}. Technician task reactivated.`,
         user_email: user?.email || 'System Admin'
       });
 
-      alert(`PO ${po.po_number} fulfilled! Technician has been notified.`);
+      alert(`PO ${po.po_number} fulfilled! Technician task is now active.`);
       fetchData();
     } catch (err: any) {
       alert("Error fulfilling PO: " + err.message);

@@ -34,10 +34,10 @@ export default function TanzeemCommandCenter() {
   const fetchData = async () => {
     setLoading(true);
     
-    // 1. Fetch Events
-    const { data: eventData } = await supabase.from('events').select(`*, requester:profiles(full_name, department), requirements:event_requirements(department, item_name)`).eq('pipeline_state', 'AUTHORIZED').order('event_date', { ascending: true });
+    // 1. Fetch Events (Pull both New and Scheduled)
+    const { data: eventData } = await supabase.from('events').select(`*, requester:profiles(full_name, department), requirements:event_requirements(department, item_name)`).in('pipeline_state', ['AUTHORIZED', 'PROCESSING']).order('event_date', { ascending: true });
     if (eventData) setEvents(eventData);
-
+    
     // 2. Fetch Fleet
     const { data: vehicleData } = await supabase.from('vehicle_requests').select(`*, requester:profiles(full_name, department)`).eq('pipeline_state', 'AUTHORIZED').order('request_date', { ascending: true });
     if (vehicleData) setVehicles(vehicleData);
@@ -73,6 +73,14 @@ export default function TanzeemCommandCenter() {
     if (!reason) return alert('A reason is mandatory.');
     setProcessingId(id);
     await supabase.from('events').update({ pipeline_state: 'REJECTED', rejection_reason: reason }).eq('id', id);
+    fetchData(); setProcessingId(null);
+  };
+
+  const closeEvent = async (id: string, title: string) => {
+    if (!confirm('Mark this event as concluded/finished? This will close the ticket permanently.')) return;
+    setProcessingId(id);
+    await supabase.from('events').update({ pipeline_state: 'CLOSED' }).eq('id', id);
+    await supabase.from('system_logs').insert({ action_type: 'EVENT_CLOSED', description: `Concluded and closed event: ${title}.`, user_email: user?.email || 'Admin' });
     fetchData(); setProcessingId(null);
   };
 
@@ -267,12 +275,20 @@ export default function TanzeemCommandCenter() {
                     </div>
                   </div>
                   <div className="flex flex-row lg:flex-col gap-2 w-full lg:w-48 pt-4 lg:pt-0 border-t lg:border-t-0 lg:border-l border-slate-100 lg:pl-5">
-                    <button onClick={() => approveEvent(e.id, e.event_title)} disabled={processingId === e.id} className="flex-1 lg:w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black uppercase tracking-wider rounded-xl text-[10px] shadow-sm flex items-center justify-center gap-2 disabled:opacity-50 transition">
-                      <CheckCircle className="w-4 h-4"/> Confirm
-                    </button>
-                    <button onClick={() => rejectEvent(e.id)} disabled={processingId === e.id} className="flex-1 lg:w-full py-3 bg-white hover:bg-red-50 text-red-600 font-black uppercase tracking-wider rounded-xl border border-red-200 text-[10px] shadow-sm flex items-center justify-center gap-2 disabled:opacity-50 transition">
-                      <XCircle className="w-4 h-4"/> Decline
-                    </button>
+                    {e.pipeline_state === 'AUTHORIZED' ? (
+                      <>
+                        <button onClick={() => approveEvent(e.id, e.event_title)} disabled={processingId === e.id} className="flex-1 lg:w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black uppercase tracking-wider rounded-xl text-[10px] shadow-sm flex items-center justify-center gap-2 disabled:opacity-50 transition">
+                          <CheckCircle className="w-4 h-4"/> Confirm
+                        </button>
+                        <button onClick={() => rejectEvent(e.id)} disabled={processingId === e.id} className="flex-1 lg:w-full py-3 bg-white hover:bg-red-50 text-red-600 font-black uppercase tracking-wider rounded-xl border border-red-200 text-[10px] shadow-sm flex items-center justify-center gap-2 disabled:opacity-50 transition">
+                          <XCircle className="w-4 h-4"/> Decline
+                        </button>
+                      </>
+                    ) : (
+                      <button onClick={() => closeEvent(e.id, e.event_title)} disabled={processingId === e.id} className="flex-1 lg:w-full py-3 bg-slate-800 hover:bg-slate-900 text-white font-black uppercase tracking-wider rounded-xl text-[10px] shadow-sm flex items-center justify-center gap-2 disabled:opacity-50 transition">
+                        <CheckCircle className="w-4 h-4"/> Mark Concluded
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}

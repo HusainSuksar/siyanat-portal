@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { ClipboardList, CheckCircle, XCircle, Image as ImageIcon, MapPin, SearchCheck, RefreshCcw, ShieldCheck, Mailbox } from 'lucide-react';
+import { ClipboardList, CheckCircle, XCircle, Image as ImageIcon, MapPin, SearchCheck, RefreshCcw, ShieldCheck, Mailbox, X } from 'lucide-react';
 
 export default function SupervisorQueue() {
   const [activeTab, setActiveTab] = useState<'inbox' | 'verification'>('inbox');
@@ -9,6 +9,12 @@ export default function SupervisorQueue() {
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [userProfile, setUserProfile] = useState<any>(null);
+
+  // Reason Modal State (Replaces prompt)
+  const [reasonModalOpen, setReasonModalOpen] = useState(false);
+  const [modalAction, setModalAction] = useState<'REJECT' | 'REOPEN'>('REJECT');
+  const [targetComplaint, setTargetComplaint] = useState<any>(null);
+  const [reasonText, setReasonText] = useState('');
 
   const fetchQueue = async () => {
     setLoading(true);
@@ -23,7 +29,6 @@ export default function SupervisorQueue() {
       
       setUserProfile({ ...profile, email: authData.user.email });
 
-      // Build base query
       let baseQuery = supabase
         .from('complaints')
         .select(`
@@ -34,7 +39,6 @@ export default function SupervisorQueue() {
         `)
         .order('created_at', { ascending: true });
 
-      // Apply Domain/Zone Filter
       if (profile?.role === 'SUPERVISOR' && profile?.zone) {
         const assignedZones = profile.zone.split(',').map((z: string) => z.trim());
         baseQuery = baseQuery.in('zone', assignedZones);
@@ -43,7 +47,6 @@ export default function SupervisorQueue() {
       const { data, error } = await baseQuery;
       
       if (data && !error) {
-        // Split data using the new Universal Pipeline states
         setComplaints(data.filter(c => c.pipeline_state === 'SUBMITTED'));
         setVerifications(data.filter(c => c.pipeline_state === 'ACTION_REQUIRED'));
       }
@@ -55,12 +58,10 @@ export default function SupervisorQueue() {
     fetchQueue();
   }, [activeTab]);
 
-  // --- TAB 1: INITIAL APPROVAL ACTIONS ---
   const processComplaint = async (id: string, complaintIdName: string) => {
     if (!confirm('Forward this complaint to Siyanat Operations for maintenance scheduling?')) return;
     setProcessingId(id);
 
-    // THE FIX: Smart RPC Call
     const { error } = await supabase.rpc('advance_pipeline', { target_table: 'complaints', target_id: id });
 
     if (!error) {
@@ -76,33 +77,49 @@ export default function SupervisorQueue() {
     setProcessingId(null);
   };
 
-  const doNotProcess = async (id: string, complaintIdName: string) => {
-    const reason = prompt('Please enter the mandatory reason for NOT processing this complaint:');
-    if (!reason) {
-      alert('A reason is required to reject a complaint.');
-      return;
-    }
-    
-    setProcessingId(id);
-    const { error } = await supabase.from('complaints').update({ pipeline_state: 'REJECTED' }).eq('id', id);
+  const openReasonModal = (complaint: any, action: 'REJECT' | 'REOPEN') => {
+    setTargetComplaint(complaint);
+    setModalAction(action);
+    setReasonText('');
+    setReasonModalOpen(true);
+  };
 
-    if (!error) {
-      await supabase.from('system_logs').insert({
-        action_type: 'SUPERVISOR_REJECTED',
-        description: `Supervisor rejected complaint ${complaintIdName}. Reason: ${reason}`,
-        user_email: userProfile?.email || 'Supervisor'
-      });
-      fetchQueue();
+  const handleReasonSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reasonText.trim() || !targetComplaint) return;
+    setProcessingId(targetComplaint.id);
+
+    if (modalAction === 'REJECT') {
+      const { error } = await supabase.from('complaints').update({ pipeline_state: 'REJECTED' }).eq('id', targetComplaint.id);
+      if (!error) {
+        await supabase.from('system_logs').insert({
+          action_type: 'SUPERVISOR_REJECTED',
+          description: `Supervisor rejected complaint ${targetComplaint.complaint_id}. Reason: ${reasonText}`,
+          user_email: userProfile?.email || 'Supervisor'
+        });
+      }
+    } else {
+      const { error: compError } = await supabase.from('complaints').update({ pipeline_state: 'PROCESSING' }).eq('id', targetComplaint.id);
+      await supabase.from('technician_assignments').update({ status: 'Assigned' }).eq('complaint_id', targetComplaint.id);
+
+      if (!compError) {
+        await supabase.from('system_logs').insert({
+          action_type: 'SUPERVISOR_REOPENED',
+          description: `Supervisor reopened complaint ${targetComplaint.complaint_id}. Reason: ${reasonText}`,
+          user_email: userProfile?.email || 'Supervisor'
+        });
+      }
     }
+
+    setReasonModalOpen(false);
+    fetchQueue();
     setProcessingId(null);
   };
 
-  // --- TAB 2: VERIFICATION ACTIONS ---
   const verifyComplaint = async (id: string, complaintIdName: string) => {
     if (!confirm('Officially verify that the technician has successfully completed this maintenance? This will close the ticket.')) return;
     setProcessingId(id);
 
-    // THE FIX: Smart RPC Call (Advances to CLOSED)
     const { error } = await supabase.rpc('advance_pipeline', { target_table: 'complaints', target_id: id });
 
     if (!error) {
@@ -118,34 +135,8 @@ export default function SupervisorQueue() {
     setProcessingId(null);
   };
 
-  const reopenComplaint = async (id: string, complaintIdName: string) => {
-    const reason = prompt('Why does this complaint need to be reopened? (The technician will be notified)');
-    if (!reason) {
-      alert('A reason is required to reopen a complaint.');
-      return;
-    }
-    
-    setProcessingId(id);
-    
-    // Set complaint status back to PROCESSING
-    const { error: compError } = await supabase.from('complaints').update({ pipeline_state: 'PROCESSING' }).eq('id', id);
-    // Set the assignment status back
-    await supabase.from('technician_assignments').update({ status: 'Assigned' }).eq('complaint_id', id).eq('status', 'Completed');
-
-    if (!compError) {
-      await supabase.from('system_logs').insert({
-        action_type: 'SUPERVISOR_REOPENED',
-        description: `Supervisor reopened complaint ${complaintIdName} due to unsatisfactory fix. Reason: ${reason}`,
-        user_email: userProfile?.email || 'Supervisor'
-      });
-      fetchQueue();
-    }
-    setProcessingId(null);
-  };
-
   return (
     <div className="space-y-6 max-w-6xl mx-auto pb-24">
-      
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-5 rounded-3xl shadow-sm border border-slate-200">
         <div className="flex items-center gap-4">
           <div className="bg-brand-maroon/10 p-3 rounded-2xl">
@@ -158,7 +149,7 @@ export default function SupervisorQueue() {
             </p>
           </div>
         </div>
-        {userProfile?.domain && (
+        {userProfile?.zone && (
           <div className="px-5 py-2.5 bg-brand-maroon text-brand-gold font-black text-xs uppercase tracking-widest rounded-xl shadow-md border border-brand-dark/20 flex items-center gap-2 w-full sm:w-auto justify-center">
             <MapPin className="w-4 h-4" /> Zone: {userProfile.zone}
           </div>
@@ -176,7 +167,7 @@ export default function SupervisorQueue() {
         </button>
       </div>
 
-      {/* --- TAB 1: INBOX / NEW APPROVALS --- */}
+      {/* --- TAB 1: INBOX --- */}
       {activeTab === 'inbox' && (
         <div className="space-y-4">
           {loading ? (
@@ -193,7 +184,6 @@ export default function SupervisorQueue() {
 
                 return (
                   <div key={c.id} className="bg-white rounded-3xl p-5 shadow-sm border border-slate-200 flex flex-col lg:flex-row justify-between gap-5 transition hover:shadow-md">
-                    
                     <div className="flex-1 space-y-4 w-full">
                       <div className="flex justify-between items-start">
                         <div>
@@ -238,14 +228,14 @@ export default function SupervisorQueue() {
                       <button 
                         onClick={() => processComplaint(c.id, c.complaint_id)}
                         disabled={processingId === c.id}
-                        className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black uppercase tracking-wider rounded-xl text-[10px] shadow-sm transition flex justify-center items-center gap-2 disabled:opacity-50"
+                        className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black uppercase tracking-wider rounded-xl text-[10px] shadow-sm flex items-center justify-center gap-2 disabled:opacity-50 transition"
                       >
                         <CheckCircle className="w-4 h-4" /> Approve
                       </button>
                       <button 
-                        onClick={() => doNotProcess(c.id, c.complaint_id)}
+                        onClick={() => openReasonModal(c, 'REJECT')}
                         disabled={processingId === c.id}
-                        className="flex-1 py-3 bg-white hover:bg-red-50 text-red-600 font-black uppercase tracking-wider rounded-xl border border-red-200 text-[10px] shadow-sm transition flex justify-center items-center gap-2 disabled:opacity-50"
+                        className="flex-1 py-3 bg-white hover:bg-red-50 text-red-600 font-black uppercase tracking-wider rounded-xl border border-red-200 text-[10px] shadow-sm flex items-center justify-center gap-2 disabled:opacity-50 transition"
                       >
                         <XCircle className="w-4 h-4" /> Reject
                       </button>
@@ -267,7 +257,6 @@ export default function SupervisorQueue() {
             <div className="p-12 text-center bg-white rounded-3xl border border-slate-200 shadow-sm">
               <SearchCheck className="w-12 h-12 text-emerald-200 mx-auto mb-3" />
               <p className="text-slate-500 font-bold uppercase tracking-wider text-xs">No pending sign-offs.</p>
-              <p className="text-[10px] font-medium text-slate-400 mt-1">Technicians have not marked any new jobs as complete.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4">
@@ -281,11 +270,9 @@ export default function SupervisorQueue() {
                     </div>
                     
                     <div className="flex-1 space-y-4 w-full pt-2">
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <div className="font-black text-brand-maroon tracking-wider text-sm">{c.complaint_id}</div>
-                          <div className="font-bold text-slate-800 text-lg mt-0.5 leading-tight">{c.category}</div>
-                        </div>
+                      <div>
+                        <div className="font-black text-brand-maroon tracking-wider text-sm">{c.complaint_id}</div>
+                        <div className="font-bold text-slate-800 text-lg mt-0.5 leading-tight">{c.category}</div>
                       </div>
 
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-emerald-50/50 p-4 rounded-2xl border border-emerald-100">
@@ -315,7 +302,7 @@ export default function SupervisorQueue() {
                         <ShieldCheck className="w-5 h-5" /> Verify & Close
                       </button>
                       <button 
-                        onClick={() => reopenComplaint(c.id, c.complaint_id)}
+                        onClick={() => openReasonModal(c, 'REOPEN')}
                         disabled={processingId === c.id}
                         className="flex-1 py-3 bg-white hover:bg-red-50 text-red-600 font-black uppercase tracking-wider rounded-xl border-2 border-red-200 text-[10px] shadow-sm transition flex flex-col justify-center items-center gap-1.5 disabled:opacity-50 h-20"
                       >
@@ -327,6 +314,45 @@ export default function SupervisorQueue() {
               })}
             </div>
           )}
+        </div>
+      )}
+
+      {/* IN-APP REASON MODAL */}
+      {reasonModalOpen && targetComplaint && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex justify-center items-center p-4">
+          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className={`p-5 flex justify-between items-center text-white ${modalAction === 'REJECT' ? 'bg-red-600' : 'bg-slate-900'}`}>
+              <h3 className="font-extrabold text-sm uppercase">
+                {modalAction === 'REJECT' ? 'Reject Complaint' : 'Reopen Maintenance Ticket'}
+              </h3>
+              <button onClick={() => setReasonModalOpen(false)}><X className="w-5 h-5 hover:text-slate-300" /></button>
+            </div>
+
+            <form onSubmit={handleReasonSubmit} className="p-6 space-y-4">
+              <p className="text-xs text-slate-500 font-bold">
+                {modalAction === 'REJECT' 
+                  ? 'Please provide a mandatory reason for not processing this complaint:' 
+                  : 'Please state why this work is unsatisfactory. The technician will be re-assigned:'}
+              </p>
+
+              <textarea 
+                required 
+                rows={3} 
+                value={reasonText} 
+                onChange={(e) => setReasonText(e.target.value)} 
+                placeholder="Enter detailed reason..." 
+                className="w-full p-3 bg-slate-50 border border-slate-300 rounded-xl text-xs font-medium outline-none focus:ring-2 focus:ring-brand-maroon resize-none"
+              />
+
+              <button 
+                type="submit" 
+                disabled={processingId === targetComplaint.id || !reasonText.trim()}
+                className={`w-full py-3.5 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl shadow-md transition disabled:opacity-50 ${modalAction === 'REJECT' ? 'bg-red-600 hover:bg-red-700' : 'bg-slate-900 hover:bg-black'}`}
+              >
+                {modalAction === 'REJECT' ? 'Confirm Rejection' : 'Reopen & Notify Technician'}
+              </button>
+            </form>
+          </div>
         </div>
       )}
     </div>

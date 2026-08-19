@@ -1,20 +1,44 @@
 import { useState, useEffect } from 'react';
-import { Download, Share, PlusSquare, X, Smartphone } from 'lucide-react';
+import { Download, Share, PlusSquare, X, Smartphone, BellRing } from 'lucide-react';
+import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
+
+// Helper function to decode the VAPID Public Key for the browser
+function urlBase64ToUint8Array(base64String: string) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/\-/g, '+').replace(/_/g, '/');
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
 
 export default function InstallAppButton() {
+  const { user } = useAuth();
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [isIOS, setIsIOS] = useState(false);
   const [isStandalone, setIsStandalone] = useState(false);
   const [showIOSModal, setShowIOSModal] = useState(false);
+  const [notifsEnabled, setNotifsEnabled] = useState(true); // Defaults to true to prevent flashing
 
   useEffect(() => {
+    // 1. Check if app is installed (standalone mode)
     const isAppStandalone = window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone;
     setIsStandalone(isAppStandalone);
 
+    // 2. Check Device Type
     const userAgent = window.navigator.userAgent.toLowerCase();
     const isAppleDevice = /iphone|ipad|ipod/.test(userAgent);
     setIsIOS(isAppleDevice);
 
+    // 3. Check Notification Permissions
+    if ('Notification' in window) {
+      setNotifsEnabled(Notification.permission === 'granted');
+    }
+
+    // 4. Capture Android/Chrome Install Prompt
     const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
       setDeferredPrompt(e);
@@ -24,8 +48,52 @@ export default function InstallAppButton() {
     return () => window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
   }, []);
 
-  if (isStandalone) return null;
-  if (!isIOS && !deferredPrompt) return null;
+  const enableNotifications = async () => {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+      alert('Push notifications are not supported on this device/browser. iOS requires adding the app to your Home Screen first.');
+      return;
+    }
+
+    try {
+      // Ask user for permission
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') {
+        alert('Notification permission denied. You can enable it in your device settings.');
+        return;
+      }
+
+      // Register the sw.js background listener
+      const registration = await navigator.serviceWorker.register('/sw.js');
+      await navigator.serviceWorker.ready;
+
+      // Subscribe device using your secure VAPID key
+      const vapidPublicKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
+      if (!vapidPublicKey) throw new Error("VAPID Public Key missing in .env file.");
+
+      const subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(vapidPublicKey)
+      });
+
+      // Extract tokens and save to Supabase
+      const subJson = subscription.toJSON();
+      if (user) {
+        await supabase.from('user_push_subscriptions').upsert({
+          user_id: user.id,
+          endpoint: subJson.endpoint,
+          p256dh: subJson.keys?.p256dh,
+          auth: subJson.keys?.auth,
+          user_agent: navigator.userAgent
+        }, { onConflict: 'endpoint' });
+      }
+
+      setNotifsEnabled(true);
+      alert("Device registered! You will now receive lock-screen alerts.");
+    } catch (error: any) {
+      console.error('Push setup error:', error);
+      alert('Failed to enable notifications. Error: ' + error.message);
+    }
+  };
 
   const handleInstallClick = async () => {
     if (isIOS) {
@@ -33,18 +101,40 @@ export default function InstallAppButton() {
     } else if (deferredPrompt) {
       deferredPrompt.prompt();
       const { outcome } = await deferredPrompt.userChoice;
-      if (outcome === 'accepted') setDeferredPrompt(null);
+      if (outcome === 'accepted') {
+        setDeferredPrompt(null);
+        // Prompt for notifications immediately after successful install
+        setTimeout(() => enableNotifications(), 2000);
+      }
     }
   };
 
+  // If app is installed AND notifications are on, hide the button completely
+  if (isStandalone && notifsEnabled) return null;
+
   return (
     <>
-      <button 
-        onClick={handleInstallClick}
-        className="flex items-center justify-center gap-2 bg-slate-900 hover:bg-black text-white px-4 py-3 rounded-full text-xs font-black uppercase tracking-widest shadow-xl transition-all border border-slate-700 hover:scale-105"
-      >
-        <Download className="w-4 h-4" /> Install App
-      </button>
+      <div className="flex flex-col gap-3 items-end">
+        {/* The New Notification Prompt Button */}
+        {!notifsEnabled && (
+          <button 
+            onClick={enableNotifications}
+            className="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-3 rounded-full text-xs font-black uppercase tracking-widest shadow-xl transition-all border border-emerald-500 hover:scale-105 animate-in slide-in-from-bottom-4"
+          >
+            <BellRing className="w-4 h-4" /> Turn On Alerts
+          </button>
+        )}
+
+        {/* The Install App Button */}
+        {!isStandalone && (isIOS || deferredPrompt) && (
+          <button 
+            onClick={handleInstallClick}
+            className="flex items-center justify-center gap-2 bg-slate-900 hover:bg-black text-white px-4 py-3 rounded-full text-xs font-black uppercase tracking-widest shadow-xl transition-all border border-slate-700 hover:scale-105 animate-in slide-in-from-bottom-2"
+          >
+            <Download className="w-4 h-4" /> Install App
+          </button>
+        )}
+      </div>
 
       {showIOSModal && (
         <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center bg-slate-900/60 p-4 sm:p-0 backdrop-blur-sm animate-in fade-in duration-200">
@@ -56,7 +146,7 @@ export default function InstallAppButton() {
               <button onClick={() => setShowIOSModal(false)} className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded-full transition-colors"><X className="w-5 h-5" /></button>
             </div>
             <div className="p-6 space-y-6">
-              <p className="text-xs text-slate-500 font-bold">Install Siyanat on your home screen for quick access.</p>
+              <p className="text-xs text-slate-500 font-bold">Install Siyanat App on your home screen to enable Native Push Notifications.</p>
               <div className="space-y-4">
                 <div className="flex items-center gap-4 p-4 bg-slate-50 rounded-xl border border-slate-100">
                   <div className="w-10 h-10 bg-white rounded-full shadow-sm flex items-center justify-center text-blue-500 shrink-0 border border-slate-200"><Share className="w-5 h-5 mb-1" /></div>

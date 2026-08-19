@@ -2,69 +2,76 @@ import { useState, useEffect, useRef } from 'react';
 import { Bell, CheckCircle2, Circle, Clock } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function NotificationBell() {
+  const { user } = useAuth();
   const [notifications, setNotifications] = useState<any[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
 
+  // Sync unread count to the native device App Icon (iOS/Android/Desktop)
   useEffect(() => {
-    fetchNotifications();
+    const nav = navigator as any;
+    if ('setAppBadge' in nav) {
+      if (unreadCount > 0) {
+        nav.setAppBadge(unreadCount).catch(() => {});
+      } else {
+        nav.clearAppBadge().catch(() => {});
+      }
+    }
+  }, [unreadCount]);
 
+  useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setIsOpen(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
-
-    // REAL-TIME LISTENER
-    let channel: any;
-    const setupRealtime = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-
-      const uniqueChannelId = `siyanat_notifs_${user.id}_${Math.random().toString(36).substring(7)}`;
-
-      channel = supabase
-        .channel(uniqueChannelId)
-        .on(
-          'postgres_changes',
-          { event: 'INSERT', schema: 'public', table: 'in_app_notifications', filter: `user_id=eq.${user.id}` },
-          (payload) => {
-            setNotifications(prev => [payload.new, ...prev]);
-            setUnreadCount(prev => prev + 1);
-          }
-        )
-        .subscribe();
-    };
-
-    setupRealtime();
-
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-      if (channel) supabase.removeChannel(channel);
-    };
+    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const fetchNotifications = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+  useEffect(() => {
+    // THE FIX: Wait until the user session is fully verified before fetching
+    if (!user) return; 
 
-    const { data } = await supabase
-      .from('in_app_notifications')
-      .select('*')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false })
-      .limit(30);
+    const fetchNotifications = async () => {
+      const { data } = await supabase
+        .from('in_app_notifications')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(30);
 
-    if (data) {
-      setNotifications(data);
-      setUnreadCount(data.filter(n => !n.is_read).length);
-    }
-  };
+      if (data) {
+        setNotifications(data);
+        setUnreadCount(data.filter(n => !n.is_read).length);
+      }
+    };
+
+    fetchNotifications();
+
+    // REAL-TIME LISTENER
+    const uniqueChannelId = `siyanat_notifs_${user.id}_${Math.random().toString(36).substring(7)}`;
+    const channel = supabase
+      .channel(uniqueChannelId)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'in_app_notifications', filter: `user_id=eq.${user.id}` },
+        (payload) => {
+          setNotifications(prev => [payload.new, ...prev]);
+          setUnreadCount(prev => prev + 1);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      if (channel) supabase.removeChannel(channel);
+    };
+  }, [user]);
 
   const handleNotificationClick = async (notif: any) => {
     if (!notif.is_read) {
@@ -78,9 +85,7 @@ export default function NotificationBell() {
   };
 
   const markAllAsRead = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
-
     await supabase.from('in_app_notifications').update({ is_read: true }).eq('user_id', user.id).eq('is_read', false);
     setUnreadCount(0);
     setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));

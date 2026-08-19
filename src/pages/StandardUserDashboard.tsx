@@ -98,7 +98,6 @@ export default function StandardUserDashboard() {
         }
       }
 
-      // THE FIX: Move to CLOSED upon receipt
       await supabase.rpc('advance_pipeline', { target_table: 'work_orders', target_id: batch.id });
       
       await supabase.from("system_logs").insert({
@@ -287,8 +286,14 @@ export default function StandardUserDashboard() {
                       </td>
                       <td className="p-4 text-right">
                         <div className="flex flex-col items-end gap-1.5">
-                          <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider border shadow-sm ${c.pipeline_state === 'CLOSED' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : c.pipeline_state === 'REJECTED' ? 'bg-red-50 text-red-700 border-red-200' : c.pipeline_state === 'ACTION_REQUIRED' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
-                            {c.pipeline_state}
+                          <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider border shadow-sm ${
+                            c.pipeline_state === 'CLOSED' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 
+                            c.pipeline_state === 'REJECTED' ? 'bg-red-50 text-red-700 border-red-200' : 
+                            c.pipeline_state === 'ACTION_REQUIRED' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 
+                            c.pipeline_state === 'PROCESSING' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 
+                            'bg-amber-50 text-amber-700 border-amber-200'
+                          }`}>
+                            {c.pipeline_state === 'PROCESSING' ? 'IN PROGRESS' : c.pipeline_state}
                           </span>
                         </div>
                       </td>
@@ -319,7 +324,14 @@ export default function StandardUserDashboard() {
                       </td>
                       <td className="p-4 font-medium text-slate-600">{e.location} {e.sub_location && <span className="block text-[10px] text-slate-400">({e.sub_location})</span>}</td>
                       <td className="p-4 text-right">
-                        <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider border shadow-sm ${e.pipeline_state === 'PROCESSING' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : e.pipeline_state === 'REJECTED' ? 'bg-red-50 text-red-700 border-red-200' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>{e.pipeline_state}</span>
+                        <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider border shadow-sm ${
+                          e.pipeline_state === 'CLOSED' ? 'bg-slate-100 text-slate-500 border-slate-200' : 
+                          e.pipeline_state === 'PROCESSING' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 
+                          e.pipeline_state === 'REJECTED' ? 'bg-red-50 text-red-700 border-red-200' : 
+                          'bg-amber-50 text-amber-700 border-amber-200'
+                        }`}>
+                          {e.pipeline_state === 'PROCESSING' ? 'SCHEDULED' : e.pipeline_state}
+                        </span>
                       </td>
                     </tr>
                   ))}
