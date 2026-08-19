@@ -38,14 +38,24 @@ export default function MaintenanceRouting({ userRole }: { userRole: string }) {
     setProcessingId(selectedComplaint.id);
 
     try {
-      await supabase.from('technician_assignments').insert({ complaint_id: selectedComplaint.id, technician_id: selectedTechId, assigned_by: user?.id });
-      if(selectedComplaint.pipeline_state === 'AUTHORIZED') {
-         await supabase.rpc('advance_pipeline', { target_table: 'complaints', target_id: selectedComplaint.id });
-      } else {
-         await supabase.from('complaints').update({ status: 'Assigned' }).eq('id', selectedComplaint.id);
+      // THE FIX: Explicitly check for errors and throw them so the catch block triggers
+      const { error: assignError } = await supabase.from('technician_assignments').insert({ 
+        complaint_id: selectedComplaint.id, 
+        technician_id: selectedTechId, 
+        assigned_by: user?.id 
+      });
+      
+      if (assignError) throw assignError;
+
+      // Only advance the pipeline if it hasn't been moved to processing yet
+      if (selectedComplaint.pipeline_state === 'AUTHORIZED') {
+         const { error: advanceError } = await supabase.rpc('advance_pipeline', { target_table: 'complaints', target_id: selectedComplaint.id });
+         if (advanceError) throw advanceError;
       }
-      showToast("Technician Dispatched!", "success");
+      
+      showToast("Technician Assigned successfully!", "success");
       setAssignModalOpen(false);
+      setSelectedTechId('');
       fetchMaintenance();
     } catch(err: any) {
       showToast("Assignment failed: " + err.message, "error");
@@ -64,23 +74,40 @@ export default function MaintenanceRouting({ userRole }: { userRole: string }) {
           <div className="flex-1">
             <h3 className="font-black text-brand-maroon">{c.complaint_id}</h3>
             <p className="text-xs text-slate-500 mt-1">{c.category} • {c.venue}</p>
+            
+            {/* Added: Visually indicate if a technician is already assigned */}
+            {c.assignments && c.assignments.length > 0 && (
+              <p className="text-[10px] font-bold text-indigo-600 mt-2 uppercase tracking-wider bg-indigo-50 inline-block px-2 py-1 rounded border border-indigo-100">
+                Assigned to: {c.assignments[0].technician?.full_name}
+              </p>
+            )}
           </div>
           <div className="flex flex-col gap-2 w-48">
-            <button onClick={() => { setSelectedComplaint(c); setAssignModalOpen(true); }} className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs flex justify-center gap-1.5"><UserPlus className="w-4 h-4"/> Assign</button>
+            <button onClick={() => { setSelectedComplaint(c); setAssignModalOpen(true); }} className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs flex justify-center gap-1.5 transition shadow-sm">
+              <UserPlus className="w-4 h-4"/> {c.assignments && c.assignments.length > 0 ? 'Reassign' : 'Assign'}
+            </button>
           </div>
         </div>
       ))}
 
       {assignModalOpen && selectedComplaint && (
-        <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl w-full max-w-md overflow-hidden">
-            <div className="bg-brand-maroon p-5 flex justify-between text-white"><h3 className="font-bold uppercase">Dispatch Tech</h3><button onClick={() => setAssignModalOpen(false)}><X className="w-5 h-5"/></button></div>
+        <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl w-full max-w-md overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="bg-brand-maroon p-5 flex justify-between text-white items-center">
+              <h3 className="font-bold uppercase text-sm">Assign Technician</h3>
+              <button onClick={() => setAssignModalOpen(false)} className="hover:text-red-200 transition"><X className="w-5 h-5"/></button>
+            </div>
             <form onSubmit={handleAssign} className="p-6 space-y-5">
-              <select required value={selectedTechId} onChange={e => setSelectedTechId(e.target.value)} className="w-full p-3.5 border rounded-xl outline-none">
-                <option value="" disabled>-- Select Tradesman --</option>
-                {technicians.map(t => <option key={t.id} value={t.id}>{t.full_name} ({t.trade || 'General'})</option>)}
-              </select>
-              <button type="submit" disabled={!!processingId} className="w-full py-3.5 bg-indigo-600 text-white font-bold rounded-xl">Confirm Dispatch</button>
+              <div>
+                <label className="block text-[11px] font-black text-slate-500 uppercase mb-2">Select Tradesman *</label>
+                <select required value={selectedTechId} onChange={e => setSelectedTechId(e.target.value)} className="w-full p-3.5 border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-brand-maroon bg-slate-50 text-sm font-bold transition">
+                  <option value="" disabled>-- Select Tradesman --</option>
+                  {technicians.map(t => <option key={t.id} value={t.id}>{t.full_name} ({t.trade || 'General'})</option>)}
+                </select>
+              </div>
+              <button type="submit" disabled={!!processingId} className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs uppercase tracking-widest rounded-xl transition shadow-lg disabled:opacity-50">
+                Confirm Assignment
+              </button>
             </form>
           </div>
         </div>
