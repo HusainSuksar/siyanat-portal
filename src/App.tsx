@@ -1,8 +1,8 @@
 import { BrowserRouter as Router, Routes, Route, Navigate, Link, useLocation } from "react-router-dom";
 import { useState, useEffect } from "react";
 import { supabase } from "./lib/supabase";
-import { useAuth } from "./contexts/AuthContext"; // THE NEW GLOBAL MEMORY
-import { PackageCheck, LogOut, LayoutDashboard, PlusCircle, Truck, Warehouse, Bell, X, Server, PieChart, ShieldAlert, Users, Menu, Wrench, ClipboardList, Calendar, Car, CalendarCheck, ShoppingCart } from "lucide-react";
+import { useAuth } from "./contexts/AuthContext"; 
+import { PackageCheck, LogOut, LayoutDashboard, PlusCircle, Truck, Warehouse, Bell, X, Server, PieChart, ShieldAlert, Users, Menu, Wrench, ClipboardList, Calendar, Car, CalendarCheck, ShoppingCart, Package } from "lucide-react";
 
 import SupervisorQueue from "./pages/SupervisorQueue";
 import Login from "./pages/Login";
@@ -31,7 +31,7 @@ const NotificationManager = ({ userRole, userId }: { userRole: string | null; us
     if (!userId) return;
 
     let orderSub: any;
-    if (userRole === "GOD_MODE" || userRole === "SIYANAT_HEAD" || userRole === "TANZEEM_HEAD" || userRole === "ADMIN") {
+    if (userRole === "SUPER_ADMIN" || userRole === "SIYANAT_HEAD" || userRole === "TANZEEM_HEAD" || userRole === "AVIT_HEAD" || userRole === "ADMIN") {
       const channelId = `admin_orders_${Math.random().toString(36).substring(7)}`;
       orderSub = supabase.channel(channelId).on('postgres_changes', { event: "INSERT", schema: "public", table: "work_orders" },
         (payload) => {
@@ -88,7 +88,6 @@ const DesktopNavigation = ({ userRole }: { userRole: string }) => {
   const isTanzeemHead = userRole === 'TANZEEM_HEAD' || isGodMode;
   const isAvitHead = userRole === 'AVIT_HEAD' || isGodMode;
   
-  // LEGACY FIX: Ensure 'REQUESTER' is treated exactly like 'STANDARD_USER'
   const isStandardUser = userRole === 'STANDARD_USER' || userRole === 'REQUESTER';
 
   return (
@@ -99,14 +98,13 @@ const DesktopNavigation = ({ userRole }: { userRole: string }) => {
         <Link to="/new-complaint" className={getTabClass("/new-complaint")}><Wrench className="w-4 h-4" /><span>File Complaint</span></Link>
         <Link to="/book-event" className={getTabClass("/book-event")}><Calendar className="w-4 h-4" /><span>Book Event</span></Link>
         
-        {/* Restrict Fleet Booking for Standard Users & Legacy Requesters */}
         {!isStandardUser && (
           <Link to="/book-vehicle" className={getTabClass("/book-vehicle")}><Car className="w-4 h-4" /><span>Book Vehicle</span></Link>
         )}
 
         {isSiyanatHead && (
           <>
-            <Link to="/siyanat-operations" className={getTabClass("/siyanat-operations")}><Truck className="w-4 h-4" /><span>Siyanat Operations</span></Link>
+            <Link to="/siyanat-operations" className={getTabClass("/siyanat-operations")}><Truck className="w-4 h-4" /><span>Operations</span></Link>
             <Link to="/restock" className={getTabClass("/restock")}><Warehouse className="w-4 h-4" /><span>Stock</span></Link>
             <Link to="/rto" className={getTabClass("/rto")}><ShoppingCart className="w-4 h-4" /><span>RTO Queue</span></Link>
             <Link to="/reports" className={getTabClass("/reports")}><PieChart className="w-4 h-4" /><span>Reports</span></Link>
@@ -116,15 +114,30 @@ const DesktopNavigation = ({ userRole }: { userRole: string }) => {
           </>
         )}
 
-        {isTanzeemHead && !isSiyanatHead && <Link to="/restock" className={getTabClass("/restock")}><Warehouse className="w-4 h-4" /><span>Stock (Stationery)</span></Link>}
-        {isTanzeemHead && <Link to="/tanzeem" className={getTabClass("/tanzeem")}><CalendarCheck className="w-4 h-4" /><span>Tanzeem Center</span></Link>}
-        {isAvitHead && !isSiyanatHead && <Link to="/siyanat-operations" className={getTabClass("/siyanat-operations")}><Truck className="w-4 h-4" /><span>AVIT Routing</span></Link>}
+        {/* Expose Operations & RTO accurately for Tanzeem */}
+        {isTanzeemHead && !isSiyanatHead && (
+          <>
+            <Link to="/siyanat-operations" className={getTabClass("/siyanat-operations")}><Package className="w-4 h-4" /><span>Stationery Queue</span></Link>
+            <Link to="/restock" className={getTabClass("/restock")}><Warehouse className="w-4 h-4" /><span>Catalog</span></Link>
+            <Link to="/rto" className={getTabClass("/rto")}><ShoppingCart className="w-4 h-4" /><span>RTO Queue</span></Link>
+            <Link to="/tanzeem" className={getTabClass("/tanzeem")}><CalendarCheck className="w-4 h-4" /><span>Tanzeem Center</span></Link>
+          </>
+        )}
+
+        {/* Expose Operations & RTO accurately for AVIT */}
+        {isAvitHead && !isSiyanatHead && (
+          <>
+            <Link to="/siyanat-operations" className={getTabClass("/siyanat-operations")}><Truck className="w-4 h-4" /><span>AVIT Operations</span></Link>
+            <Link to="/restock" className={getTabClass("/restock")}><Warehouse className="w-4 h-4" /><span>Catalog</span></Link>
+            <Link to="/rto" className={getTabClass("/rto")}><ShoppingCart className="w-4 h-4" /><span>RTO Queue</span></Link>
+          </>
+        )}
 
         {(userRole === "SUPERVISOR" || isGodMode) && (
           <Link to="/supervisor-queue" className={getTabClass("/supervisor-queue")}><ClipboardList className="w-4 h-4" /><span>Review Queue</span></Link>
         )}
         
-        {(userRole === "TECHNICIAN" || isGodMode) && (
+        {(userRole === "TECHNICIAN" || userRole === "EXECUTOR" || isGodMode) && (
           <Link to="/technician-portal" className={getTabClass("/technician-portal")}><Wrench className="w-4 h-4" /><span>My Workload</span></Link>
         )}
       </div>
@@ -173,7 +186,7 @@ const MobileDrawerNavigation = ({ userRole, isOpen, setIsOpen, handleLogout }: {
           {isSiyanatHead && (
             <>
               <div className="pt-4 pb-2 text-[10px] font-black uppercase text-slate-400 tracking-wider">Siyanat Head Controls</div>
-              {navItem("/siyanat-operations", Truck, "Dispatch Queue")}
+              {navItem("/siyanat-operations", Truck, "Operations Queue")}
               {navItem("/restock", Warehouse, "Restock Inventory")}
               {navItem("/rto", ShoppingCart, "Request-to-Order Queue")}
               {navItem("/reports", PieChart, "Analytics & Reports")}
@@ -183,18 +196,22 @@ const MobileDrawerNavigation = ({ userRole, isOpen, setIsOpen, handleLogout }: {
             </>
           )}
 
-          {isTanzeemHead && (
+          {isTanzeemHead && !isSiyanatHead && (
             <>
               <div className="pt-4 pb-2 text-[10px] font-black uppercase text-slate-400 tracking-wider">Tanzeem Head Controls</div>
               {navItem("/tanzeem", CalendarCheck, "Tanzeem Command Center")}
-              {!isSiyanatHead && navItem("/restock", Warehouse, "Stock (Stationery)")}
+              {navItem("/siyanat-operations", Package, "Stationery Queue")}
+              {navItem("/restock", Warehouse, "Catalog")}
+              {navItem("/rto", ShoppingCart, "RTO Queue")}
             </>
           )}
 
           {isAvitHead && !isSiyanatHead && (
             <>
               <div className="pt-4 pb-2 text-[10px] font-black uppercase text-slate-400 tracking-wider">AVIT Head Controls</div>
-              {navItem("/siyanat-operations", Truck, "AVIT Routing")}
+              {navItem("/siyanat-operations", Truck, "AVIT Operations")}
+              {navItem("/restock", Warehouse, "Catalog")}
+              {navItem("/rto", ShoppingCart, "RTO Queue")}
             </>
           )}
 
@@ -205,7 +222,7 @@ const MobileDrawerNavigation = ({ userRole, isOpen, setIsOpen, handleLogout }: {
             </>
           )}
           
-          {(userRole === "TECHNICIAN" || isGodMode) && (
+          {(userRole === "TECHNICIAN" || userRole === "EXECUTOR" || isGodMode) && (
             <>
               <div className="pt-4 pb-2 text-[10px] font-black uppercase text-slate-400 tracking-wider">Technician Dashboard</div>
               {navItem("/technician-portal", Wrench, "My Workload")}
@@ -265,7 +282,6 @@ const PortalLayout = ({ children, userRole, userId }: { children: React.ReactNod
 
 // --- APP ROUTER ---
 export default function App() {
-  // WE NOW USE GLOBAL CONTEXT FOR INSTANT LOAD (Zero DB Queries)
   const { session, role, loading } = useAuth();
 
   if (loading) return <div className="flex justify-center items-center min-h-screen bg-brand-maroon text-brand-gold font-bold">Loading Portal...</div>;
@@ -275,6 +291,11 @@ export default function App() {
   const isTanzeemHead = role === 'TANZEEM_HEAD' || isGodMode;
   const isAvitHead = role === 'AVIT_HEAD' || isGodMode;
   const isStandardUser = role === 'STANDARD_USER' || role === 'REQUESTER';
+  
+  // Create an umbrella logic check for any Operations Head
+  const isOpsHead = isSiyanatHead || isTanzeemHead || isAvitHead;
+  const isTech = role === 'EXECUTOR' || role === 'TECHNICIAN' || isGodMode;
+  const isSupervisor = role === 'SUPERVISOR' || isGodMode;
 
   return (
     <Router>
@@ -290,19 +311,23 @@ export default function App() {
         {/* Restrict Vehicle Booking */}
         <Route path="/book-vehicle" element={session && !isStandardUser ? <PortalLayout userRole={role} userId={session.user.id}><BookVehicle /></PortalLayout> : <Navigate to="/" />} />
 
-        {/* Head Routes */}
-        <Route path="/siyanat-operations" element={session && (isSiyanatHead || isAvitHead) ? <PortalLayout userRole={role} userId={session.user.id}><SiyanatOperations /></PortalLayout> : <Navigate to="/" />} />
-        <Route path="/restock" element={session && (isSiyanatHead || isTanzeemHead) ? <PortalLayout userRole={role} userId={session.user.id}><RestockInventory /></PortalLayout> : <Navigate to="/" />} />
-        <Route path="/rto" element={session && isSiyanatHead ? <PortalLayout userRole={role} userId={session.user.id}><RequestToOrder /></PortalLayout> : <Navigate to="/" />} />
+        {/* Head Routes (Unlocked via isOpsHead) */}
+        <Route path="/siyanat-operations" element={session && isOpsHead ? <PortalLayout userRole={role} userId={session.user.id}><SiyanatOperations /></PortalLayout> : <Navigate to="/" />} />
+        <Route path="/restock" element={session && isOpsHead ? <PortalLayout userRole={role} userId={session.user.id}><RestockInventory /></PortalLayout> : <Navigate to="/" />} />
+        <Route path="/rto" element={session && isOpsHead ? <PortalLayout userRole={role} userId={session.user.id}><RequestToOrder /></PortalLayout> : <Navigate to="/" />} />
+        
+        {/* Strictly Admin / Siyanat */}
         <Route path="/reports" element={session && isSiyanatHead ? <PortalLayout userRole={role} userId={session.user.id}><Reports /></PortalLayout> : <Navigate to="/" />} />
         <Route path="/assets" element={session && isSiyanatHead ? <PortalLayout userRole={role} userId={session.user.id}><AssetRegister /></PortalLayout> : <Navigate to="/" />} />
         <Route path="/audit" element={session && isSiyanatHead ? <PortalLayout userRole={role} userId={session.user.id}><AuditLogs /></PortalLayout> : <Navigate to="/" />} />
         <Route path="/team" element={session && isSiyanatHead ? <PortalLayout userRole={role} userId={session.user.id}><TeamManagement /></PortalLayout> : <Navigate to="/" />} />
+        
+        {/* Tanzeem Command Center */}
         <Route path="/tanzeem" element={session && isTanzeemHead ? <PortalLayout userRole={role} userId={session.user.id}><TanzeemCommandCenter /></PortalLayout> : <Navigate to="/" />} />
 
         {/* Supervisor & Tech Routes */}
-        <Route path="/supervisor-queue" element={session && (role === "SUPERVISOR" || isGodMode) ? <PortalLayout userRole={role} userId={session.user.id}><SupervisorQueue /></PortalLayout> : <Navigate to="/" />} />
-        <Route path="/technician-portal" element={session && (role === "TECHNICIAN" || isGodMode) ? <PortalLayout userRole={role} userId={session.user.id}><TechnicianPortal /></PortalLayout> : <Navigate to="/" />} />
+        <Route path="/supervisor-queue" element={session && isSupervisor ? <PortalLayout userRole={role} userId={session.user.id}><SupervisorQueue /></PortalLayout> : <Navigate to="/" />} />
+        <Route path="/technician-portal" element={session && isTech ? <PortalLayout userRole={role} userId={session.user.id}><TechnicianPortal /></PortalLayout> : <Navigate to="/" />} />
       </Routes>
     </Router>
   );
