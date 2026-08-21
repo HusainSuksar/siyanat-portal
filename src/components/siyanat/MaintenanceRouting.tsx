@@ -2,11 +2,14 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../hooks/useToast';
-import { Wrench, UserPlus, X } from 'lucide-react';
+import { Wrench, UserPlus, X, ListFilter, History as HistoryIcon } from 'lucide-react';
 
 export default function MaintenanceRouting({ userRole }: { userRole: string }) {
   const { user } = useAuth();
   const { showToast } = useToast();
+  
+  // THE NEW FEATURE: Toggle between Active Queue and History Archive
+  const [viewMode, setViewMode] = useState<'active' | 'history'>('active');
   const [loading, setLoading] = useState(true);
   const [complaints, setComplaints] = useState<any[]>([]);
   const [technicians, setTechnicians] = useState<any[]>([]);
@@ -18,7 +21,16 @@ export default function MaintenanceRouting({ userRole }: { userRole: string }) {
 
   const fetchMaintenance = async () => {
     setLoading(true);
-    let query = supabase.from('complaints').select(`*, requester:profiles(full_name, department), assignments:technician_assignments(status, technician:profiles!technician_assignments_technician_id_fkey(full_name, trade))`).in('pipeline_state', ['AUTHORIZED', 'PROCESSING', 'ACTION_REQUIRED']).order('created_at', { ascending: false });
+    
+    // Switch database target based on the view mode
+    const targetStates = viewMode === 'active' 
+      ? ['AUTHORIZED', 'PROCESSING', 'ACTION_REQUIRED'] 
+      : ['CLOSED', 'REJECTED'];
+
+    let query = supabase.from('complaints')
+      .select(`*, requester:profiles(full_name, department), assignments:technician_assignments(status, technician:profiles!technician_assignments_technician_id_fkey(full_name, trade))`)
+      .in('pipeline_state', targetStates)
+      .order('created_at', { ascending: false });
     
     if (userRole === 'SIYANAT_HEAD') query = query.neq('category', 'AVIT');
     if (userRole === 'AVIT_HEAD') query = query.eq('category', 'AVIT');
@@ -30,7 +42,7 @@ export default function MaintenanceRouting({ userRole }: { userRole: string }) {
     setLoading(false);
   };
 
-  useEffect(() => { fetchMaintenance(); }, [userRole]);
+  useEffect(() => { fetchMaintenance(); }, [userRole, viewMode]);
 
   const handleAssign = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -38,7 +50,6 @@ export default function MaintenanceRouting({ userRole }: { userRole: string }) {
     setProcessingId(selectedComplaint.id);
 
     try {
-      // THE FIX: Explicitly check for errors and throw them so the catch block triggers
       const { error: assignError } = await supabase.from('technician_assignments').insert({ 
         complaint_id: selectedComplaint.id, 
         technician_id: selectedTechId, 
@@ -47,7 +58,6 @@ export default function MaintenanceRouting({ userRole }: { userRole: string }) {
       
       if (assignError) throw assignError;
 
-      // Only advance the pipeline if it hasn't been moved to processing yet
       if (selectedComplaint.pipeline_state === 'AUTHORIZED') {
          const { error: advanceError } = await supabase.rpc('advance_pipeline', { target_table: 'complaints', target_id: selectedComplaint.id });
          if (advanceError) throw advanceError;
@@ -64,32 +74,76 @@ export default function MaintenanceRouting({ userRole }: { userRole: string }) {
     }
   };
 
-  if (loading) return <div className="p-8 text-center animate-pulse text-slate-500">Loading complaints...</div>;
-  if (complaints.length === 0) return <div className="p-12 text-center text-slate-500 font-bold"><Wrench className="w-12 h-12 mx-auto mb-3 opacity-20"/> No maintenance tasks.</div>;
-
   return (
     <div className="space-y-4">
-      {complaints.map(c => (
-        <div key={c.id} className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 flex justify-between gap-4">
-          <div className="flex-1">
-            <h3 className="font-black text-brand-maroon">{c.complaint_id}</h3>
-            <p className="text-xs text-slate-500 mt-1">{c.category} • {c.venue}</p>
-            
-            {/* Added: Visually indicate if a technician is already assigned */}
-            {c.assignments && c.assignments.length > 0 && (
-              <p className="text-[10px] font-bold text-indigo-600 mt-2 uppercase tracking-wider bg-indigo-50 inline-block px-2 py-1 rounded border border-indigo-100">
-                Assigned to: {c.assignments[0].technician?.full_name}
-              </p>
-            )}
-          </div>
-          <div className="flex flex-col gap-2 w-48">
-            <button onClick={() => { setSelectedComplaint(c); setAssignModalOpen(true); }} className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs flex justify-center gap-1.5 transition shadow-sm">
-              <UserPlus className="w-4 h-4"/> {c.assignments && c.assignments.length > 0 ? 'Reassign' : 'Assign'}
-            </button>
-          </div>
+      {/* View Mode Toggle Switch */}
+      <div className="flex justify-between items-center bg-white p-2 rounded-2xl border border-slate-200 shadow-sm w-full md:w-auto mb-4">
+        <div className="flex gap-2 w-full">
+          <button 
+            onClick={() => setViewMode('active')} 
+            className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 transition ${viewMode === 'active' ? 'bg-brand-maroon text-brand-gold shadow-md' : 'text-slate-400 hover:bg-slate-50'}`}
+          >
+            <ListFilter className="w-4 h-4" /> Active Queue
+          </button>
+          <button 
+            onClick={() => setViewMode('history')} 
+            className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 transition ${viewMode === 'history' ? 'bg-slate-800 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50'}`}
+          >
+            <HistoryIcon className="w-4 h-4" /> History Log
+          </button>
         </div>
-      ))}
+      </div>
 
+      {loading ? (
+        <div className="p-8 text-center animate-pulse text-slate-500 font-bold bg-white rounded-3xl border border-slate-200">Loading complaints...</div>
+      ) : complaints.length === 0 ? (
+        <div className="p-12 text-center bg-white rounded-3xl border border-slate-200 shadow-sm">
+          <Wrench className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+          <p className="text-slate-500 font-bold uppercase tracking-wider text-xs">
+            {viewMode === 'active' ? 'No maintenance tasks.' : 'No historical records found.'}
+          </p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-4">
+          {complaints.map(c => (
+            <div key={c.id} className={`bg-white rounded-3xl p-5 shadow-sm border flex flex-col md:flex-row justify-between gap-4 transition hover:shadow-md ${c.pipeline_state === 'REJECTED' ? 'border-red-200' : 'border-slate-200'}`}>
+              <div className="flex-1">
+                <div className="flex justify-between items-start">
+                  <h3 className="font-black text-brand-maroon text-lg">{c.complaint_id}</h3>
+                  {/* Status Badge for History View */}
+                  {viewMode === 'history' && (
+                    <span className={`px-2.5 py-0.5 rounded text-[10px] font-black uppercase tracking-widest ${c.pipeline_state === 'CLOSED' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                      {c.pipeline_state === 'CLOSED' ? 'Resolved' : 'Rejected'}
+                    </span>
+                  )}
+                </div>
+                
+                <p className="text-xs text-slate-600 mt-1 font-bold">{c.category} • {c.venue}</p>
+                <p className="text-[10px] font-bold text-slate-500 mt-1 uppercase tracking-wider">{c.requester?.full_name} • {c.requester?.department}</p>
+                
+                {c.assignments && c.assignments.length > 0 && (
+                  <div className="mt-3">
+                    <span className="text-[10px] font-black text-indigo-600 uppercase tracking-wider bg-indigo-50 inline-block px-2.5 py-1 rounded border border-indigo-100">
+                      {viewMode === 'history' ? 'Resolved By:' : 'Assigned To:'} {c.assignments[0].technician?.full_name}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Action Buttons (Only visible in Active mode) */}
+              {viewMode === 'active' && (
+                <div className="flex flex-col gap-2 w-full md:w-48 justify-center">
+                  <button onClick={() => { setSelectedComplaint(c); setAssignModalOpen(true); }} className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-xl text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition shadow-sm">
+                    <UserPlus className="w-4 h-4"/> {c.assignments && c.assignments.length > 0 ? 'Reassign' : 'Assign Tech'}
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Assign Modal */}
       {assignModalOpen && selectedComplaint && (
         <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-white rounded-3xl w-full max-w-md overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
