@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Package, SplitSquareHorizontal, X, CheckCircle } from 'lucide-react';
+import { Package, SplitSquareHorizontal, X, CheckCircle, XCircle } from 'lucide-react';
 import { useToast } from '../../hooks/useToast';
 import type { WorkOrder } from '../../types';
+import { useAuth } from '../../contexts/AuthContext';
 
 export default function StationeryDispatcher() {
-  const { showToast } = useToast();
+  const { user } = useAuth();
+  const { showToast, toasts, removeToast } = useToast(); // THE FIX: Pulled in toasts array
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [batches, setBatches] = useState<WorkOrder[]>([]);
@@ -29,7 +31,7 @@ export default function StationeryDispatcher() {
       .order('created_at', { ascending: false });
 
     if (error) {
-      showToast('Failed to fetch stationery requisitions: ' + error.message, 'error');
+      showToast('Failed to fetch stationery: ' + error.message, 'error');
     } else if (data) {
       setBatches(data as WorkOrder[]);
     }
@@ -66,9 +68,11 @@ export default function StationeryDispatcher() {
         eta: dec.eta
       }));
 
-      const { error } = await supabase.rpc('process_stationery_batch_json', {
+      // Calls the unified DB function we just created
+      const { error } = await supabase.rpc('process_material_batch_json', {
         p_batch_id: reviewBatch.id,
-        p_decisions: decisionsPayload
+        p_decisions: decisionsPayload,
+        p_user_email: user?.email || 'Admin'
       });
 
       if (error) throw error;
@@ -101,7 +105,7 @@ export default function StationeryDispatcher() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 relative">
       <div className="grid grid-cols-1 gap-4">
         {batches.map((b) => {
           const myItems = b.items?.filter((i) => i.fulfillment_dept === 'TANZEEM_HEAD') || [];
@@ -181,15 +185,12 @@ export default function StationeryDispatcher() {
                         className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-brand-maroon"
                       >
                         <option value="Available">Available (Freeze Stock)</option>
-                        {/* THE FIX: Reverted "Ordered" back to "Pending" */}
-                        <option value="Pending">Pending (Requires ETA)</option>
+                        <option value="Ordered">Pending (Requires ETA)</option>
                         <option value="Not Provided">Not Provided (Reject)</option>
                       </select>
                     </div>
-                    
                     <div className="md:col-span-3">
-                      {/* THE FIX: Checks for "Pending" to trigger the ETA dropdown */}
-                      {itemDecisions[item.id]?.status === 'Pending' && (
+                      {itemDecisions[item.id]?.status === 'Ordered' && (
                         <div className="animate-in fade-in duration-200">
                           <label className="block text-[9px] font-bold text-slate-500 uppercase mb-1">ETA (Days)</label>
                           <input
@@ -223,6 +224,20 @@ export default function StationeryDispatcher() {
           </div>
         </div>
       )}
+
+      {/* THE FIX: Toast Notification Renderer */}
+      <div className="fixed bottom-5 right-5 z-[100] flex flex-col gap-2 pointer-events-none">
+        {toasts.map(t => (
+          <div 
+            key={t.id} 
+            onClick={() => removeToast(t.id)} 
+            className={`p-4 rounded-2xl shadow-2xl text-white text-sm font-bold flex items-center gap-3 pointer-events-auto cursor-pointer animate-in slide-in-from-bottom-5 duration-300 ${t.type === 'error' ? 'bg-red-600' : 'bg-emerald-600'}`}
+          >
+            {t.type === 'error' ? <XCircle className="w-5 h-5"/> : <CheckCircle className="w-5 h-5"/>}
+            {t.message}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
