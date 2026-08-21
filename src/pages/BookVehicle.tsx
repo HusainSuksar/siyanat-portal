@@ -1,92 +1,156 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { Car, Send, MapPin, Clock, Users, ShieldAlert } from 'lucide-react';
+import { Car, Send, MapPin, Clock, Users, ShieldAlert, Route as RouteIcon, Map } from 'lucide-react';
+import { MAINTENANCE_ZONES, ZONE_COORDINATES } from '../constants/locations';
 
-const ZONES: Record<string, string[]> = {
-  "Main Jamea Complex": [
-    "Zainee Masjid/Sehen Ground Floor", "Zainee Masjid First Floor (Classes)", "Zainee Masjid - Offices", 
-    "Zainee Masjid Bathrooms", "Zainee Masjid Outer Area", "Zainee Masjid (IT Room)",
-    "Najmi Hall Ground Floor (Classes)", "Najmi Hall First Floor (Classes)", "Najmi Hall - Offices", 
-    "Najmi Hall Bathrooms", "Najmi Hall Outer Area", "Najmi Hall Multi Purpose", "Najmi Hall - Library",
-    "Saifee Masjid Ground Floor (Classes)", "Saifee Masjid Bathrooms", "Rajas Office", "Rajas Office Bathroom"
-  ],
-  "Rabwat (Girls Hostel)": [
-    "Rabwat residence building", "Naashta Mawaid/Garden Room", "Mawaid Hall (Dinner Mawaid)", 
-    "Mawaid Hall 1st floor (Maamal, library etc:-)", "Laundry"
-  ],
-  "Masakin (Boys Hostel)": [
-    "Masakin Residence Building", "Computer Room", "Qasida Room", "Pantry", 
-    "Bathrooms Ground Floor", "Bathrooms First Floor", "Bathrooms Second Floor", 
-    "Reception/Office", "Luggage Room"
-  ],
-  "Mawaid": [
-    "Mawaid Hall", "Kitchen", "Office", "Mawaid Bathrooms", "Zabihat Room", "Roti Room"
-  ],
-  "Khaimat al-Riyadat": [
-    "Football/Cricket Ground", "Volleyball Court", "Indore Games Room", "Swimming Pool"
-  ]
+const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
+
+// Time Math Helper Functions
+const addMinutesToTime = (timeStr: string, minsToAdd: number) => {
+  if (!timeStr) return '';
+  const [h, m] = timeStr.split(':').map(Number);
+  const date = new Date();
+  date.setHours(h, m + minsToAdd, 0);
+  return date.toTimeString().slice(0, 5);
 };
-
+const formatMinutesToHours = (totalMins: number) => {
+  if (!totalMins || totalMins <= 0) return '0 Mins';
+  const hours = Math.floor(totalMins / 60);
+  const mins = totalMins % 60;
+  if (hours === 0) return `${mins} Mins`;
+  if (mins === 0) return `${hours} hr${hours > 1 ? 's' : ''}`;
+  return `${hours} hr${hours > 1 ? 's' : ''} ${mins} mins`;
+};
 export default function BookVehicle() {
   const { user, role } = useAuth();
   const [loading, setLoading] = useState(false);
   
-  // Details
+  // Base Form State
   const [date, setDate] = useState('');
   const [purpose, setPurpose] = useState('');
   const [zone, setZone] = useState('');
   const [pickupVenue, setPickupVenue] = useState('');
-  const [destination, setDestination] = useState('');
   
-  // Timings
+  // Mapbox Autocomplete State
+  const [destinationQuery, setDestinationQuery] = useState('');
+  const [suggestions, setSuggestions] = useState<any[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [destinationCoords, setDestinationCoords] = useState<[number, number] | null>(null);
+  const searchRef = useRef<HTMLDivElement>(null);
+
+  // Routing Math State
+  const [travelTimeMins, setTravelTimeMins] = useState<number>(0);
   const [arrivalTime, setArrivalTime] = useState('');
   const [releaseTime, setReleaseTime] = useState('');
+  const [calculatedDeparture, setCalculatedDeparture] = useState('');
+  const [calculatedReturn, setCalculatedReturn] = useState('');
   
   // Headcount
   const [darajah, setDarajah] = useState('1');
   const [maleCount, setMaleCount] = useState(0);
   const [femaleCount, setFemaleCount] = useState(0);
-
   const totalCount = maleCount + femaleCount;
 
-  // COMPONENT-LEVEL SECURITY CHECK (Updated to new role matrix)
+  // Security Check
   const isStandardUser = role === 'REQUESTER';
-  if (isStandardUser) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] text-center p-6">
-        <ShieldAlert className="w-16 h-16 text-red-500 mb-4" />
-        <h2 className="text-2xl font-black text-slate-800 uppercase tracking-widest">Access Denied</h2>
-        <p className="text-slate-500 font-bold mt-2 max-w-md">Your current departmental role does not have authorization to request fleet transport. Please contact your department head.</p>
-      </div>
-    );
-  }
 
-  const handleZoneChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    setZone(e.target.value);
-    setPickupVenue('');
+  // Click outside to close Autocomplete
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) setShowSuggestions(false);
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // --- MAPBOX GEOCODING (Autocomplete) ---
+  useEffect(() => {
+    if (!destinationQuery || destinationQuery.length < 3 || destinationCoords) {
+      setSuggestions([]);
+      return;
+    }
+    const fetchPlaces = async () => {
+      try {
+        const res = await fetch(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(destinationQuery)}.json?access_token=${MAPBOX_TOKEN}&country=in&types=poi,address,place`);
+        const data = await res.json();
+        setSuggestions(data.features || []);
+        setShowSuggestions(true);
+      } catch (err) {
+        console.error("Mapbox Geocoding Error:", err);
+      }
+    };
+    const timeoutId = setTimeout(fetchPlaces, 500);
+    return () => clearTimeout(timeoutId);
+  }, [destinationQuery]);
+
+  const handleDestinationSelect = (feature: any) => {
+    setDestinationQuery(feature.place_name);
+    setDestinationCoords(feature.geometry.coordinates as [number, number]);
+    setShowSuggestions(false);
   };
+
+  // --- MAPBOX DIRECTIONS (Travel Time) ---
+  useEffect(() => {
+    const getRoute = async () => {
+      if (zone && destinationCoords && ZONE_COORDINATES[zone]) {
+        try {
+          const origin = ZONE_COORDINATES[zone];
+          const dest = destinationCoords;
+          const res = await fetch(`https://api.mapbox.com/directions/v5/mapbox/driving/${origin[0]},${origin[1]};${dest[0]},${dest[1]}?access_token=${MAPBOX_TOKEN}`);
+          const data = await res.json();
+          if (data.routes && data.routes.length > 0) {
+            // Duration is in seconds, convert to minutes
+            setTravelTimeMins(Math.ceil(data.routes[0].duration / 60));
+          }
+        } catch (err) {
+          console.error("Mapbox Routing Error:", err);
+        }
+      } else {
+        setTravelTimeMins(0);
+      }
+    };
+    getRoute();
+  }, [zone, destinationCoords]);
+
+  // --- MATH ENGINE (Time Calculations) ---
+  useEffect(() => {
+    if (arrivalTime && travelTimeMins > 0) {
+      // Departure = Arrival Time - Travel Time - 15 Min Buffer
+      setCalculatedDeparture(addMinutesToTime(arrivalTime, -(travelTimeMins + 15)));
+    } else {
+      setCalculatedDeparture('');
+    }
+
+    if (releaseTime && travelTimeMins > 0) {
+      // Return = Release Time + Travel Time
+      setCalculatedReturn(addMinutesToTime(releaseTime, travelTimeMins));
+    } else {
+      setCalculatedReturn('');
+    }
+  }, [arrivalTime, releaseTime, travelTimeMins]);
+
 
   const submitVehicleRequest = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (totalCount === 0) return alert("Total headcount cannot be zero. We need passenger numbers to assign vehicles.");
-    if (!pickupVenue) return alert("Please select a specific pickup location.");
+    if (totalCount === 0) return alert("Total headcount cannot be zero.");
+    if (!pickupVenue || !destinationCoords) return alert("Please select a specific pickup location and a valid mapped destination.");
     
     setLoading(true);
 
     try {
       if (!user) throw new Error("Not authenticated");
 
-      const fullDestination = `From: ${pickupVenue} | To: ${destination}`;
+      // We append the smart calculations into the payload so Dispatchers see it
+      const fullDestination = `${destinationQuery} | Route Mins: ${travelTimeMins} | Dep: ${calculatedDeparture} | Ret: ${calculatedReturn}`;
 
-      // THE FIX: We no longer send status. The DB assigns pipeline_state = 'AUTHORIZED' automatically.
       const { error } = await supabase.from('vehicle_requests').insert({
         requester_id: user.id,
         request_date: date,
         purpose,
         arrival_time: arrivalTime,
         release_time: releaseTime,
-        destination: fullDestination,
+        destination: `From: ${pickupVenue} | To: ${fullDestination}`,
         darajah,
         male_count: maleCount,
         female_count: femaleCount,
@@ -97,13 +161,15 @@ export default function BookVehicle() {
 
       await supabase.from('system_logs').insert({
         action_type: 'VEHICLE_REQUESTED',
-        description: `Requested transport to ${destination} on ${date} for ${totalCount} pax.`,
+        description: `Requested transport to ${destinationQuery} on ${date} for ${totalCount} pax.`,
         user_email: user.email
       });
 
       alert('Vehicle Booking Submitted! Routed to Tanzeem Fleet Operations.');
       
-      setDate(''); setPurpose(''); setZone(''); setPickupVenue(''); setDestination(''); 
+      // Reset State
+      setDate(''); setPurpose(''); setZone(''); setPickupVenue(''); 
+      setDestinationQuery(''); setDestinationCoords(null); setTravelTimeMins(0);
       setArrivalTime(''); setReleaseTime(''); setMaleCount(0); setFemaleCount(0);
 
     } catch (err: any) {
@@ -113,6 +179,16 @@ export default function BookVehicle() {
     }
   };
 
+  if (isStandardUser) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] text-center p-6">
+        <ShieldAlert className="w-16 h-16 text-red-500 mb-4" />
+        <h2 className="text-2xl font-black text-slate-800 uppercase tracking-widest">Access Denied</h2>
+        <p className="text-slate-500 font-bold mt-2 max-w-md">Your current role does not have authorization to request fleet transport.</p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6 max-w-4xl mx-auto pb-24">
       <div className="flex flex-col md:flex-row items-start md:items-center gap-4">
@@ -121,13 +197,13 @@ export default function BookVehicle() {
         </div>
         <div>
           <h2 className="text-xl md:text-2xl font-black text-slate-800 tracking-tight">Book a Vehicle</h2>
-          <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mt-1">Request fleet transport and shuttles for official events.</p>
+          <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mt-1">Request fleet transport and shuttles with smart routing.</p>
         </div>
       </div>
 
       <form onSubmit={submitVehicleRequest} className="space-y-6">
         
-        {/* SECTION 1: EVENT & ROUTE */}
+        {/* SECTION 1: ROUTE & MAPBOX INTEGRATION */}
         <div className="bg-white rounded-3xl p-5 md:p-8 shadow-sm border border-slate-200">
           <div className="flex items-center space-x-2 border-b border-slate-100 pb-4 mb-6">
             <div className="bg-brand-maroon/10 p-2 rounded-xl">
@@ -147,33 +223,56 @@ export default function BookVehicle() {
             </div>
 
             <div className="md:col-span-2 pt-2 border-t border-slate-100">
-              <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-3">Campus Pickup Location</h4>
+              <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-3">Campus Origin Point</h4>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5 md:gap-6">
                 <div>
                   <label className="block text-[11px] font-black text-slate-500 uppercase mb-2">Pickup Zone *</label>
-                  <select required value={zone} onChange={handleZoneChange} className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-brand-maroon outline-none transition shadow-sm">
+                  <select required value={zone} onChange={e => { setZone(e.target.value); setPickupVenue(''); }} className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-brand-maroon outline-none transition shadow-sm">
                     <option value="" disabled>-- Select Campus Zone --</option>
-                    {Object.keys(ZONES).map(z => <option key={z} value={z}>{z}</option>)}
+                    {Object.keys(ZONE_COORDINATES).map(z => <option key={z} value={z}>{z}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="block text-[11px] font-black text-slate-500 uppercase mb-2">Specific Pickup Venue *</label>
                   <select required disabled={!zone} value={pickupVenue} onChange={e => setPickupVenue(e.target.value)} className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-brand-maroon outline-none transition shadow-sm disabled:opacity-50">
                     <option value="" disabled>{zone ? '-- Select Venue --' : 'Select Zone First'}</option>
-                    {zone && ZONES[zone].map(v => <option key={v} value={v}>{v}</option>)}
+                    {zone && MAINTENANCE_ZONES[zone]?.map((v: string) => <option key={v} value={v}>{v}</option>)}
                   </select>
                 </div>
               </div>
             </div>
 
-            <div className="md:col-span-2">
-              <label className="block text-[11px] font-black text-slate-500 uppercase mb-2">Final Destination *</label>
-              <input required type="text" value={destination} onChange={e => setDestination(e.target.value)} placeholder="e.g. Ahmedabad Airport (Terminal 1)" className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-brand-maroon outline-none transition shadow-sm" />
+            {/* MAPBOX AUTOCOMPLETE */}
+            <div className="md:col-span-2 relative" ref={searchRef}>
+              <label className="block text-[11px] font-black text-slate-500 uppercase mb-2 flex items-center gap-1"><Map className="w-3.5 h-3.5"/> Drop-off Destination (Powered by Mapbox) *</label>
+              <input 
+                required 
+                type="text" 
+                value={destinationQuery} 
+                onChange={e => { setDestinationQuery(e.target.value); setDestinationCoords(null); }} 
+                placeholder="Search real-world address or location..." 
+                className={`w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none transition shadow-sm focus:ring-2 ${destinationCoords ? 'focus:ring-emerald-500 border-emerald-200' : 'focus:ring-brand-maroon'}`} 
+              />
+              
+              {showSuggestions && suggestions.length > 0 && (
+                <div className="absolute z-50 w-full mt-2 bg-white border border-slate-200 rounded-xl shadow-2xl overflow-hidden max-h-60">
+                  {suggestions.map((feature) => (
+                    <div 
+                      key={feature.id} 
+                      onClick={() => handleDestinationSelect(feature)}
+                      className="px-4 py-3 hover:bg-slate-50 border-b border-slate-100 cursor-pointer transition last:border-b-0"
+                    >
+                      <div className="text-sm font-bold text-slate-800">{feature.text}</div>
+                      <div className="text-[10px] text-slate-500 truncate">{feature.place_name}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
 
-        {/* SECTION 2: TIMINGS */}
+        {/* SECTION 2: TIMING ENGINE */}
         <div className="bg-white rounded-3xl p-5 md:p-8 shadow-sm border border-slate-200">
           <div className="flex items-center space-x-2 border-b border-slate-100 pb-4 mb-6">
             <div className="bg-brand-maroon/10 p-2 rounded-xl">
@@ -182,16 +281,41 @@ export default function BookVehicle() {
             <h3 className="font-black text-sm uppercase tracking-wide text-slate-800">Timing Parameters</h3>
           </div>
           
+          {travelTimeMins > 0 ? (
+             <div className="mb-6 bg-indigo-50 border border-indigo-100 p-4 rounded-2xl flex items-center gap-4">
+               <div className="bg-white p-3 rounded-xl shadow-sm border border-indigo-100"><RouteIcon className="w-6 h-6 text-indigo-600"/></div>
+               <div>
+                 <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Mapbox Calculated Travel Time</p>
+                 <p className="text-lg font-black text-indigo-900 mt-0.5">
+  {formatMinutesToHours(travelTimeMins)} (One Way)
+</p>
+               </div>
+             </div>
+          ) : (
+            <div className="mb-6 p-4 rounded-xl text-xs font-bold text-slate-400 bg-slate-50 border border-slate-100 italic">
+              Select origin and destination to auto-calculate travel times.
+            </div>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5 md:gap-6">
             <div>
               <label className="block text-[11px] font-black text-slate-500 uppercase mb-2">Required Arrival Time *</label>
               <input required type="time" value={arrivalTime} onChange={e => setArrivalTime(e.target.value)} className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-brand-maroon outline-none transition shadow-sm" />
-              <p className="text-[10px] font-bold text-slate-400 mt-1.5 uppercase tracking-wide">When must the passengers reach the destination?</p>
+              {calculatedDeparture && (
+                <div className="mt-2 p-2 bg-amber-50 border border-amber-200 rounded-lg text-[10px] font-bold text-amber-800">
+                  <span className="uppercase font-black text-amber-600 tracking-wider">Suggested Dept:</span> {calculatedDeparture} <span className="text-amber-600/70">(Incl 15m Buffer)</span>
+                </div>
+              )}
             </div>
+            
             <div>
               <label className="block text-[11px] font-black text-slate-500 uppercase mb-2">Expected Release Time (Optional)</label>
               <input type="time" value={releaseTime} onChange={e => setReleaseTime(e.target.value)} className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-brand-maroon outline-none transition shadow-sm" />
-              <p className="text-[10px] font-bold text-slate-400 mt-1.5 uppercase tracking-wide">When will the vehicles be free to return?</p>
+              {calculatedReturn && (
+                <div className="mt-2 p-2 bg-emerald-50 border border-emerald-200 rounded-lg text-[10px] font-bold text-emerald-800">
+                  <span className="uppercase font-black text-emerald-600 tracking-wider">Est. Campus Drop:</span> {calculatedReturn}
+                </div>
+              )}
             </div>
           </div>
         </div>

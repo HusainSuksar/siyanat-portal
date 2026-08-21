@@ -1,10 +1,9 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
-import { Car, MapPin, Calculator, XCircle, Send, X, Plus, History, ListFilter } from 'lucide-react';
+import { Car, MapPin, Calculator, XCircle, Send, X, Plus, History, ListFilter, Settings, AlertTriangle } from 'lucide-react';
 import { useToast } from '../../hooks/useToast';
 
-// Strict Type Interfaces
 export interface VehicleRequest {
   id: string;
   destination: string;
@@ -15,8 +14,8 @@ export interface VehicleRequest {
   darajah: string;
   total_count: number;
   pipeline_state: string;
-  assigned_vehicles?: string; // Added for history
-  rejection_reason?: string;  // Added for history
+  assigned_vehicles?: string; 
+  rejection_reason?: string;  
   requester?: { full_name: string; department: string };
 }
 
@@ -25,6 +24,7 @@ export interface FleetInventory {
   vehicle_type: string;
   license_plate: string;
   seat_capacity: number;
+  is_active: boolean;
 }
 
 export interface Assignment {
@@ -40,7 +40,6 @@ export default function FleetEngine() {
   const { user } = useAuth();
   const { showToast } = useToast();
   
-  // THE NEW FEATURE: Toggle between Active Queue and History Archive
   const [viewMode, setViewMode] = useState<'active' | 'history'>('active');
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState<string | null>(null);
@@ -48,21 +47,25 @@ export default function FleetEngine() {
   const [vehicles, setVehicles] = useState<VehicleRequest[]>([]);
   const [internalFleet, setInternalFleet] = useState<FleetInventory[]>([]);
   
+  // Modals
   const [fleetModalOpen, setFleetModalOpen] = useState(false);
+  const [rejectModalOpen, setRejectModalOpen] = useState(false);
+  const [manageFleetModalOpen, setManageFleetModalOpen] = useState(false);
+
+  // Assignment State
   const [selectedReq, setSelectedReq] = useState<VehicleRequest | null>(null);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [departureTime, setDepartureTime] = useState('');
   const [customRentalName, setCustomRentalName] = useState('');
   const [customRentalCapacity, setCustomRentalCapacity] = useState(4);
-
-  const [rejectModalOpen, setRejectModalOpen] = useState(false);
   const [targetReq, setTargetReq] = useState<VehicleRequest | null>(null);
   const [rejectionReason, setRejectionReason] = useState('');
 
+  // New Fleet Vehicle State
+  const [newVehicle, setNewVehicle] = useState({ type: '', plate: '', capacity: 4 });
+
   const fetchFleet = async () => {
     setLoading(true);
-    
-    // Fetch AUTHORIZED for active assignment. Fetch others for history logs.
     const targetStates = viewMode === 'active' 
       ? ['AUTHORIZED'] 
       : ['PROCESSING', 'ACTION_REQUIRED', 'CLOSED', 'REJECTED'];
@@ -72,7 +75,7 @@ export default function FleetEngine() {
         .select(`*, requester:profiles(full_name, department)`)
         .in('pipeline_state', targetStates)
         .order('request_date', { ascending: viewMode === 'active' }),
-      supabase.from('fleet_inventory').select('*').eq('is_active', true).order('vehicle_type')
+      supabase.from('fleet_inventory').select('*').order('vehicle_type')
     ]);
 
     if (reqRes.data) setVehicles(reqRes.data as VehicleRequest[]);
@@ -80,9 +83,51 @@ export default function FleetEngine() {
     setLoading(false);
   };
 
-  // Re-fetch whenever the toggle is clicked
   useEffect(() => { fetchFleet(); }, [viewMode]);
 
+  // --- FLEET INVENTORY MANAGEMENT ---
+  const handleAddVehicle = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newVehicle.type || !newVehicle.plate) return;
+    
+    setProcessingId('adding_vehicle');
+    try {
+      const { error } = await supabase.from('fleet_inventory').insert({
+        vehicle_type: newVehicle.type,
+        license_plate: newVehicle.plate.toUpperCase(),
+        seat_capacity: newVehicle.capacity,
+        is_active: true
+      });
+      if (error) throw error;
+      
+      showToast('Vehicle added to fleet registry!', 'success');
+      setNewVehicle({ type: '', plate: '', capacity: 4 });
+      fetchFleet();
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const toggleVehicleStatus = async (id: string, currentStatus: boolean) => {
+    await supabase.from('fleet_inventory').update({ is_active: !currentStatus }).eq('id', id);
+    fetchFleet();
+  };
+
+  // --- CONFLICT DETECTION ENGINE ---
+  const getVehicleConflicts = (plate: string) => {
+    if (!selectedReq) return [];
+    // Scan all fetched requests for the exact same date where this license plate was already assigned
+    return vehicles.filter(v => 
+      v.id !== selectedReq.id && 
+      v.request_date === selectedReq.request_date && 
+      v.assigned_vehicles?.includes(plate) &&
+      ['PROCESSING', 'ACTION_REQUIRED', 'CLOSED'].includes(v.pipeline_state)
+    );
+  };
+
+  // --- ASSIGNMENT ENGINE ---
   const addInternalVehicle = (v: FleetInventory) => {
     if (assignments.find(a => a.vehicleId === v.id)) return;
     setAssignments([...assignments, { id: crypto.randomUUID(), type: 'INTERNAL', vehicleId: v.id, name: `${v.vehicle_type} (${v.license_plate})`, capacity: v.seat_capacity, rounds: 1 }]);
@@ -107,32 +152,18 @@ export default function FleetEngine() {
 
   const handleFleetDispatch = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedReq || assignments.length === 0 || !departureTime) {
-      showToast('Assignment and departure time required.', 'warning');
-      return;
-    }
+    if (!selectedReq || assignments.length === 0 || !departureTime) return showToast('Assignment and departure time required.', 'warning');
     
     setProcessingId(selectedReq.id);
     const assignmentString = assignments.map(a => `${a.name} (x${a.rounds} rounds)`).join(' | ');
 
     try {
-      await supabase.from('vehicle_requests').update({
-        assigned_vehicles: assignmentString,
-        departure_time: departureTime
-      }).eq('id', selectedReq.id);
-
+      await supabase.from('vehicle_requests').update({ assigned_vehicles: assignmentString, departure_time: departureTime }).eq('id', selectedReq.id);
       await supabase.rpc('advance_pipeline', { target_table: 'vehicle_requests', target_id: selectedReq.id });
-
-      await supabase.from('system_logs').insert({
-        action_type: 'FLEET_DISPATCHED',
-        description: `Dispatched fleet for ${selectedReq.destination}. Setup: ${assignmentString}.`,
-        user_email: user?.email || 'Admin'
-      });
+      await supabase.from('system_logs').insert({ action_type: 'FLEET_DISPATCHED', description: `Dispatched fleet for ${selectedReq.destination}. Setup: ${assignmentString}.`, user_email: user?.email || 'Admin' });
 
       showToast('Fleet assigned and requester notified!', 'success');
-      setFleetModalOpen(false); 
-      setAssignments([]); 
-      setDepartureTime('');
+      setFleetModalOpen(false); setAssignments([]); setDepartureTime('');
       fetchFleet();
     } catch(err: any) {
       showToast(err.message, 'error');
@@ -147,16 +178,9 @@ export default function FleetEngine() {
     setProcessingId(targetReq.id);
 
     try {
-      const { error } = await supabase.from('vehicle_requests').update({ 
-        pipeline_state: 'REJECTED', 
-        rejection_reason: rejectionReason 
-      }).eq('id', targetReq.id);
-      
-      if (error) throw error;
-
+      await supabase.from('vehicle_requests').update({ pipeline_state: 'REJECTED', rejection_reason: rejectionReason }).eq('id', targetReq.id);
       showToast('Vehicle request rejected and requester notified.', 'success');
-      setRejectModalOpen(false);
-      setRejectionReason('');
+      setRejectModalOpen(false); setRejectionReason('');
       fetchFleet();
     } catch (err: any) {
       showToast(err.message, 'error');
@@ -167,22 +191,19 @@ export default function FleetEngine() {
 
   return (
     <div className="space-y-4">
-      {/* View Mode Toggle Switch */}
-      <div className="flex justify-between items-center bg-white p-2 rounded-2xl border border-slate-200 shadow-sm w-full md:w-auto mb-4">
-        <div className="flex gap-2 w-full">
-          <button 
-            onClick={() => setViewMode('active')} 
-            className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 transition ${viewMode === 'active' ? 'bg-brand-maroon text-brand-gold shadow-md' : 'text-slate-400 hover:bg-slate-50'}`}
-          >
+      {/* Top Controls */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-2 rounded-2xl border border-slate-200 shadow-sm w-full gap-4">
+        <div className="flex gap-2 w-full md:w-auto">
+          <button onClick={() => setViewMode('active')} className={`flex-1 md:flex-none py-2.5 px-4 rounded-xl text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 transition ${viewMode === 'active' ? 'bg-brand-maroon text-brand-gold shadow-md' : 'text-slate-400 hover:bg-slate-50'}`}>
             <ListFilter className="w-4 h-4" /> Active Queue
           </button>
-          <button 
-            onClick={() => setViewMode('history')} 
-            className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 transition ${viewMode === 'history' ? 'bg-slate-800 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50'}`}
-          >
+          <button onClick={() => setViewMode('history')} className={`flex-1 md:flex-none py-2.5 px-4 rounded-xl text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 transition ${viewMode === 'history' ? 'bg-slate-800 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50'}`}>
             <History className="w-4 h-4" /> History Log
           </button>
         </div>
+        <button onClick={() => setManageFleetModalOpen(true)} className="w-full md:w-auto py-2.5 px-4 rounded-xl text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition border border-indigo-200">
+          <Settings className="w-4 h-4" /> Manage Fleet Database
+        </button>
       </div>
 
       {loading ? (
@@ -228,7 +249,6 @@ export default function FleetEngine() {
                     </div>
                   </div>
 
-                  {/* Show rejection reason or assigned fleet in history view */}
                   {viewMode === 'history' && v.pipeline_state === 'REJECTED' && v.rejection_reason && (
                     <div className="bg-red-50 p-3 rounded-xl border border-red-100 mt-4">
                       <span className="text-[10px] font-black text-red-600 uppercase tracking-widest block mb-1">Reason for Rejection</span>
@@ -258,14 +278,65 @@ export default function FleetEngine() {
         </div>
       )}
 
-      {/* Fleet Assignment Modal Omitted for Brevity (It remains identical to your working version) */}
+      {/* --- FLEET INVENTORY MANAGEMENT MODAL --- */}
+      {manageFleetModalOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex justify-center items-center p-4">
+          <div className="bg-white rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 max-h-[90vh] flex flex-col">
+            <div className="bg-slate-900 p-5 flex justify-between items-center text-white shrink-0">
+              <h3 className="font-extrabold text-sm uppercase flex items-center gap-2"><Car className="w-5 h-5"/> Manage Internal Fleet</h3>
+              <button onClick={() => setManageFleetModalOpen(false)} className="hover:text-red-300 transition"><X className="w-5 h-5" /></button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+              <form onSubmit={handleAddVehicle} className="bg-slate-50 p-5 rounded-2xl border border-slate-200 space-y-4">
+                <h4 className="text-xs font-black uppercase text-slate-700 tracking-wider">Register New Vehicle</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">Vehicle Type / Name *</label>
+                    <input required type="text" placeholder="e.g. Toyota Innova" value={newVehicle.type} onChange={e => setNewVehicle({...newVehicle, type: e.target.value})} className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold outline-none" />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">License Plate *</label>
+                    <input required type="text" placeholder="e.g. GJ-01-AB-1234" value={newVehicle.plate} onChange={e => setNewVehicle({...newVehicle, plate: e.target.value})} className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold outline-none uppercase" />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">Seat Capacity *</label>
+                    <input required type="number" min="1" value={newVehicle.capacity} onChange={e => setNewVehicle({...newVehicle, capacity: parseInt(e.target.value)||4})} className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold outline-none" />
+                  </div>
+                </div>
+                <button type="submit" disabled={processingId === 'adding_vehicle'} className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs uppercase tracking-widest rounded-xl shadow-md transition disabled:opacity-50">Add to Registry</button>
+              </form>
+
+              <div>
+                <h4 className="text-xs font-black uppercase text-slate-700 tracking-wider mb-3">Current Active Fleet</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {internalFleet.map(v => (
+                    <div key={v.id} className={`flex justify-between items-center p-3 rounded-xl border ${v.is_active ? 'border-slate-200 bg-white' : 'border-red-100 bg-red-50 opacity-60'}`}>
+                      <div>
+                        <p className="text-xs font-bold text-slate-800">{v.vehicle_type} <span className="text-[10px] text-slate-400 font-normal">({v.seat_capacity} Seats)</span></p>
+                        <p className="text-[9px] font-black text-indigo-600 uppercase tracking-widest mt-0.5">{v.license_plate}</p>
+                      </div>
+                      <button onClick={() => toggleVehicleStatus(v.id, v.is_active)} className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition ${v.is_active ? 'bg-red-100 text-red-700 hover:bg-red-200' : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'}`}>
+                        {v.is_active ? 'Disable' : 'Enable'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- FLEET ASSIGNMENT MODAL (Now with Conflict Engine) --- */}
       {fleetModalOpen && selectedReq && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex justify-center items-start pt-10 sm:items-center p-4">
-          <div className="bg-white rounded-3xl w-full max-w-3xl shadow-2xl overflow-hidden animate-in duration-300 max-h-[90vh] flex flex-col">
+          <div className="bg-white rounded-3xl w-full max-w-4xl shadow-2xl overflow-hidden animate-in duration-300 max-h-[90vh] flex flex-col">
             <div className="bg-indigo-600 p-5 flex justify-between items-center text-white shrink-0">
               <h3 className="font-extrabold text-sm uppercase flex items-center gap-2"><Calculator className="w-5 h-5"/> Fleet Calculation Engine</h3>
               <button onClick={() => setFleetModalOpen(false)} className="p-1 hover:bg-white/20 rounded-lg transition"><X className="w-5 h-5" /></button>
             </div>
+            
             <div className="flex-1 overflow-y-auto p-6 space-y-6">
               <div className="grid grid-cols-3 gap-4">
                 <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 text-center">
@@ -281,20 +352,43 @@ export default function FleetEngine() {
                   <div className={`text-2xl font-black mt-1 ${isDeficit ? 'text-red-600' : 'text-emerald-700'}`}>{isDeficit ? `-${passengersRemaining} Deficit` : 'Capacity Met'}</div>
                 </div>
               </div>
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-4">
                   <h4 className="font-black text-xs uppercase tracking-widest text-slate-800 border-b border-slate-100 pb-2">1. Select Vehicles</h4>
-                  <div className="space-y-2 max-h-48 overflow-y-auto pr-2">
-                    {internalFleet.map(v => (
-                      <div key={v.id} onClick={() => addInternalVehicle(v)} className="flex justify-between items-center p-3 border border-slate-200 rounded-xl hover:border-indigo-400 hover:bg-indigo-50 transition cursor-pointer group">
-                        <div>
-                          <p className="text-xs font-bold text-slate-700 group-hover:text-indigo-800">{v.vehicle_type}</p>
-                          <p className="text-[9px] font-black text-slate-400 uppercase mt-0.5">{v.license_plate}</p>
+                  
+                  {/* CONFLICT DETECTION RENDERING */}
+                  <div className="space-y-3 max-h-60 overflow-y-auto pr-2">
+                    {internalFleet.filter(v => v.is_active).map(v => {
+                      const conflicts = getVehicleConflicts(v.license_plate);
+                      const isBookedToday = conflicts.length > 0;
+
+                      return (
+                        <div key={v.id} onClick={() => addInternalVehicle(v)} className={`relative flex flex-col justify-center p-3 border rounded-xl transition cursor-pointer group overflow-hidden ${isBookedToday ? 'border-red-300 bg-red-50/50 hover:bg-red-50' : 'border-slate-200 hover:border-indigo-400 hover:bg-indigo-50'}`}>
+                          <div className="flex justify-between items-center z-10 relative">
+                            <div>
+                              <p className={`text-xs font-bold ${isBookedToday ? 'text-red-800' : 'text-slate-700 group-hover:text-indigo-800'}`}>{v.vehicle_type}</p>
+                              <p className={`text-[9px] font-black uppercase mt-0.5 ${isBookedToday ? 'text-red-500' : 'text-slate-400'}`}>{v.license_plate}</p>
+                            </div>
+                            <span className={`text-[10px] font-black px-2 py-1 rounded ${isBookedToday ? 'bg-red-100 text-red-700' : 'bg-slate-100 group-hover:bg-indigo-100 text-slate-600 group-hover:text-indigo-700'}`}>
+                              Seats: {v.seat_capacity}
+                            </span>
+                          </div>
+                          
+                          {isBookedToday && (
+                            <div className="mt-2 pt-2 border-t border-red-200/60 flex items-start gap-1.5 z-10 relative">
+                              <AlertTriangle className="w-3.5 h-3.5 text-red-500 shrink-0 mt-0.5" />
+                              <div className="text-[9px] font-black text-red-600 uppercase tracking-wider">
+                                Already Assigned Today For: <br/>
+                                <span className="font-bold text-red-800 normal-case">{conflicts.map(c => c.destination.split(' | ')[1]?.replace('To: ', '') || c.destination).join(', ')}</span>
+                              </div>
+                            </div>
+                          )}
                         </div>
-                        <span className="text-[10px] font-black bg-slate-100 group-hover:bg-indigo-100 text-slate-600 group-hover:text-indigo-700 px-2 py-1 rounded">Seats: {v.seat_capacity}</span>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
+
                   <div className="pt-4 border-t border-slate-100">
                     <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Inject Rental Vehicle</p>
                     <div className="flex gap-2">
@@ -304,6 +398,7 @@ export default function FleetEngine() {
                     </div>
                   </div>
                 </div>
+
                 <div className="space-y-4">
                   <h4 className="font-black text-xs uppercase tracking-widest text-slate-800 border-b border-slate-100 pb-2">2. Manage Multi-Rounds</h4>
                   {assignments.length === 0 ? (
@@ -342,6 +437,7 @@ export default function FleetEngine() {
                 </div>
               </div>
             </div>
+            
             <div className="p-5 border-t border-slate-100 bg-white shrink-0">
               <button onClick={handleFleetDispatch} disabled={processingId === selectedReq.id || assignments.length === 0 || !departureTime} className="w-full py-4 bg-slate-900 hover:bg-black text-white font-black text-xs uppercase tracking-widest rounded-2xl shadow-xl transition flex justify-center items-center gap-2 disabled:opacity-50">
                 <Send className="w-4 h-4" /> {isDeficit ? `Dispatch with ${passengersRemaining} deficit` : 'Finalize Dispatch Setup'}
@@ -351,13 +447,13 @@ export default function FleetEngine() {
         </div>
       )}
 
-      {/* Fleet Rejection Modal */}
+      {/* Rejection Modal */}
       {rejectModalOpen && targetReq && (
-        <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
+        <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-in zoom-in-95">
             <div className="p-4 bg-red-600 text-white flex justify-between items-center">
               <h3 className="font-bold uppercase text-sm">Reject Fleet Request</h3>
-              <button onClick={() => setRejectModalOpen(false)} className="hover:text-red-200"><X className="w-5 h-5"/></button>
+              <button onClick={() => setRejectModalOpen(false)} className="hover:text-red-200 transition"><X className="w-5 h-5"/></button>
             </div>
             <form onSubmit={handleRejectSubmit} className="p-5 space-y-4">
               <p className="text-xs text-slate-500 font-bold">Please provide a mandatory reason for rejecting this vehicle request:</p>

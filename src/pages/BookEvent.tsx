@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { Calendar, Users, MonitorSpeaker, Send, Clock, PackageSearch, PlusCircle, Trash2, Edit, XCircle, ShieldAlert, ListPlus, MapPin, Lock, Car } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { EVENT_VENUES, EVENT_ZONES } from '../constants/locations';
 
 const BETWEEN_CLASS_PERIODS = [
   { id: 'P1', time: '08:15 - 09:00' },
@@ -22,15 +23,6 @@ const AFTER_CLASS_SLOTS = [
   '20:31 - 21:00', '21:01 - 21:30', '21:31 - 22:00', '22:01 - 22:30'
 ];
 
-const VENUES: Record<string, string[]> = {
-  "Najmi Hall": ["Najmi Hall Maghribi Janib", "Najmi Hall Shimali Janib", "Library (Near Gate)", "Multipurpose", "1AF", "1BF", "1CF", "1DF"],
-  "Zainee Masjid": ["Zainee Masjid Ground Floor", "1AM", "1BM", "1CM", "6AM"],
-  "Jamali Mawaid": ["Talabat Seating Area", "Talebaat Seating Area"],
-  "Khaimat (Burhani School)": ["Football/Cricket Ground", "Volleyball Court", "Indore Games Room", "Swimming Pool"],
-  "Rabwat (Bait ul Tarbiyat)": ["Rabwat Main Garden", "Dinner Mawaid", "Naashta Mawaid"],
-  "Masakin": ["Masakin Ground", "Qasida Room", "Swimming Pool", "Masakin Terrace"]
-};
-
 const PRESET_CLASSES: Record<string, { male: number, female: number }> = {
   "1AM": { male: 25, female: 0 }, "1AF": { male: 0, female: 20 },
   "1BF": { male: 0, female: 19 }, "1BM": { male: 25, female: 0 },
@@ -46,16 +38,13 @@ export default function BookEvent() {
   const [userRole, setUserRole] = useState<string>('REQUESTER');
   const [isAdmin, setIsAdmin] = useState(false);
   
-  // Admin God Mode States
   const [allEvents, setAllEvents] = useState<any[]>([]);
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
   
-  // Standard Assets Management States
   const [standardAssets, setStandardAssets] = useState<any[]>([]);
-  const [newAssetDept, setNewAssetDept] = useState('AVIT_HEAD'); // Updated to new DB standard
+  const [newAssetDept, setNewAssetDept] = useState('AVIT_HEAD');
   const [newAssetName, setNewAssetName] = useState('');
 
-  // Form Details
   const [title, setTitle] = useState('');
   const [date, setDate] = useState('');
   const [timingType, setTimingType] = useState('Between Classes');
@@ -64,13 +53,11 @@ export default function BookEvent() {
   const [location, setLocation] = useState('');
   const [subLocation, setSubLocation] = useState('');
   
-  // Headcount
   const [darajah, setDarajah] = useState('');
   const [maleCount, setMaleCount] = useState(0);
   const [femaleCount, setFemaleCount] = useState(0);
   const [othersCount, setOthersCount] = useState(0);
 
-  // Dynamic Assets & Inventory
   const [inventory, setInventory] = useState<any[]>([]);
   const [selectedAssetId, setSelectedAssetId] = useState('');
   const [assetQty, setAssetQty] = useState(1);
@@ -163,7 +150,6 @@ export default function BookEvent() {
     setRequirements(prev => prev.filter((_, i) => i !== index));
   };
 
-  // --- SUBMIT / UPDATE LOGIC ---
   const submitEvent = async (e: React.FormEvent) => {
     e.preventDefault();
     if (totalCount === 0) return alert("Total headcount cannot be zero.");
@@ -183,7 +169,6 @@ export default function BookEvent() {
     setLoading(true);
 
     try {
-      // THE FIX: Removed hardcoded `status` field. DB automatically flags as AUTHORIZED
       const payload = {
         requester_id: currentUser.id,
         event_title: title,
@@ -317,7 +302,6 @@ export default function BookEvent() {
 
       <form onSubmit={submitEvent} className="space-y-6">
         
-        {/* SECTION 1: SCHEDULING & LOCATION */}
         <div className="bg-white rounded-2xl p-4 md:p-6 shadow-sm border border-slate-200">
           <div className="flex items-center space-x-2 border-b border-slate-100 pb-3 mb-4">
             <Clock className="w-5 h-5 text-brand-maroon" />
@@ -339,7 +323,7 @@ export default function BookEvent() {
               <label className="block text-[11px] font-extrabold text-slate-500 uppercase mb-1">Primary Venue *</label>
               <select required value={location} onChange={handleLocationChange} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold focus:ring-2 focus:ring-brand-maroon outline-none">
                 <option value="" disabled>Select Primary Venue</option>
-                {Object.keys(VENUES).map(venue => (
+                {EVENT_ZONES.map(venue => (
                   <option key={venue} value={venue}>{venue}</option>
                 ))}
               </select>
@@ -349,13 +333,12 @@ export default function BookEvent() {
               <label className="block text-[11px] font-extrabold text-slate-500 uppercase mb-1">Sub-Location *</label>
               <select required disabled={!location} value={subLocation} onChange={e => setSubLocation(e.target.value)} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold focus:ring-2 focus:ring-brand-maroon outline-none disabled:opacity-50">
                 <option value="" disabled>{location ? 'Select Sub-Location' : 'Select Primary Venue First'}</option>
-                {location && VENUES[location].map(subLoc => (
+                {location && EVENT_VENUES[location].map(subLoc => (
                   <option key={subLoc} value={subLoc}>{subLoc}</option>
                 ))}
               </select>
             </div>
 
-            {/* DYNAMIC TIMING RBAC SECTION */}
             <div className="md:col-span-2 border-t border-slate-100 pt-4 mt-2">
               <label className="block text-[11px] font-extrabold text-slate-500 uppercase mb-3">Event Timing Category *</label>
               <div className="flex flex-col sm:flex-row gap-3 mb-4">
@@ -364,7 +347,6 @@ export default function BookEvent() {
                   <span className="font-bold text-sm">Between Classes (Timetable)</span>
                 </label>
                 
-                {/* ROLE BASED LOCKDOWN */}
                 <label className={`flex-1 flex items-center justify-center gap-2 p-3 rounded-xl border-2 transition ${isStandardUser ? 'opacity-60 cursor-not-allowed bg-slate-50 border-slate-200' : timingType === 'After Classes' ? 'border-brand-maroon bg-brand-maroon/5 text-brand-maroon cursor-pointer' : 'border-slate-200 hover:border-slate-300 cursor-pointer'}`} title={isStandardUser ? "Only Department Heads can book events outside standard timetable hours." : ""}>
                   <input type="radio" name="timing" value="After Classes" disabled={isStandardUser} checked={timingType === 'After Classes'} onChange={() => !isStandardUser && setTimingType('After Classes')} className="hidden" />
                   <span className={`font-bold text-sm ${isStandardUser ? 'text-slate-400' : ''}`}>After Classes (Custom Time)</span>
@@ -372,7 +354,6 @@ export default function BookEvent() {
                 </label>
               </div>
 
-              {/* TIMETABLE RENDERING ENGINE */}
               {timingType === 'Between Classes' ? (
                 <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 animate-in fade-in">
                   <h4 className="text-[10px] font-black text-slate-500 uppercase mb-3">Select Timetable Periods</h4>
@@ -407,7 +388,6 @@ export default function BookEvent() {
           </div>
         </div>
 
-        {/* SECTION 2: HEADCOUNT */}
         <div className="bg-white rounded-2xl p-4 md:p-6 shadow-sm border border-slate-200">
           <div className="flex items-center space-x-2 border-b border-slate-100 pb-3 mb-4">
             <Users className="w-5 h-5 text-brand-maroon" />
@@ -428,17 +408,14 @@ export default function BookEvent() {
                 ))}
               </select>
             </div>
-            
             <div>
               <label className="block text-[11px] font-extrabold text-slate-500 uppercase mb-1">Male Count</label>
               <input type="number" min="0" value={maleCount} onChange={e => setMaleCount(parseInt(e.target.value) || 0)} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-center focus:ring-2 focus:ring-brand-maroon outline-none" />
             </div>
-            
             <div>
               <label className="block text-[11px] font-extrabold text-slate-500 uppercase mb-1">Female Count</label>
               <input type="number" min="0" value={femaleCount} onChange={e => setFemaleCount(parseInt(e.target.value) || 0)} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-center focus:ring-2 focus:ring-brand-maroon outline-none" />
             </div>
-
             <div>
               <label className="block text-[11px] font-extrabold text-slate-500 uppercase mb-1">Others / Guests</label>
               <input type="number" min="0" value={othersCount} onChange={e => setOthersCount(parseInt(e.target.value) || 0)} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-center focus:ring-2 focus:ring-brand-maroon outline-none" />
@@ -465,7 +442,6 @@ export default function BookEvent() {
           </div>
         </div>
 
-        {/* SECTION 3: ASSETS & REQUIREMENTS */}
         <div className="bg-white rounded-2xl p-4 md:p-6 shadow-sm border border-slate-200">
           <div className="flex items-center space-x-2 border-b border-slate-100 pb-3 mb-4">
             <MonitorSpeaker className="w-5 h-5 text-brand-maroon" />
@@ -541,7 +517,6 @@ export default function BookEvent() {
           </div>
         </div>
 
-        {/* FLEET TRANSPORTATION CALLOUT */}
         {userRole !== 'REQUESTER' && (
           <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-200 flex items-start gap-4">
             <div className="bg-white p-2 rounded-lg shadow-sm border border-indigo-100 shrink-0">
@@ -565,7 +540,6 @@ export default function BookEvent() {
         </button>
       </form>
 
-      {/* --- ADMIN GOD MODE --- */}
       {isAdmin && (
         <div className="mt-12 pt-8 border-t-4 border-slate-200 space-y-8">
           <div>

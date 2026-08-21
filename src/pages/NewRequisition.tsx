@@ -1,14 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase, type InventoryItem } from '../lib/supabase';
 import { ShoppingBag, Send, PlusCircle, Trash2, CheckCircle, PackageSearch } from 'lucide-react';
-
-const ZONES = [
-  "Main Jamea Complex",
-  "Rabwat (Girls Hostel)",
-  "Masakin (Boys Hostel)",
-  "Mawaid",
-  "Khaimat al-Riyadat"
-];
+import { ZONE_FLOW_MAP, MASTER_ZONES } from '../constants/locations'; 
 
 export default function NewRequisition() {
   const [loading, setLoading] = useState(true);
@@ -17,16 +10,18 @@ export default function NewRequisition() {
   const [isSupervisor, setIsSupervisor] = useState(false);
   const [successBatch, setSuccessBatch] = useState<string | null>(null);
   
-  // Form State
-  const [location, setLocation] = useState('');
+  // Dynamic Location State
+  const [selectedZone, setSelectedZone] = useState('');
+  const [selectedVenue, setSelectedVenue] = useState('');
+  const [selectedFloor, setSelectedFloor] = useState('');
+  const [selectedRoom, setSelectedRoom] = useState('');
+
   const [urgency, setUrgency] = useState('Normal');
   const [reason, setReason] = useState('');
   
-  // Catalog & Cart State
   const [catalog, setCatalog] = useState<InventoryItem[]>([]);
   const [cart, setCart] = useState<{ [key: string]: { item: InventoryItem, qty: number } }>({});
   
-  // Custom Item State
   const [customItems, setCustomItems] = useState<{ name: string, category: string, qty: number }[]>([]);
   const [customName, setCustomName] = useState('');
   const [customQty, setCustomQty] = useState(1);
@@ -38,29 +33,24 @@ export default function NewRequisition() {
   const fetchCatalog = async () => {
     setLoading(true);
     let role = 'REQUESTER';
-    let assignedZone = '';
     
-    // 1. Get user role and zone for RBAC
     const { data: authData } = await supabase.auth.getUser();
     if (authData.user) {
       const { data: profile } = await supabase.from('profiles').select('role, zone').eq('id', authData.user.id).single();
       if (profile) {
         role = profile.role;
-        assignedZone = profile.zone;
         setUserRole(role);
         
         if (role === 'SUPERVISOR') {
           setIsSupervisor(true);
-          if (assignedZone) setLocation(assignedZone.split(',')[0].trim());
+          if (profile.zone) setSelectedZone(profile.zone.split(',')[0].trim());
         }
       }
     }
 
-    // 2. Fetch Catalog with strict Requester filtering
     let query = supabase.from('inventory_items').select('*').order('name');
     
     if (role === 'REQUESTER') {
-      // Requesters only see Stationery and AVIT
       query = query.in('category', ['Office & Administrative Supplies', 'IT & Networking Hardware']);
     }
 
@@ -70,6 +60,28 @@ export default function NewRequisition() {
       setCatalog(data);
     }
     setLoading(false);
+  };
+
+  // --- DYNAMIC LOGIC ENGINE ---
+  const activeVenues = selectedZone ? ZONE_FLOW_MAP[selectedZone] : [];
+  const activeVenueObj = activeVenues?.find(v => v.name === selectedVenue);
+  const subConfig = activeVenueObj?.subConfig;
+  
+  const availableRoomsForFloor = (subConfig?.type === 'SELECT_FLOOR_ROOM' && selectedFloor)
+    ? subConfig.floors?.[selectedFloor] || []
+    : [];
+
+  const requiresRoomDropdown = (subConfig?.type === 'SELECT_ROOM' || subConfig?.type === 'SELECT_BATHROOM') || 
+                               (subConfig?.type === 'SELECT_FLOOR_ROOM' && availableRoomsForFloor.length > 0);
+
+  // Cascading Resets
+  const handleZoneChange = (zone: string) => {
+    setSelectedZone(zone);
+    setSelectedVenue(''); setSelectedFloor(''); setSelectedRoom('');
+  };
+  const handleVenueChange = (venue: string) => {
+    setSelectedVenue(venue);
+    setSelectedFloor(''); setSelectedRoom('');
   };
 
   const updateCart = (item: InventoryItem, qty: number) => {
@@ -101,8 +113,8 @@ export default function NewRequisition() {
       alert("Please select at least one item.");
       return;
     }
-    if (!location) {
-      alert("Delivery Location (Zone) is required.");
+    if (!selectedZone || !selectedVenue) {
+      alert("Delivery Zone and Venue are required.");
       return;
     }
 
@@ -112,13 +124,15 @@ export default function NewRequisition() {
       const { data: userData } = await supabase.auth.getUser();
       if (!userData.user) throw new Error("Not authenticated");
 
-      // 1. Insert Work Order
+      // Compile the full precise location
+      const fullLocation = [selectedZone, selectedVenue, selectedFloor, selectedRoom].filter(Boolean).join(' - ');
+
       const { data: orderData, error: orderError } = await supabase
         .from('work_orders')
         .insert({
           requester_id: userData.user.id,
           department: userRole === 'REQUESTER' ? 'General Staff' : 'Maintenance', 
-          location,
+          location: fullLocation,
           urgency,
           reason
         })
@@ -127,23 +141,19 @@ export default function NewRequisition() {
 
       if (orderError) throw orderError;
 
-      // 2. Insert Catalog Items
       const orderItems = cartItems.map(c => ({
         work_order_id: orderData.id,
         inventory_id: c.item.id,
         requested_qty: c.qty,
         item_type: 'Catalog',
-        // THE FIX: Explicitly enforce the tag so it never drops out of the pipeline
         fulfillment_dept: c.item.fulfillment_dept || 'SIYANAT_HEAD' 
       }));
 
-      // 3. Insert Custom Items
       const customOrderItems = customItems.map(c => ({
         work_order_id: orderData.id,
         custom_item_name: c.name,
         requested_qty: c.qty,
         item_type: 'Custom',
-        // Custom items default to Siyanat
         fulfillment_dept: 'SIYANAT_HEAD' 
       }));
 
@@ -157,10 +167,9 @@ export default function NewRequisition() {
         if (itemsError) throw itemsError;
       }
       
-      // Log to Audit Trail
       await supabase.from('system_logs').insert({
         action_type: 'REQUISITION_SUBMITTED',
-        description: `Submitted material requisition ${orderData.batch_id || orderData.id} for ${location}.`,
+        description: `Submitted material requisition ${orderData.batch_id || orderData.id} for ${fullLocation}.`,
         user_email: userData.user.email || 'Requester'
       });
 
@@ -169,7 +178,8 @@ export default function NewRequisition() {
       // Reset Form
       setCart({});
       setCustomItems([]);
-      if (!isSupervisor) setLocation('');
+      if (!isSupervisor) setSelectedZone('');
+      setSelectedVenue(''); setSelectedFloor(''); setSelectedRoom('');
       setReason('');
       
     } catch (err: any) {
@@ -196,53 +206,77 @@ export default function NewRequisition() {
         </div>
       </div>
 
-      {/* Section 1: Details */}
+      {/* --- Delivery Details with Location Engine --- */}
       <div className="bg-white rounded-3xl p-5 md:p-8 shadow-sm border border-slate-200">
         <div className="flex items-center space-x-2 border-b border-slate-100 pb-4 mb-6">
           <span className="flex items-center justify-center w-6 h-6 bg-brand-maroon text-white text-xs font-black rounded-lg">1</span>
           <h3 className="font-black text-sm uppercase tracking-wide text-slate-800">Delivery Details</h3>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-5 md:gap-6">
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 md:gap-6 animate-in fade-in duration-300">
+          {/* TIER 1: ZONE */}
           <div>
             <label className="block text-[11px] font-black text-slate-500 uppercase mb-2">Delivery Zone *</label>
-            <select 
-              required
-              disabled={isSupervisor}
-              value={location} 
-              onChange={(e) => setLocation(e.target.value)}
-              className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-brand-maroon outline-none transition shadow-sm disabled:opacity-70 disabled:cursor-not-allowed"
-            >
+            <select required disabled={isSupervisor} value={selectedZone} onChange={e => handleZoneChange(e.target.value)} className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-brand-maroon outline-none transition shadow-sm disabled:opacity-70 disabled:cursor-not-allowed">
               <option value="" disabled>-- Select Zone --</option>
-              {ZONES.map(z => <option key={z} value={z}>{z}</option>)}
+              {MASTER_ZONES.map(zone => <option key={zone} value={zone}>{zone}</option>)}
             </select>
             {isSupervisor && <p className="text-[9px] font-bold text-brand-maroon mt-1.5 uppercase">Locked to assigned zone</p>}
           </div>
+
+          {/* TIER 2: VENUE */}
           <div>
-            <label className="block text-[11px] font-black text-slate-500 uppercase mb-2">Urgency</label>
-            <select 
-              value={urgency} 
-              onChange={(e) => setUrgency(e.target.value)}
-              className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-brand-maroon outline-none transition shadow-sm"
-            >
-              <option value="Normal">Normal</option>
-              <option value="High">High</option>
-              <option value="EMERGENCY (Immediate)">EMERGENCY (Immediate)</option>
+            <label className="block text-[11px] font-black text-slate-500 uppercase mb-2">Building / Venue *</label>
+            <select required disabled={!selectedZone} value={selectedVenue} onChange={e => handleVenueChange(e.target.value)} className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-brand-maroon outline-none transition shadow-sm disabled:opacity-50">
+              <option value="" disabled>{selectedZone ? '-- Select Venue --' : 'Select Zone First'}</option>
+              {activeVenues?.map(v => <option key={v.name} value={v.name}>{v.name}</option>)}
             </select>
           </div>
-          <div>
-            <label className="block text-[11px] font-black text-slate-500 uppercase mb-2">Reason</label>
-            <input 
-              type="text" 
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              placeholder="e.g. Scheduled Repairs" 
-              className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-brand-maroon outline-none transition shadow-sm"
-            />
+
+          {/* TIER 3: FLOOR */}
+          {subConfig?.type === 'SELECT_FLOOR_ROOM' && (
+            <div className="animate-in fade-in zoom-in-95 duration-200">
+              <label className="block text-[11px] font-black text-slate-500 uppercase mb-2">Select Floor / Location *</label>
+              <select required value={selectedFloor} onChange={e => { setSelectedFloor(e.target.value); setSelectedRoom(''); }} className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-brand-maroon outline-none transition shadow-sm">
+                <option value="" disabled>-- Choose Floor / Location --</option>
+                {Object.keys(subConfig.floors || {}).map(f => <option key={f} value={f}>{f}</option>)}
+              </select>
+            </div>
+          )}
+
+          {/* TIER 4: ROOM */}
+          {requiresRoomDropdown && (
+            <div className="animate-in fade-in zoom-in-95 duration-200">
+              <label className="block text-[11px] font-black text-slate-500 uppercase mb-2">
+                {subConfig?.type === 'SELECT_BATHROOM' ? 'Bathroom No *' : 'Room / Class No *'}
+              </label>
+              <select required value={selectedRoom} onChange={e => setSelectedRoom(e.target.value)} className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-brand-maroon outline-none transition shadow-sm">
+                <option value="" disabled>-- Select Option --</option>
+                {(subConfig?.type === 'SELECT_FLOOR_ROOM' ? availableRoomsForFloor : subConfig?.options || []).map((opt: string) => (
+                  <option key={opt} value={opt}>{opt}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div className="md:col-span-2 border-t border-slate-100 pt-5 mt-2 grid grid-cols-1 md:grid-cols-2 gap-5 md:gap-6">
+            <div>
+              <label className="block text-[11px] font-black text-slate-500 uppercase mb-2">Urgency</label>
+              <select value={urgency} onChange={(e) => setUrgency(e.target.value)} className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-brand-maroon outline-none transition shadow-sm">
+                <option value="Normal">Normal</option>
+                <option value="High">High</option>
+                <option value="EMERGENCY (Immediate)">EMERGENCY (Immediate)</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-[11px] font-black text-slate-500 uppercase mb-2">Reason</label>
+              <input type="text" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Scheduled Repairs" className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-brand-maroon outline-none transition shadow-sm" />
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Section 2: Live Catalog Grid */}
+      {/* --- Catalog Section --- */}
       <div className="bg-white rounded-3xl p-5 md:p-8 shadow-sm border border-slate-200">
         <div className="flex items-center space-x-2 border-b border-slate-100 pb-4 mb-6">
           <span className="flex items-center justify-center w-6 h-6 bg-brand-maroon text-white text-xs font-black rounded-lg">2</span>
@@ -300,7 +334,7 @@ export default function NewRequisition() {
         )}
       </div>
 
-      {/* Section 3: Custom Items */}
+      {/* --- Custom Items Section --- */}
       <div className="bg-amber-50/50 rounded-3xl p-5 md:p-8 border border-amber-200">
         <h3 className="text-xs font-black text-amber-900 uppercase tracking-wider mb-4">Request Unlisted / Custom Item</h3>
         <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
@@ -371,7 +405,7 @@ export default function NewRequisition() {
         </div>
       )}
 
-      {/* CREATIVE SUCCESS MODAL */}
+      {/* Success Modal */}
       {successBatch && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="bg-white p-8 rounded-3xl shadow-2xl flex flex-col items-center max-w-sm w-full animate-in zoom-in-95 duration-300">

@@ -1,43 +1,19 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { Camera, Send, MapPin, Wrench, ImagePlus, Trash2, CheckCircle } from 'lucide-react';
-
-const ZONES: Record<string, string[]> = {
-  "Main Jamea Complex": [
-    "Zainee Masjid/Sehen Ground Floor", "Zainee Masjid First Floor (Classes)", "Zainee Masjid - Offices", 
-    "Zainee Masjid Bathrooms", "Zainee Masjid Outer Area", "Zainee Masjid (IT Room)",
-    "Najmi Hall Ground Floor (Classes)", "Najmi Hall First Floor (Classes)", "Najmi Hall - Offices", 
-    "Najmi Hall Bathrooms", "Najmi Hall Outer Area", "Najmi Hall Multi Purpose", "Najmi Hall - Library",
-    "Saifee Masjid Ground Floor (Classes)", "Saifee Masjid Bathrooms", "Rajas Office", "Rajas Office Bathroom"
-  ],
-  "Rabwat (Girls Hostel)": [
-    "Rabwat residence building", "Naashta Mawaid/Garden Room", "Mawaid Hall (Dinner Mawaid)", 
-    "Mawaid Hall 1st floor (Maamal, library etc:-)", "Laundry"
-  ],
-  "Masakin (Boys Hostel)": [
-    "Masakin Residence Building", "Computer Room", "Qasida Room", "Pantry", 
-    "Bathrooms Ground Floor", "Bathrooms First Floor", "Bathrooms Second Floor", 
-    "Reception/Office", "Luggage Room"
-  ],
-  "Mawaid": [
-    "Mawaid Hall", "Kitchen", "Office", "Mawaid Bathrooms", "Zabihat Room", "Roti Room"
-  ],
-  "Khaimat al-Riyadat": [
-    "Football/Cricket Ground", "Volleyball Court", "Indore Games Room", "Swimming Pool"
-  ]
-};
+import { ZONE_FLOW_MAP, MASTER_ZONES } from '../constants/locations';
 
 const CATEGORIES = [
   "Civil", "Electrical", "Plumbing", "Carpentry", "Housekeeping", 
   "Furniture", "Accessories", "HVAC", "Painting", "Pest Control", 
-  "AVIT", "Space Shortage", "Other"
+  "AV/IT", "Space Shortage", "Other"
 ];
 
 const PRIORITIES = [
-  { id: 'Low (24–48 hrs)', label: 'Low (24–48 hrs)', desc: 'Minor repairs, squeaky doors, or loose furniture hinges.' },
-  { id: 'Medium (12–24 hrs)', label: 'Medium (12–24 hrs)', desc: 'Single light/fan down, slow leaks, or routine appliance issues.' },
-  { id: 'High (8–12 hrs)', label: 'High (8–12 hrs)', desc: 'Main washroom blockages or major appliances broken.' },
-  { id: 'Emergency (2–4 hrs)', label: 'Emergency (2–4 hrs)', desc: 'Total power/water failure, severe leaks, or safety hazards.' }
+  { id: 'Low', label: 'Low (24–48 hrs)', desc: 'Minor repairs, squeaky doors, or loose furniture hinges.' },
+  { id: 'Medium', label: 'Medium (12–24 hrs)', desc: 'Single light/fan down, slow leaks, or routine appliance issues.' },
+  { id: 'High', label: 'High (8–12 hrs)', desc: 'Main washroom blockages or major appliances broken.' },
+  { id: 'Emergency', label: 'Emergency (2–4 hrs)', desc: 'Total power/water failure, severe leaks, or safety hazards.' }
 ];
 
 export default function NewComplaint() {
@@ -46,20 +22,18 @@ export default function NewComplaint() {
   const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
   const [successRef, setSuccessRef] = useState<string | null>(null);
   
-  // RBAC State
   const [, setUserRole] = useState('REQUESTER');
   const [isSupervisor, setIsSupervisor] = useState(false);
   
-  const [form, setForm] = useState({
-    zone: '',
-    venue: '',
-    floor: '',
-    roomArea: '',
-    studentTr: '',
-    category: '',
-    priority: 'Medium (12–24 hrs)',
-    description: ''
-  });
+  // Refined State Form
+  const [selectedZone, setSelectedZone] = useState('');
+  const [selectedVenue, setSelectedVenue] = useState('');
+  const [selectedFloor, setSelectedFloor] = useState('');
+  const [selectedRoom, setSelectedRoom] = useState('');
+  const [studentTr, setStudentTr] = useState('');
+  const [category, setCategory] = useState('');
+  const [priority, setPriority] = useState('Medium');
+  const [description, setDescription] = useState('');
 
   useEffect(() => {
     fetchUserProfile();
@@ -68,32 +42,52 @@ export default function NewComplaint() {
   const fetchUserProfile = async () => {
     const { data: authData } = await supabase.auth.getUser();
     if (authData.user) {
-      // Changed 'domain' to 'zone'
       const { data: profile } = await supabase.from('profiles').select('role, zone').eq('id', authData.user.id).single();
       if (profile) {
         setUserRole(profile.role);
         
-        // Lock down zone for Supervisors
         if (profile.role === 'SUPERVISOR') {
           setIsSupervisor(true);
           if (profile.zone) {
-            // Take the first zone if they are assigned multiple (e.g. "Mawaid, Masakin" -> "Mawaid")
-            setForm(prev => ({ ...prev, zone: profile.zone.split(',')[0].trim() }));
+            setSelectedZone(profile.zone.split(',')[0].trim());
           }
         }
       }
     }
   };
 
-  const handleZoneChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    setForm({ ...form, zone: e.target.value, venue: '' });
+  // --- DYNAMIC LOGIC ENGINE ---
+  const activeVenues = selectedZone ? ZONE_FLOW_MAP[selectedZone] : [];
+  const activeVenueObj = activeVenues.find(v => v.name === selectedVenue);
+  const subConfig = activeVenueObj?.subConfig;
+  
+  const availableRoomsForFloor = (subConfig?.type === 'SELECT_FLOOR_ROOM' && selectedFloor)
+    ? subConfig.floors?.[selectedFloor] || []
+    : [];
+
+  const requiresRoomDropdown = (subConfig?.type === 'SELECT_ROOM' || subConfig?.type === 'SELECT_BATHROOM') || 
+                               (subConfig?.type === 'SELECT_FLOOR_ROOM' && availableRoomsForFloor.length > 0);
+                               
+  const showTRInput = subConfig?.requiresTR && (!requiresRoomDropdown || availableRoomsForFloor.length > 0);
+
+  // Cascading Resets
+  const handleZoneChange = (zone: string) => {
+    setSelectedZone(zone);
+    setSelectedVenue(''); setSelectedFloor(''); setSelectedRoom(''); setStudentTr('');
+  };
+  const handleVenueChange = (venue: string) => {
+    setSelectedVenue(venue);
+    setSelectedFloor(''); setSelectedRoom(''); setStudentTr('');
+  };
+  const handleFloorChange = (floor: string) => {
+    setSelectedFloor(floor);
+    setSelectedRoom(''); setStudentTr('');
   };
 
   const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
       const newFiles = Array.from(e.target.files);
       setPhotos(prev => [...prev, ...newFiles]);
-      
       const newPreviews = newFiles.map(file => URL.createObjectURL(file));
       setPhotoPreviews(prev => [...prev, ...newPreviews]);
     }
@@ -112,69 +106,51 @@ export default function NewComplaint() {
       const { data: authData } = await supabase.auth.getUser();
       if (!authData.user) throw new Error("Authentication required.");
 
-      // 1. Insert Complaint Record 
-      // THE FIX: Removed hardcoded status. DB sets pipeline_state to SUBMITTED automatically.
       const { data: complaintData, error: complaintError } = await supabase
         .from('complaints')
         .insert({
           requester_id: authData.user.id,
-          zone: form.zone,
-          venue: form.venue,
-          floor: form.floor,
-          room_area: form.roomArea,
-          student_tr_no: form.studentTr,
-          category: form.category,
-          priority: form.priority,
-          description: form.description
+          zone: selectedZone,
+          venue: selectedVenue,
+          floor: selectedFloor, // Will safely be empty if not applicable
+          room_area: selectedRoom, // Will safely be empty if not applicable
+          student_tr_no: studentTr,
+          category: category,
+          priority: priority,
+          description: description
         })
         .select()
         .single();
 
       if (complaintError) throw complaintError;
 
-      // 2. Upload Photos to Supabase Storage
       if (photos.length > 0) {
         for (const file of photos) {
           const fileExt = file.name.split('.').pop();
           const fileName = `${Math.random().toString(36).substring(2, 15)}.${fileExt}`;
           const filePath = `${complaintData.id}/${fileName}`;
-
-          const { error: uploadError } = await supabase.storage
-            .from('complaint_photos')
-            .upload(filePath, file);
+          const { error: uploadError } = await supabase.storage.from('complaint_photos').upload(filePath, file);
 
           if (!uploadError) {
-            const { data: publicUrlData } = supabase.storage
-              .from('complaint_photos')
-              .getPublicUrl(filePath);
-
-            await supabase.from('complaint_photos').insert({
-              complaint_id: complaintData.id,
-              file_name: file.name,
-              file_url: publicUrlData.publicUrl
-            });
+            const { data: publicUrlData } = supabase.storage.from('complaint_photos').getPublicUrl(filePath);
+            await supabase.from('complaint_photos').insert({ complaint_id: complaintData.id, file_name: file.name, file_url: publicUrlData.publicUrl });
           }
         }
       }
 
-      // Log to Audit Trail
       await supabase.from('system_logs').insert({
         action_type: 'COMPLAINT_REGISTERED',
-        description: `Registered structural complaint ${complaintData.complaint_id} in ${form.zone}.`,
+        description: `Registered structural complaint ${complaintData.complaint_id} in ${selectedZone}.`,
         user_email: authData.user.email || 'Requester'
       });
 
-      // Show Success Modal
       setSuccessRef(complaintData.complaint_id);
       
-      // Reset Form (Preserving Supervisor Zone)
-      setForm(prev => ({ 
-        zone: isSupervisor ? prev.zone : '', 
-        venue: '', floor: '', roomArea: '', studentTr: '', 
-        category: '', priority: 'Medium (12–24 hrs)', description: '' 
-      }));
-      setPhotos([]);
-      setPhotoPreviews([]);
+      // Complete Reset
+      if (!isSupervisor) setSelectedZone('');
+      setSelectedVenue(''); setSelectedFloor(''); setSelectedRoom(''); setStudentTr('');
+      setCategory(''); setPriority('Medium'); setDescription('');
+      setPhotos([]); setPhotoPreviews([]);
 
     } catch (err: any) {
       alert(`Error submitting complaint: ${err.message}`);
@@ -197,7 +173,7 @@ export default function NewComplaint() {
 
       <form onSubmit={submitComplaint} className="space-y-6">
         
-        {/* SECTION 1: LOCATION */}
+        {/* SECTION 1: LOCATION ENGINE */}
         <div className="bg-white rounded-3xl p-5 md:p-8 shadow-sm border border-slate-200">
           <div className="flex items-center space-x-2 border-b border-slate-100 pb-4 mb-6">
             <div className="bg-brand-maroon/10 p-2 rounded-xl">
@@ -206,45 +182,60 @@ export default function NewComplaint() {
             <h3 className="font-black text-sm uppercase tracking-wide text-slate-800">Location Details</h3>
           </div>
           
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5 md:gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5 md:gap-6 animate-in fade-in duration-300">
+            {/* TIER 1: ZONE */}
             <div>
               <label className="block text-[11px] font-black text-slate-500 uppercase mb-2">Zone *</label>
-              <select 
-                required 
-                disabled={isSupervisor}
-                value={form.zone} 
-                onChange={handleZoneChange} 
-                className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-brand-maroon outline-none transition shadow-sm disabled:opacity-70 disabled:cursor-not-allowed"
-              >
+              <select required disabled={isSupervisor} value={selectedZone} onChange={e => handleZoneChange(e.target.value)} className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-brand-maroon outline-none transition shadow-sm disabled:opacity-70 disabled:cursor-not-allowed">
                 <option value="" disabled>-- Select Zone --</option>
-                {Object.keys(ZONES).map(zone => (
-                  <option key={zone} value={zone}>{zone}</option>
-                ))}
+                {MASTER_ZONES.map(zone => <option key={zone} value={zone}>{zone}</option>)}
               </select>
               {isSupervisor && <p className="text-[9px] font-bold text-brand-maroon mt-1.5 uppercase">Locked to assigned domain</p>}
             </div>
+
+            {/* TIER 2: VENUE */}
             <div>
               <label className="block text-[11px] font-black text-slate-500 uppercase mb-2">Building / Venue *</label>
-              <select required disabled={!form.zone} value={form.venue} onChange={e => setForm({...form, venue: e.target.value})} className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-brand-maroon outline-none transition shadow-sm disabled:opacity-50">
-                <option value="" disabled>{form.zone ? '-- Select Venue --' : 'Select Zone First'}</option>
-                {form.zone && ZONES[form.zone].map(v => (
-                  <option key={v} value={v}>{v}</option>
-                ))}
+              <select required disabled={!selectedZone} value={selectedVenue} onChange={e => handleVenueChange(e.target.value)} className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-brand-maroon outline-none transition shadow-sm disabled:opacity-50">
+                <option value="" disabled>{selectedZone ? '-- Select Venue --' : 'Select Zone First'}</option>
+                {activeVenues.map(v => <option key={v.name} value={v.name}>{v.name}</option>)}
               </select>
-              {form.zone === 'Mawaid' && (
-                <p className="text-[10px] text-amber-600 font-bold mt-1.5 flex items-center gap-1">
-                  ⚠️ Please be precise in your description for Mawaid venues.
-                </p>
-              )}
+              {selectedZone === 'Mawaid' && <p className="text-[10px] text-amber-600 font-bold mt-1.5 flex items-center gap-1">⚠️ Be precise for Mawaid venues.</p>}
             </div>
-            <div>
-              <label className="block text-[11px] font-black text-slate-500 uppercase mb-2">Floor *</label>
-              <input required type="text" value={form.floor} onChange={e => setForm({...form, floor: e.target.value})} placeholder="e.g. Ground Floor" className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-brand-maroon outline-none transition shadow-sm" />
-            </div>
-            <div>
-              <label className="block text-[11px] font-black text-slate-500 uppercase mb-2">Room / Specific Area *</label>
-              <input required type="text" value={form.roomArea} onChange={e => setForm({...form, roomArea: e.target.value})} placeholder="e.g. Room 201 Bathroom" className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-brand-maroon outline-none transition shadow-sm" />
-            </div>
+
+            {/* TIER 3: FLOOR (If required by Venue) */}
+            {subConfig?.type === 'SELECT_FLOOR_ROOM' && (
+              <div className="animate-in fade-in zoom-in-95 duration-200">
+                <label className="block text-[11px] font-black text-slate-500 uppercase mb-2">Select Floor / Location *</label>
+                <select required value={selectedFloor} onChange={e => handleFloorChange(e.target.value)} className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-brand-maroon outline-none transition shadow-sm">
+                  <option value="" disabled>-- Choose Floor / Location --</option>
+                  {Object.keys(subConfig.floors || {}).map(f => <option key={f} value={f}>{f}</option>)}
+                </select>
+              </div>
+            )}
+
+            {/* TIER 4: ROOM / BATHROOM (If required by Venue or Floor) */}
+            {requiresRoomDropdown && (
+              <div className="animate-in fade-in zoom-in-95 duration-200">
+                <label className="block text-[11px] font-black text-slate-500 uppercase mb-2">
+                  {subConfig?.type === 'SELECT_BATHROOM' ? 'Bathroom No *' : 'Room / Class No *'}
+                </label>
+                <select required value={selectedRoom} onChange={e => setSelectedRoom(e.target.value)} className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-brand-maroon outline-none transition shadow-sm">
+                  <option value="" disabled>-- Select Option --</option>
+                  {(subConfig?.type === 'SELECT_FLOOR_ROOM' ? availableRoomsForFloor : subConfig?.options || []).map((opt: string) => (
+                    <option key={opt} value={opt}>{opt}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* TIER 5: TR NUMBER (If required) */}
+            {showTRInput && (
+              <div className="animate-in fade-in zoom-in-95 duration-200 md:col-span-2">
+                <label className="block text-[11px] font-black text-slate-500 uppercase mb-2">Student TR No. (Optional)</label>
+                <input type="text" value={studentTr} onChange={e => setStudentTr(e.target.value)} placeholder="e.g. 24440" className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-brand-maroon outline-none transition shadow-sm" />
+              </div>
+            )}
           </div>
         </div>
 
@@ -260,23 +251,19 @@ export default function NewComplaint() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5 md:gap-6 mb-6">
             <div>
               <label className="block text-[11px] font-black text-slate-500 uppercase mb-2">Category *</label>
-              <select required value={form.category} onChange={e => setForm({...form, category: e.target.value})} className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-brand-maroon outline-none transition shadow-sm">
+              <select required value={category} onChange={e => setCategory(e.target.value)} className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-brand-maroon outline-none transition shadow-sm">
                 <option value="" disabled>-- Select Category --</option>
                 {CATEGORIES.map(cat => <option key={cat} value={cat}>{cat}</option>)}
               </select>
-            </div>
-            <div>
-              <label className="block text-[11px] font-black text-slate-500 uppercase mb-2">Student TR No. (Optional)</label>
-              <input type="text" value={form.studentTr} onChange={e => setForm({...form, studentTr: e.target.value})} placeholder="e.g. 24440" className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-brand-maroon outline-none transition shadow-sm" />
             </div>
             
             <div className="md:col-span-2">
               <label className="block text-[11px] font-black text-slate-500 uppercase mb-2">Priority Level *</label>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                 {PRIORITIES.map(p => (
-                  <label key={p.id} className={`flex flex-col p-3 rounded-xl border-2 cursor-pointer transition ${form.priority === p.id ? 'border-brand-maroon bg-brand-maroon/5 shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
-                    <input type="radio" name="priority" value={p.id} checked={form.priority === p.id} onChange={() => setForm({...form, priority: p.id})} className="hidden" />
-                    <span className={`text-xs font-black mb-1 ${form.priority === p.id ? 'text-brand-maroon' : 'text-slate-800'}`}>{p.label}</span>
+                  <label key={p.id} className={`flex flex-col p-3 rounded-xl border-2 cursor-pointer transition ${priority === p.id ? 'border-brand-maroon bg-brand-maroon/5 shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
+                    <input type="radio" name="priority" value={p.id} checked={priority === p.id} onChange={() => setPriority(p.id)} className="hidden" />
+                    <span className={`text-xs font-black mb-1 ${priority === p.id ? 'text-brand-maroon' : 'text-slate-800'}`}>{p.label}</span>
                     <span className="text-[9px] font-bold text-slate-500 leading-tight">{p.desc}</span>
                   </label>
                 ))}
@@ -286,7 +273,7 @@ export default function NewComplaint() {
 
           <div className="mb-6">
             <label className="block text-[11px] font-black text-slate-500 uppercase mb-2">Detailed Description *</label>
-            <textarea required rows={4} value={form.description} onChange={e => setForm({...form, description: e.target.value})} placeholder="Please describe the issue in detail to help our technicians..." className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-brand-maroon outline-none transition shadow-sm resize-none"></textarea>
+            <textarea required rows={4} value={description} onChange={e => setDescription(e.target.value)} placeholder="Please describe the issue in detail to help our technicians..." className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-brand-maroon outline-none transition shadow-sm resize-none"></textarea>
           </div>
 
           {/* PHOTO UPLOADER */}

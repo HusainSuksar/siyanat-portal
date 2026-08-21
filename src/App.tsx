@@ -2,7 +2,11 @@ import { BrowserRouter as Router, Routes, Route, Navigate, Link, useLocation } f
 import { useState, useEffect } from "react";
 import { supabase } from "./lib/supabase";
 import { useAuth } from "./contexts/AuthContext"; 
-import { PackageCheck, LogOut, LayoutDashboard, PlusCircle, Truck, Warehouse, Bell, X, Server, PieChart, ShieldAlert, Users, Menu, Wrench, ClipboardList, Calendar, Car, CalendarCheck, ShoppingCart, Package } from "lucide-react";
+import { PackageCheck, LogOut, LayoutDashboard, PlusCircle, Truck, Warehouse, Bell, X, Server, PieChart, ShieldAlert, Users, Menu, Wrench, ClipboardList, Calendar, Car, CalendarCheck, ShoppingCart, Package, UserCircle } from "lucide-react";
+
+// --- NEW SECURITY & PROFILE IMPORTS ---
+import ForcePasswordChange from "./components/ForcePasswordChange";
+import UserProfile from "./pages/UserProfile";
 
 import SupervisorQueue from "./pages/SupervisorQueue";
 import Login from "./pages/Login";
@@ -114,7 +118,6 @@ const DesktopNavigation = ({ userRole }: { userRole: string }) => {
           </>
         )}
 
-        {/* Expose Operations & RTO accurately for Tanzeem */}
         {isTanzeemHead && !isSiyanatHead && (
           <>
             <Link to="/siyanat-operations" className={getTabClass("/siyanat-operations")}><Package className="w-4 h-4" /><span>Stationery Queue</span></Link>
@@ -124,7 +127,6 @@ const DesktopNavigation = ({ userRole }: { userRole: string }) => {
           </>
         )}
 
-        {/* Expose Operations & RTO accurately for AVIT */}
         {isAvitHead && !isSiyanatHead && (
           <>
             <Link to="/siyanat-operations" className={getTabClass("/siyanat-operations")}><Truck className="w-4 h-4" /><span>AVIT Operations</span></Link>
@@ -230,7 +232,11 @@ const MobileDrawerNavigation = ({ userRole, isOpen, setIsOpen, handleLogout }: {
           )}
         </div>
 
-        <div className="p-4 border-t border-slate-200 pb-safe">
+        <div className="p-4 border-t border-slate-200 pb-safe space-y-2">
+          {/* THE FIX: Added Profile Link for Mobile Users */}
+          <Link to="/profile" onClick={() => setIsOpen(false)} className="w-full flex items-center justify-center space-x-2 p-3 bg-slate-50 text-slate-700 font-bold rounded-xl border border-slate-200 hover:bg-slate-100">
+            <UserCircle className="w-5 h-5" /><span>My Profile</span>
+          </Link>
           <button onClick={handleLogout} className="w-full flex items-center justify-center space-x-2 p-3 bg-red-50 text-red-700 font-bold rounded-xl border border-red-200">
             <LogOut className="w-5 h-5" /><span>Logout</span>
           </button>
@@ -258,6 +264,10 @@ const PortalLayout = ({ children, userRole, userId }: { children: React.ReactNod
           </div>
           <div className="flex items-center gap-2 md:gap-4">
             <NotificationBell />
+            {/* THE FIX: Added Profile link to desktop header */}
+            <Link to="/profile" className="hidden md:flex items-center space-x-1 px-3 py-1.5 bg-brand-gold/20 hover:bg-brand-gold/30 text-brand-gold text-xs font-semibold rounded-lg border border-brand-gold/30 transition">
+              <UserCircle className="w-4 h-4" /><span>Profile</span>
+            </Link>
             <button onClick={handleLogout} className="hidden md:flex items-center space-x-1 px-3 py-1.5 bg-red-900/50 hover:bg-red-800 text-xs font-semibold rounded-lg border border-red-400/30 transition">
               <LogOut className="w-4 h-4" /><span>Logout</span>
             </button>
@@ -292,43 +302,48 @@ export default function App() {
   const isAvitHead = role === 'AVIT_HEAD' || isGodMode;
   const isStandardUser = role === 'STANDARD_USER' || role === 'REQUESTER';
   
-  // Create an umbrella logic check for any Operations Head
   const isOpsHead = isSiyanatHead || isTanzeemHead || isAvitHead;
   const isTech = role === 'EXECUTOR' || role === 'TECHNICIAN' || isGodMode;
   const isSupervisor = role === 'SUPERVISOR' || isGodMode;
 
   return (
     <Router>
-      <Routes>
-        <Route path="/login" element={!session ? <Login /> : <Navigate to="/" />} />
+      {/* THE FIX: ForcePasswordChange wrapper intercepts routing logic securely */}
+      <ForcePasswordChange>
+        <Routes>
+          <Route path="/login" element={!session ? <Login /> : <Navigate to="/" />} />
 
-        {/* Universal Routes */}
-        <Route path="/" element={session ? <PortalLayout userRole={role} userId={session.user.id}><Dashboard /></PortalLayout> : <Navigate to="/login" />} />
-        <Route path="/new-requisition" element={session ? <PortalLayout userRole={role} userId={session.user.id}><NewRequisition /></PortalLayout> : <Navigate to="/login" />} />
-        <Route path="/new-complaint" element={session ? <PortalLayout userRole={role} userId={session.user.id}><NewComplaint /></PortalLayout> : <Navigate to="/login" />} />
-        <Route path="/book-event" element={session ? <PortalLayout userRole={role} userId={session.user.id}><BookEvent /></PortalLayout> : <Navigate to="/login" />} />
-        
-        {/* Restrict Vehicle Booking */}
-        <Route path="/book-vehicle" element={session && !isStandardUser ? <PortalLayout userRole={role} userId={session.user.id}><BookVehicle /></PortalLayout> : <Navigate to="/" />} />
+          {/* Universal Routes */}
+          <Route path="/" element={session ? <PortalLayout userRole={role} userId={session.user.id}><Dashboard /></PortalLayout> : <Navigate to="/login" />} />
+          <Route path="/new-requisition" element={session ? <PortalLayout userRole={role} userId={session.user.id}><NewRequisition /></PortalLayout> : <Navigate to="/login" />} />
+          <Route path="/new-complaint" element={session ? <PortalLayout userRole={role} userId={session.user.id}><NewComplaint /></PortalLayout> : <Navigate to="/login" />} />
+          <Route path="/book-event" element={session ? <PortalLayout userRole={role} userId={session.user.id}><BookEvent /></PortalLayout> : <Navigate to="/login" />} />
+          
+          {/* User Profile */}
+          <Route path="/profile" element={session ? <PortalLayout userRole={role} userId={session.user.id}><UserProfile /></PortalLayout> : <Navigate to="/login" />} />
 
-        {/* Head Routes (Unlocked via isOpsHead) */}
-        <Route path="/siyanat-operations" element={session && isOpsHead ? <PortalLayout userRole={role} userId={session.user.id}><SiyanatOperations /></PortalLayout> : <Navigate to="/" />} />
-        <Route path="/restock" element={session && isOpsHead ? <PortalLayout userRole={role} userId={session.user.id}><RestockInventory /></PortalLayout> : <Navigate to="/" />} />
-        <Route path="/rto" element={session && isOpsHead ? <PortalLayout userRole={role} userId={session.user.id}><RequestToOrder /></PortalLayout> : <Navigate to="/" />} />
-        
-        {/* Strictly Admin / Siyanat */}
-        <Route path="/reports" element={session && isSiyanatHead ? <PortalLayout userRole={role} userId={session.user.id}><Reports /></PortalLayout> : <Navigate to="/" />} />
-        <Route path="/assets" element={session && isSiyanatHead ? <PortalLayout userRole={role} userId={session.user.id}><AssetRegister /></PortalLayout> : <Navigate to="/" />} />
-        <Route path="/audit" element={session && isSiyanatHead ? <PortalLayout userRole={role} userId={session.user.id}><AuditLogs /></PortalLayout> : <Navigate to="/" />} />
-        <Route path="/team" element={session && isSiyanatHead ? <PortalLayout userRole={role} userId={session.user.id}><TeamManagement /></PortalLayout> : <Navigate to="/" />} />
-        
-        {/* Tanzeem Command Center */}
-        <Route path="/tanzeem" element={session && isTanzeemHead ? <PortalLayout userRole={role} userId={session.user.id}><TanzeemCommandCenter /></PortalLayout> : <Navigate to="/" />} />
+          {/* Restrict Vehicle Booking */}
+          <Route path="/book-vehicle" element={session && !isStandardUser ? <PortalLayout userRole={role} userId={session.user.id}><BookVehicle /></PortalLayout> : <Navigate to="/" />} />
 
-        {/* Supervisor & Tech Routes */}
-        <Route path="/supervisor-queue" element={session && isSupervisor ? <PortalLayout userRole={role} userId={session.user.id}><SupervisorQueue /></PortalLayout> : <Navigate to="/" />} />
-        <Route path="/technician-portal" element={session && isTech ? <PortalLayout userRole={role} userId={session.user.id}><TechnicianPortal /></PortalLayout> : <Navigate to="/" />} />
-      </Routes>
+          {/* Head Routes (Unlocked via isOpsHead) */}
+          <Route path="/siyanat-operations" element={session && isOpsHead ? <PortalLayout userRole={role} userId={session.user.id}><SiyanatOperations /></PortalLayout> : <Navigate to="/" />} />
+          <Route path="/restock" element={session && isOpsHead ? <PortalLayout userRole={role} userId={session.user.id}><RestockInventory /></PortalLayout> : <Navigate to="/" />} />
+          <Route path="/rto" element={session && isOpsHead ? <PortalLayout userRole={role} userId={session.user.id}><RequestToOrder /></PortalLayout> : <Navigate to="/" />} />
+          
+          {/* Strictly Admin / Siyanat */}
+          <Route path="/reports" element={session && isSiyanatHead ? <PortalLayout userRole={role} userId={session.user.id}><Reports /></PortalLayout> : <Navigate to="/" />} />
+          <Route path="/assets" element={session && isSiyanatHead ? <PortalLayout userRole={role} userId={session.user.id}><AssetRegister /></PortalLayout> : <Navigate to="/" />} />
+          <Route path="/audit" element={session && isSiyanatHead ? <PortalLayout userRole={role} userId={session.user.id}><AuditLogs /></PortalLayout> : <Navigate to="/" />} />
+          <Route path="/team" element={session && isSiyanatHead ? <PortalLayout userRole={role} userId={session.user.id}><TeamManagement /></PortalLayout> : <Navigate to="/" />} />
+          
+          {/* Tanzeem Command Center */}
+          <Route path="/tanzeem" element={session && isTanzeemHead ? <PortalLayout userRole={role} userId={session.user.id}><TanzeemCommandCenter /></PortalLayout> : <Navigate to="/" />} />
+
+          {/* Supervisor & Tech Routes */}
+          <Route path="/supervisor-queue" element={session && isSupervisor ? <PortalLayout userRole={role} userId={session.user.id}><SupervisorQueue /></PortalLayout> : <Navigate to="/" />} />
+          <Route path="/technician-portal" element={session && isTech ? <PortalLayout userRole={role} userId={session.user.id}><TechnicianPortal /></PortalLayout> : <Navigate to="/" />} />
+        </Routes>
+      </ForcePasswordChange>
     </Router>
   );
 }

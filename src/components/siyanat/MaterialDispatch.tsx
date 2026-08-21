@@ -11,13 +11,11 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
   const { user } = useAuth();
   const { showToast } = useToast();
   
-  // THE NEW FEATURE: Toggle between Active Queue and History Archive
   const [viewMode, setViewMode] = useState<'active' | 'history'>('active');
   const [loading, setLoading] = useState(true);
   const [batches, setBatches] = useState<WorkOrder[]>([]);
   const [processingId, setProcessingId] = useState<string | null>(null);
 
-  // Modal States
   const [reviewBatch, setReviewBatch] = useState<WorkOrder | null>(null);
   const [itemDecisions, setItemDecisions] = useState<Record<string, { status: string; eta: number }>>({});
   const [poBatch, setPoBatch] = useState<WorkOrder | null>(null);
@@ -26,7 +24,6 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
 
   const fetchMaterials = async () => {
     setLoading(true);
-    
     const targetStates = viewMode === 'active' 
       ? ['AUTHORIZED', 'PROCESSING'] 
       : ['ACTION_REQUIRED', 'CLOSED', 'REJECTED'];
@@ -91,19 +88,12 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
 
   return (
     <div className="space-y-4">
-      {/* View Mode Toggle Switch */}
       <div className="flex justify-between items-center bg-white p-2 rounded-2xl border border-slate-200 shadow-sm w-full md:w-auto mb-4">
         <div className="flex gap-2 w-full">
-          <button 
-            onClick={() => setViewMode('active')} 
-            className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 transition ${viewMode === 'active' ? 'bg-brand-maroon text-brand-gold shadow-md' : 'text-slate-400 hover:bg-slate-50'}`}
-          >
+          <button onClick={() => setViewMode('active')} className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 transition ${viewMode === 'active' ? 'bg-brand-maroon text-brand-gold shadow-md' : 'text-slate-400 hover:bg-slate-50'}`}>
             <ListFilter className="w-4 h-4" /> Active Queue
           </button>
-          <button 
-            onClick={() => setViewMode('history')} 
-            className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 transition ${viewMode === 'history' ? 'bg-slate-800 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50'}`}
-          >
+          <button onClick={() => setViewMode('history')} className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 transition ${viewMode === 'history' ? 'bg-slate-800 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50'}`}>
             <HistoryIcon className="w-4 h-4" /> History Log
           </button>
         </div>
@@ -121,17 +111,17 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
       ) : (
         <div className="grid grid-cols-1 gap-4">
           {batches.map(b => {
-            const isTechPO = b.department === 'Technician Procurement';
             const myItems = b.items.filter(i => userRole === 'SUPER_ADMIN' || i.fulfillment_dept === userRole);
+            
+            // THE FIX: Smart UI Rendering triggers - ALL requests go through here
             const needsReview = myItems.some(i => i.status === 'Pending');
+            const needsPO = myItems.some(i => i.status === 'Ordered');
 
             return (
               <div key={b.id} className={`bg-white rounded-3xl p-5 shadow-sm border flex flex-col md:flex-row justify-between gap-5 transition hover:shadow-md ${b.pipeline_state === 'REJECTED' ? 'border-red-200' : 'border-slate-200'}`}>
                 <div className="space-y-3 flex-1 w-full">
                   <div className="flex items-center justify-between">
                     <h3 className="font-black text-brand-maroon text-lg">Batch: {b.batch_id}</h3>
-                    
-                    {/* Dynamic Status Badges depending on view mode */}
                     {viewMode === 'active' ? (
                       <span className={`px-2 py-0.5 text-[9px] font-black uppercase rounded ${b.pipeline_state === 'PROCESSING' ? 'bg-indigo-100 text-indigo-800' : 'bg-amber-100 text-amber-800'}`}>
                         {b.pipeline_state === 'PROCESSING' ? 'Waiting on other Depts' : 'Awaiting Dispatch'}
@@ -144,15 +134,12 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
                   </div>
                   <p className="text-xs text-slate-600 font-bold uppercase tracking-wider">{b.requester?.full_name} • {b.location}</p>
                   
-                  {/* Detailed Items View */}
                   <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 mt-2">
                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Items Processed by {userRole.replace('_HEAD', '')}:</span>
                     <div className="space-y-1">
                       {myItems.map((item) => (
                         <div key={item.id} className="text-xs font-bold text-slate-700 flex justify-between items-center py-1">
                           <span>{item.inventory?.name || item.custom_item_name}</span>
-                          
-                          {/* Show finalized status in history view */}
                           {viewMode === 'history' ? (
                             <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest ${item.status === 'Available' ? 'bg-emerald-100 text-emerald-700' : item.status === 'Not Provided' ? 'bg-red-100 text-red-600' : 'bg-indigo-100 text-indigo-700'}`}>
                               {item.status} (Qty: {item.requested_qty})
@@ -167,15 +154,19 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
                 </div>
 
                 <div className="flex gap-2 flex-wrap md:flex-col md:w-48 justify-center border-t md:border-t-0 md:border-l border-slate-100 pt-4 md:pt-0 md:pl-5">
-                  {/* Action Buttons (Only visible in Active mode, except Chat/Delete) */}
                   {viewMode === 'active' && (
                     <>
-                      {isTechPO ? (
-                        <button onClick={() => setPoBatch(b)} className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5 shadow-sm transition"><ShoppingCart className="w-4 h-4"/> Gen PO</button>
-                      ) : needsReview ? (
-                        <button onClick={() => openReviewModal(b)} className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5 shadow-sm transition"><SplitSquareHorizontal className="w-4 h-4"/> Split/Dispatch</button>
-                      ) : (
-                        <div className="w-full py-3 bg-slate-100 text-slate-500 font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5 border border-slate-200"><CheckCircle className="w-4 h-4"/> Reviewed</div>
+                      {/* Step 1: Force Review Split First for everything */}
+                      {needsReview && (
+                        <button onClick={() => openReviewModal(b)} className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5 shadow-sm transition"><SplitSquareHorizontal className="w-4 h-4"/> Review & Split</button>
+                      )}
+                      {/* Step 2: PO Button only appears for items marked "Ordered" during the review */}
+                      {!needsReview && needsPO && (
+                        <button onClick={() => setPoBatch(b)} className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5 shadow-sm transition"><ShoppingCart className="w-4 h-4"/> Issue PO (Missing)</button>
+                      )}
+                      {/* Fully complete state */}
+                      {!needsReview && !needsPO && (
+                        <div className="w-full py-3 bg-slate-100 text-slate-500 font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5 border border-slate-200"><CheckCircle className="w-4 h-4"/> Fully Reviewed</div>
                       )}
                     </>
                   )}
@@ -192,11 +183,9 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
         </div>
       )}
 
-      {/* Child Modals */}
       {poBatch && user && <VendorPOEngine batch={poBatch} userEmail={user.email || ''} onClose={() => setPoBatch(null)} onSuccess={() => { setPoBatch(null); fetchMaterials(); }} />}
       {chatBatch && user && <BatchDetailsModal batchId={chatBatch.batch_id} workOrderId={chatBatch.id} isOpen={!!chatBatch} onClose={() => setChatBatch(null)} currentUser={user} />}
       
-      {/* Delete Confirmation Modal */}
       {deleteTarget && (
         <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-white p-6 rounded-3xl max-w-sm w-full text-center shadow-2xl animate-in zoom-in-95 duration-200">
@@ -210,12 +199,11 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
         </div>
       )}
 
-      {/* Review Modal */}
       {reviewBatch && (
          <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
            <div className="bg-white rounded-3xl w-full max-w-2xl overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
              <div className="bg-brand-maroon p-5 flex justify-between items-center text-white">
-               <h3 className="font-extrabold text-sm uppercase">Review Batch</h3>
+               <h3 className="font-extrabold text-sm uppercase">Review Batch & Split</h3>
                <button onClick={() => setReviewBatch(null)} className="hover:text-red-200 transition"><X className="w-5 h-5"/></button>
              </div>
              <form onSubmit={handleReviewSubmit} className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
@@ -226,13 +214,14 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
                       <div className="text-[11px] text-slate-500 font-medium">Requested: <span className="font-black text-brand-maroon">{item.requested_qty}</span></div>
                     </div>
                     <div className="md:col-span-4">
+                      {/* THE FIX: Updated Dropdown Language for clarity */}
                       <select value={itemDecisions[item.id]?.status || 'Available'} onChange={e => setItemDecisions({...itemDecisions, [item.id]: {...itemDecisions[item.id], status: e.target.value}})} className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-brand-maroon">
                         <option value="Available">Available (Freeze Stock)</option>
-                        <option value="Pending">Pending (Requires ETA)</option>
+                        <option value="Ordered">Not in Stock (Requires PO)</option>
                         <option value="Not Provided">Not Provided (Reject)</option>
                       </select>
                     </div>
-                    {itemDecisions[item.id]?.status === 'Pending' && (
+                    {itemDecisions[item.id]?.status === 'Ordered' && (
                       <div className="md:col-span-3 animate-in fade-in duration-200">
                         <label className="block text-[9px] font-bold text-slate-500 uppercase mb-1">ETA (Days)</label>
                         <input type="number" min="1" required placeholder="ETA Days" value={itemDecisions[item.id]?.eta || ''} onChange={e => setItemDecisions({...itemDecisions, [item.id]: {...itemDecisions[item.id], eta: parseInt(e.target.value)||0}})} className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold outline-none text-center focus:ring-2 focus:ring-amber-500"/>
@@ -240,7 +229,7 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
                     )}
                  </div>
                ))}
-               <button type="submit" disabled={!!processingId} className="w-full py-4 mt-4 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase tracking-widest rounded-xl shadow-lg transition disabled:opacity-50">Confirm Process Items</button>
+               <button type="submit" disabled={!!processingId} className="w-full py-4 mt-4 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase tracking-widest rounded-xl shadow-lg transition disabled:opacity-50">Confirm Stock Allocation</button>
              </form>
            </div>
          </div>

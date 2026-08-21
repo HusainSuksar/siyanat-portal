@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { supabase, type InventoryItem } from '../lib/supabase';
-import { Wrench, Printer, CheckCircle, MapPin, AlertCircle, PackageSearch, X, PlusCircle, Trash2, Send } from 'lucide-react';
+import { Wrench, Printer, CheckCircle, MapPin, AlertCircle, PackageSearch, X, PlusCircle, Trash2, Send, PackageCheck, ListFilter, History as HistoryIcon } from 'lucide-react';
 
 export default function TechnicianPortal() {
+  const [viewMode, setViewMode] = useState<'active' | 'history'>('active');
   const [assignments, setAssignments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [userProfile, setUserProfile] = useState<any>(null);
@@ -32,7 +33,11 @@ export default function TechnicianPortal() {
       
       setUserProfile(profile);
 
-      // THE FIX: Querying specifically for the universal pipeline_state
+      // Switch database target based on the view mode
+      const targetStates = viewMode === 'active' 
+        ? ['PROCESSING', 'ACTION_REQUIRED'] 
+        : ['CLOSED'];
+
       const { data, error } = await supabase
         .from('technician_assignments')
         .select(`
@@ -40,7 +45,7 @@ export default function TechnicianPortal() {
           complaint:complaints(*)
         `)
         .eq('technician_id', authData.user.id)
-        .in('complaint.pipeline_state', ['PROCESSING', 'ACTION_REQUIRED'])
+        .in('complaint.pipeline_state', targetStates)
         .order('assigned_at', { ascending: false });
 
       if (error) {
@@ -48,7 +53,6 @@ export default function TechnicianPortal() {
       }
       
       if (data) {
-        // Filter out any assignments where the joined complaint is null (due to inner join filtering logic)
         setAssignments(data.filter(a => a.complaint !== null));
       }
     }
@@ -63,12 +67,11 @@ export default function TechnicianPortal() {
   useEffect(() => {
     fetchAssignments();
     fetchCatalog();
-  }, []);
+  }, [viewMode]);
 
   const completeTask = async (assignmentId: string, complaintId: string) => {
     if (!confirm(`Mark this task as fully completed? The Supervisor will be notified to verify.`)) return;
 
-    // THE FIX: RPC Call to advance from PROCESSING to ACTION_REQUIRED
     await supabase.rpc('advance_pipeline', { target_table: 'complaints', target_id: complaintId });
     await supabase.from('technician_assignments').update({ status: 'Completed' }).eq('id', assignmentId);
     
@@ -81,7 +84,20 @@ export default function TechnicianPortal() {
     fetchAssignments();
   };
 
-  // --- MATERIAL REQUEST LOGIC ---
+  const resumeTask = async (assignmentId: string) => {
+    try {
+      await supabase.from('technician_assignments').update({ status: 'Assigned' }).eq('id', assignmentId);
+      await supabase.from('system_logs').insert({
+        action_type: 'TECH_RESUMED_TASK',
+        description: `Technician ${userProfile?.full_name} picked up requested materials and resumed work.`,
+        user_email: userProfile?.email || 'Technician'
+      });
+      fetchAssignments();
+    } catch (err: any) {
+      alert("Error resuming task: " + err.message);
+    }
+  };
+
   const openMaterialModal = (assignment: any) => {
     setActiveAssignment(assignment);
     setSelectedItems([]);
@@ -120,7 +136,6 @@ export default function TechnicianPortal() {
     setSubmittingMaterial(true);
 
     try {
-      // 1. Create a dummy Work Order tied to this complaint specifically for procurement
       const { data: woData, error: woError } = await supabase.from('work_orders').insert({
         requester_id: userProfile.id,
         department: 'Technician Procurement',
@@ -133,7 +148,6 @@ export default function TechnicianPortal() {
 
       if (woError) throw woError;
 
-      // 2. Insert the requested items
       const itemsToInsert = selectedItems.map(item => ({
         work_order_id: woData.id,
         inventory_id: item.type === 'Catalog' ? item.id : null,
@@ -198,7 +212,7 @@ export default function TechnicianPortal() {
           <p><strong>Technician:</strong> ${userProfile?.full_name}</p>
           <p><strong>Trade:</strong> ${userProfile?.trade || 'General'}</p>
           <p><strong>Date:</strong> ${new Date().toLocaleDateString()}</p>
-          <p><strong>Total Assigned Tasks:</strong> ${assignments.length}</p>
+          <p><strong>Total Tasks Shown:</strong> ${assignments.length}</p>
           <div style="margin-top: 20px;">
             ${tasksHtml}
           </div>
@@ -230,30 +244,45 @@ export default function TechnicianPortal() {
         </button>
       </div>
 
-      <div className="grid grid-cols-3 gap-3 md:gap-4">
-        <div className="bg-white p-4 md:p-5 rounded-2xl shadow-sm border border-slate-200 text-center">
-          <div className="text-2xl md:text-3xl font-black text-slate-800">{assignments.length}</div>
-          <div className="text-[9px] md:text-[10px] font-black tracking-widest text-slate-400 uppercase mt-1">Total Tasks</div>
-        </div>
-        <div className="bg-white p-4 md:p-5 rounded-2xl shadow-sm border border-slate-200 text-center">
-          <div className="text-2xl md:text-3xl font-black text-red-600">
-            {assignments.filter(a => a.complaint.priority.includes('URGENT')).length}
-          </div>
-          <div className="text-[9px] md:text-[10px] font-black tracking-widest text-slate-400 uppercase mt-1">Urgent</div>
-        </div>
-        <div className="bg-white p-4 md:p-5 rounded-2xl shadow-sm border border-slate-200 text-center">
-          <div className="text-2xl md:text-3xl font-black text-emerald-600">
-            {assignments.filter(a => a.complaint.pipeline_state === 'ACTION_REQUIRED').length}
-          </div>
-          <div className="text-[9px] md:text-[10px] font-black tracking-widest text-slate-400 uppercase mt-1">Completed</div>
+      <div className="flex justify-between items-center bg-white p-2 rounded-2xl border border-slate-200 shadow-sm w-full md:w-auto">
+        <div className="flex gap-2 w-full">
+          <button onClick={() => setViewMode('active')} className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 transition ${viewMode === 'active' ? 'bg-brand-maroon text-brand-gold shadow-md' : 'text-slate-400 hover:bg-slate-50'}`}>
+            <ListFilter className="w-4 h-4" /> Active Tasks
+          </button>
+          <button onClick={() => setViewMode('history')} className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 transition ${viewMode === 'history' ? 'bg-slate-800 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50'}`}>
+            <HistoryIcon className="w-4 h-4" /> History Log
+          </button>
         </div>
       </div>
+
+      {viewMode === 'active' && (
+        <div className="grid grid-cols-3 gap-3 md:gap-4">
+          <div className="bg-white p-4 md:p-5 rounded-2xl shadow-sm border border-slate-200 text-center">
+            <div className="text-2xl md:text-3xl font-black text-slate-800">{assignments.length}</div>
+            <div className="text-[9px] md:text-[10px] font-black tracking-widest text-slate-400 uppercase mt-1">Total Tasks</div>
+          </div>
+          <div className="bg-white p-4 md:p-5 rounded-2xl shadow-sm border border-slate-200 text-center">
+            <div className="text-2xl md:text-3xl font-black text-red-600">
+              {assignments.filter(a => a.complaint.priority.includes('URGENT')).length}
+            </div>
+            <div className="text-[9px] md:text-[10px] font-black tracking-widest text-slate-400 uppercase mt-1">Urgent</div>
+          </div>
+          <div className="bg-white p-4 md:p-5 rounded-2xl shadow-sm border border-slate-200 text-center">
+            <div className="text-2xl md:text-3xl font-black text-emerald-600">
+              {assignments.filter(a => a.complaint.pipeline_state === 'ACTION_REQUIRED').length}
+            </div>
+            <div className="text-[9px] md:text-[10px] font-black tracking-widest text-slate-400 uppercase mt-1">Pending Verify</div>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {loading ? (
           <div className="col-span-full text-center py-12 text-slate-500 font-bold animate-pulse bg-white rounded-3xl border border-slate-200">Loading assignments...</div>
         ) : assignments.length === 0 ? (
-          <div className="col-span-full text-center py-12 bg-white rounded-3xl border border-slate-200 text-slate-500 font-bold">No active tasks assigned. Relax!</div>
+          <div className="col-span-full text-center py-12 bg-white rounded-3xl border border-slate-200 text-slate-500 font-bold">
+            {viewMode === 'active' ? 'No active tasks assigned. Relax!' : 'No historical records found.'}
+          </div>
         ) : (
           assignments.map(a => {
             const isUrgent = a.complaint.priority.includes('URGENT');
@@ -261,20 +290,26 @@ export default function TechnicianPortal() {
             const isWaiting = a.status === 'Waiting for Material';
 
             return (
-              <div key={a.id} className={`bg-white rounded-3xl p-5 shadow-sm border-2 ${isUrgent ? 'border-red-400' : 'border-slate-200'} flex flex-col justify-between`}>
+              <div key={a.id} className={`bg-white rounded-3xl p-5 shadow-sm border-2 ${isUrgent && viewMode === 'active' ? 'border-red-400' : 'border-slate-200'} flex flex-col justify-between`}>
                 <div>
                   <div className="flex justify-between items-start mb-3">
                     <div>
                       <span className="text-xs font-black text-brand-maroon tracking-wider">{a.complaint.complaint_id}</span>
                       <h3 className="font-extrabold text-slate-800 text-sm mt-0.5">{a.complaint.category}</h3>
                     </div>
-                    <span className={`px-2 py-1 rounded text-[9px] font-black uppercase tracking-wider ${
-                      isCompleted ? 'bg-emerald-100 text-emerald-800' : 
-                      isWaiting ? 'bg-amber-100 text-amber-800' : 
-                      'bg-indigo-100 text-indigo-800'
-                    }`}>
-                      {isCompleted ? 'Pending Verification' : a.complaint.pipeline_state}
-                    </span>
+                    {viewMode === 'history' ? (
+                      <span className="px-2 py-1 rounded text-[9px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800">
+                        Completed & Verified
+                      </span>
+                    ) : (
+                      <span className={`px-2 py-1 rounded text-[9px] font-black uppercase tracking-wider ${
+                        isCompleted ? 'bg-emerald-100 text-emerald-800' : 
+                        isWaiting ? 'bg-amber-100 text-amber-800' : 
+                        'bg-indigo-100 text-indigo-800'
+                      }`}>
+                        {isCompleted ? 'Pending Verification' : a.complaint.pipeline_state}
+                      </span>
+                    )}
                   </div>
 
                   <div className="space-y-2.5 mb-6 text-xs bg-slate-50 p-3 rounded-xl border border-slate-100">
@@ -292,7 +327,8 @@ export default function TechnicianPortal() {
                   </div>
                 </div>
 
-                {!isCompleted && !isWaiting && (
+                {/* Only render action buttons in Active mode */}
+                {viewMode === 'active' && !isCompleted && !isWaiting && (
                   <div className="flex gap-2 pt-4 border-t border-slate-100">
                     <button 
                       onClick={() => openMaterialModal(a)}
@@ -311,9 +347,16 @@ export default function TechnicianPortal() {
                   </div>
                 )}
                 
-                {isWaiting && (
-                  <div className="pt-4 border-t border-slate-100 text-center">
-                    <span className="text-xs font-bold text-amber-600 animate-pulse">Request sent. Awaiting Admin PO & Stock.</span>
+                {viewMode === 'active' && isWaiting && (
+                  <div className="flex flex-col gap-3 pt-4 border-t border-slate-100 text-center">
+                    <span className="text-xs font-bold text-amber-600 animate-pulse">Request sent. Awaiting Admin Approval/PO.</span>
+                    <button 
+                      onClick={() => resumeTask(a.id)}
+                      className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[10px] uppercase tracking-wider rounded-xl shadow-md transition flex justify-center items-center gap-1.5"
+                    >
+                      <PackageCheck className="w-4 h-4" />
+                      Material Received (Resume Task)
+                    </button>
                   </div>
                 )}
               </div>
@@ -327,7 +370,6 @@ export default function TechnicianPortal() {
         <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm flex justify-center items-end sm:items-center p-4">
           <div className="bg-white rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom sm:slide-in-from-bottom-0 sm:zoom-in-95 duration-300 max-h-[90vh] flex flex-col">
             
-            {/* Modal Header */}
             <div className="bg-brand-maroon p-5 flex justify-between items-center text-white shrink-0">
               <div>
                 <h3 className="font-black text-sm uppercase tracking-wide flex items-center gap-2"><PackageSearch className="w-5 h-5 text-brand-gold"/> Request Material / Parts</h3>
@@ -338,7 +380,6 @@ export default function TechnicianPortal() {
 
             <div className="flex-1 overflow-y-auto p-5 space-y-6">
               
-              {/* Selected Items Cart */}
               {selectedItems.length > 0 && (
                 <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 shadow-inner">
                   <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-3">Cart / Requested Items</h4>
@@ -363,7 +404,6 @@ export default function TechnicianPortal() {
                 </div>
               )}
 
-              {/* Custom Item Adder */}
               <div className="bg-amber-50 p-4 rounded-2xl border border-amber-200">
                 <h4 className="text-[10px] font-black uppercase text-amber-800 tracking-widest mb-3">Can't find it? Request Custom Part</h4>
                 <div className="flex flex-col sm:flex-row gap-2">
@@ -375,7 +415,6 @@ export default function TechnicianPortal() {
                 </div>
               </div>
 
-              {/* Catalog Search & Select */}
               <div>
                 <div className="flex justify-between items-end mb-3 border-b border-slate-100 pb-2">
                   <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Live Inventory Catalog</h4>
@@ -403,7 +442,6 @@ export default function TechnicianPortal() {
               </div>
             </div>
 
-            {/* Modal Footer / Submit */}
             <div className="p-5 border-t border-slate-100 bg-white shrink-0">
               <button 
                 onClick={submitMaterialRequest}

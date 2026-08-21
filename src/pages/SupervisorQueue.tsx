@@ -1,16 +1,16 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { ClipboardList, CheckCircle, XCircle, Image as ImageIcon, MapPin, SearchCheck, RefreshCcw, ShieldCheck, Mailbox, X } from 'lucide-react';
+import { ClipboardList, CheckCircle, XCircle, Image as ImageIcon, MapPin, SearchCheck, RefreshCcw, ShieldCheck, Mailbox, X, History } from 'lucide-react';
 
 export default function SupervisorQueue() {
-  const [activeTab, setActiveTab] = useState<'inbox' | 'verification'>('inbox');
+  const [activeTab, setActiveTab] = useState<'inbox' | 'verification' | 'history'>('inbox');
   const [complaints, setComplaints] = useState<any[]>([]);
   const [verifications, setVerifications] = useState<any[]>([]);
+  const [historyLog, setHistoryLog] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [userProfile, setUserProfile] = useState<any>(null);
 
-  // Reason Modal State (Replaces prompt)
   const [reasonModalOpen, setReasonModalOpen] = useState(false);
   const [modalAction, setModalAction] = useState<'REJECT' | 'REOPEN'>('REJECT');
   const [targetComplaint, setTargetComplaint] = useState<any>(null);
@@ -37,7 +37,7 @@ export default function SupervisorQueue() {
           photos:complaint_photos(file_url),
           assignments:technician_assignments(status, technician:profiles!technician_assignments_technician_id_fkey(full_name, trade))
         `)
-        .order('created_at', { ascending: true });
+        .order('created_at', { ascending: false }); // Sort newest first for history
 
       if (profile?.role === 'SUPERVISOR' && profile?.zone) {
         const assignedZones = profile.zone.split(',').map((z: string) => z.trim());
@@ -49,6 +49,8 @@ export default function SupervisorQueue() {
       if (data && !error) {
         setComplaints(data.filter(c => c.pipeline_state === 'SUBMITTED'));
         setVerifications(data.filter(c => c.pipeline_state === 'ACTION_REQUIRED'));
+        // History includes Approved (Processing), Verified (Closed), and Rejected
+        setHistoryLog(data.filter(c => ['PROCESSING', 'CLOSED', 'REJECTED'].includes(c.pipeline_state)));
       }
     }
     setLoading(false);
@@ -90,7 +92,7 @@ export default function SupervisorQueue() {
     setProcessingId(targetComplaint.id);
 
     if (modalAction === 'REJECT') {
-      const { error } = await supabase.from('complaints').update({ pipeline_state: 'REJECTED' }).eq('id', targetComplaint.id);
+      const { error } = await supabase.from('complaints').update({ pipeline_state: 'REJECTED', rejection_reason: reasonText }).eq('id', targetComplaint.id);
       if (!error) {
         await supabase.from('system_logs').insert({
           action_type: 'SUPERVISOR_REJECTED',
@@ -164,6 +166,9 @@ export default function SupervisorQueue() {
         <button onClick={() => setActiveTab('verification')} className={`px-5 py-3 text-xs uppercase tracking-widest font-black border-b-2 transition flex items-center gap-2 whitespace-nowrap ${activeTab === 'verification' ? 'border-brand-maroon text-brand-maroon' : 'border-transparent text-slate-400 hover:text-slate-700'}`}>
           <SearchCheck className="w-4 h-4" /> Pending Sign-off
           {verifications.length > 0 && <span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full ml-1">{verifications.length}</span>}
+        </button>
+        <button onClick={() => setActiveTab('history')} className={`px-5 py-3 text-xs uppercase tracking-widest font-black border-b-2 transition flex items-center gap-2 whitespace-nowrap ${activeTab === 'history' ? 'border-brand-maroon text-brand-maroon' : 'border-transparent text-slate-400 hover:text-slate-700'}`}>
+          <History className="w-4 h-4" /> History Log
         </button>
       </div>
 
@@ -308,6 +313,70 @@ export default function SupervisorQueue() {
                       >
                         <RefreshCcw className="w-5 h-5" /> Reopen Issue
                       </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* --- TAB 3: HISTORY LOG --- */}
+      {activeTab === 'history' && (
+        <div className="space-y-4">
+          {loading ? (
+            <div className="p-8 text-center text-slate-500 font-bold animate-pulse bg-white rounded-3xl border border-slate-200 shadow-sm">Loading history...</div>
+          ) : historyLog.length === 0 ? (
+            <div className="p-12 text-center bg-white rounded-3xl border border-slate-200 shadow-sm">
+              <History className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+              <p className="text-slate-500 font-bold uppercase tracking-wider text-xs">No historical records found.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4">
+              {historyLog.map(c => {
+                const assignedTech = c.assignments?.[0]?.technician?.full_name;
+
+                return (
+                  <div key={c.id} className={`bg-white rounded-3xl p-5 shadow-sm border ${c.pipeline_state === 'REJECTED' ? 'border-red-200' : 'border-slate-200'} flex flex-col gap-5 transition hover:shadow-md`}>
+                    <div className="flex-1 w-full">
+                      <div className="flex justify-between items-start mb-4">
+                        <div>
+                          <div className="font-black text-brand-maroon tracking-wider text-sm">{c.complaint_id}</div>
+                          <div className="font-bold text-slate-800 text-lg mt-0.5 leading-tight">{c.category}</div>
+                        </div>
+                        <span className={`px-2.5 py-1 rounded text-[9px] font-black uppercase tracking-widest ${
+                          c.pipeline_state === 'CLOSED' ? 'bg-emerald-100 text-emerald-800' : 
+                          c.pipeline_state === 'REJECTED' ? 'bg-red-100 text-red-700' : 
+                          'bg-indigo-100 text-indigo-800'
+                        }`}>
+                          {c.pipeline_state === 'PROCESSING' ? 'Approved (In Progress)' : 
+                           c.pipeline_state === 'CLOSED' ? 'Verified & Closed' : 'Rejected'}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 bg-slate-50 p-4 rounded-2xl border border-slate-100 mb-4">
+                        <div>
+                          <div className="text-[10px] text-slate-400 uppercase font-black tracking-widest mb-1">Requester</div>
+                          <div className="font-bold text-slate-800 text-xs">{c.requester?.full_name || 'Unknown User'}</div>
+                        </div>
+                        <div>
+                          <div className="text-[10px] text-slate-400 uppercase font-black tracking-widest mb-1">Location</div>
+                          <div className="font-bold text-slate-800 text-xs">{c.venue}</div>
+                          <div className="text-[10px] font-semibold text-slate-500 mt-0.5">{c.room_area}</div>
+                        </div>
+                        <div>
+                          <div className="text-[10px] text-slate-400 uppercase font-black tracking-widest mb-1">Assigned Tech</div>
+                          <div className="font-bold text-indigo-700 text-xs">{assignedTech || 'Pending Assignment'}</div>
+                        </div>
+                      </div>
+
+                      {c.pipeline_state === 'REJECTED' && c.rejection_reason && (
+                        <div className="bg-red-50 p-3 rounded-xl border border-red-100">
+                          <span className="text-[10px] font-black text-red-600 uppercase tracking-widest block mb-1">Rejection Reason</span>
+                          <p className="text-xs font-semibold text-red-900">{c.rejection_reason}</p>
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
