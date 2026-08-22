@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { Users, Shield, UserCog, Edit, Trash2, X, Save, UserPlus } from 'lucide-react';
+import { Users, Shield, UserCog, Edit, Trash2, X, Save, UserPlus, Phone } from 'lucide-react';
 
 const AVAILABLE_ZONES = [
   "Main Jamea Complex",
@@ -25,7 +25,14 @@ export default function TeamManagement() {
   
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [newUser, setNewUser] = useState({
-    full_name: '', email: '', department: '', its_number: '', role: 'REQUESTER', zone: '', trade: ''
+    full_name: '', 
+    email: '', 
+    phone_number: '',
+    department: '', 
+    its_number: '', 
+    role: 'REQUESTER', 
+    zone: '', 
+    trade: ''
   });
 
   // Multi-Select States
@@ -75,13 +82,13 @@ export default function TeamManagement() {
       if (authError) throw authError;
 
       if (authData.user) {
-        // Prepare arrays into CSV strings
         const zoneString = newUser.role === 'SUPERVISOR' ? selectedZones.join(', ') : null;
         const tradeString = newUser.role === 'EXECUTOR' ? selectedTrades.join(', ') : null;
 
         const payload = {
           id: authData.user.id,
           full_name: newUser.full_name,
+          phone_number: newUser.phone_number.trim() || null,
           department: newUser.department,
           its_number: newUser.its_number || null,
           role: newUser.role,
@@ -101,7 +108,7 @@ export default function TeamManagement() {
 
         alert(`User Registered Successfully!\n\nEmail: ${cleanEmail}\nPassword: ${cleanPassword}`);
         setAddModalOpen(false);
-        setNewUser({ full_name: '', email: '', department: '', its_number: '', role: 'REQUESTER', zone: '', trade: '' });
+        setNewUser({ full_name: '', email: '', phone_number: '', department: '', its_number: '', role: 'REQUESTER', zone: '', trade: '' });
         setSelectedZones([]); setSelectedTrades([]);
         fetchTeam();
       }
@@ -116,7 +123,6 @@ export default function TeamManagement() {
   const openEditModal = (user: any) => {
     setEditingUser({ ...user });
     
-    // Parse existing CSV strings back into arrays for the checkboxes
     if (user.role === 'SUPERVISOR' && user.zone) {
       setSelectedZones(user.zone.split(',').map((s: string) => s.trim()));
     } else {
@@ -137,12 +143,12 @@ export default function TeamManagement() {
     if (!editingUser) return;
     setProcessingId(editingUser.id);
 
-    // Re-pack arrays into CSV strings
     const zoneString = editingUser.role === 'SUPERVISOR' ? selectedZones.join(', ') : null;
     const tradeString = editingUser.role === 'EXECUTOR' ? selectedTrades.join(', ') : null;
 
     const payload = {
       full_name: editingUser.full_name,
+      phone_number: editingUser.phone_number ? editingUser.phone_number.trim() : null,
       department: editingUser.department,
       its_number: editingUser.its_number,
       role: editingUser.role,
@@ -164,7 +170,7 @@ export default function TeamManagement() {
       setEditModalOpen(false);
       fetchTeam();
     } else {
-      alert("Error updating user. " + error.message);
+      alert("Error updating user: " + error.message);
     }
     setProcessingId(null);
   };
@@ -199,11 +205,11 @@ export default function TeamManagement() {
             <Users className="w-6 h-6" />
             Team & Access Management
           </h2>
-          <p className="text-xs text-slate-500 mt-1">Manage personnel, assign multi-trades/zones, and control access levels.</p>
+          <p className="text-xs text-slate-500 mt-1">Manage personnel, WhatsApp contact numbers, and access levels.</p>
         </div>
         <button 
           onClick={() => {
-            setNewUser({ full_name: '', email: '', department: '', its_number: '', role: 'REQUESTER', zone: '', trade: '' });
+            setNewUser({ full_name: '', email: '', phone_number: '', department: '', its_number: '', role: 'REQUESTER', zone: '', trade: '' });
             setSelectedZones([]); setSelectedTrades([]);
             setAddModalOpen(true);
           }}
@@ -225,6 +231,7 @@ export default function TeamManagement() {
             <thead className="bg-slate-100 text-slate-700 uppercase font-bold">
               <tr>
                 <th className="p-3">Personnel Details</th>
+                <th className="p-3">Contact Details</th>
                 <th className="p-3">Department & ITS</th>
                 <th className="p-3">Role Context</th>
                 <th className="p-3 text-right">Admin Actions</th>
@@ -232,9 +239,9 @@ export default function TeamManagement() {
             </thead>
             <tbody className="divide-y divide-slate-200">
               {loading ? (
-                <tr><td colSpan={4} className="p-6 text-center text-slate-500 font-medium animate-pulse">Loading personnel data...</td></tr>
+                <tr><td colSpan={5} className="p-6 text-center text-slate-500 font-medium animate-pulse">Loading personnel data...</td></tr>
               ) : team.length === 0 ? (
-                <tr><td colSpan={4} className="p-6 text-center text-slate-500 font-medium italic">No users found.</td></tr>
+                <tr><td colSpan={5} className="p-6 text-center text-slate-500 font-medium italic">No users found.</td></tr>
               ) : (
                 team.map((user) => {
                   const isAdmin = user.role === 'SUPER_ADMIN';
@@ -246,6 +253,15 @@ export default function TeamManagement() {
                       <td className="p-3">
                         <div className="font-bold text-slate-800">{user.full_name || 'Unknown User'}</div>
                         <div className="text-[10px] text-slate-500">{user.email}</div>
+                      </td>
+                      <td className="p-3">
+                        {user.phone_number ? (
+                          <span className="inline-flex items-center gap-1 font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                            <Phone className="w-3 h-3" /> {user.phone_number}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 italic font-medium">No Phone</span>
+                        )}
                       </td>
                       <td className="p-3">
                         <div className="font-semibold text-slate-600">{user.department || 'Unassigned'}</div>
@@ -325,6 +341,20 @@ export default function TeamManagement() {
                   </div>
                 )}
 
+                <div className="col-span-2">
+                  <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1 flex items-center gap-1">
+                    <Phone className="w-3 h-3 text-emerald-600" /> WhatsApp / Contact Phone Number
+                  </label>
+                  <input 
+                    type="tel" 
+                    placeholder="e.g. +91 98765 43210"
+                    value={addModalOpen ? newUser.phone_number : editingUser.phone_number || ''} 
+                    onChange={e => addModalOpen ? setNewUser({...newUser, phone_number: e.target.value}) : setEditingUser({...editingUser, phone_number: e.target.value})} 
+                    className="w-full p-2 border border-slate-300 rounded-lg text-xs outline-none focus:ring-2 focus:ring-brand-maroon"
+                  />
+                  <p className="text-[9px] text-slate-400 mt-0.5">Required for instant WhatsApp maintenance dispatches.</p>
+                </div>
+
                 <div>
                   <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">Department</label>
                   <input type="text" value={addModalOpen ? newUser.department : editingUser.department || ''} onChange={e => addModalOpen ? setNewUser({...newUser, department: e.target.value}) : setEditingUser({...editingUser, department: e.target.value})} className="w-full p-2 border border-slate-300 rounded-lg text-xs outline-none focus:ring-2 focus:ring-brand-maroon"/>
@@ -346,7 +376,6 @@ export default function TeamManagement() {
                   onChange={e => {
                     const r = e.target.value;
                     addModalOpen ? setNewUser({...newUser, role: r}) : setEditingUser({...editingUser, role: r});
-                    // Reset multi-selects when changing roles
                     setSelectedZones([]); setSelectedTrades([]);
                   }} 
                   className="w-full p-2 border border-slate-300 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-brand-maroon"
@@ -357,7 +386,6 @@ export default function TeamManagement() {
                   <option value="SIYANAT_HEAD">Siyanat Head</option>
                   <option value="TANZEEM_HEAD">Tanzeem Head</option>
                   <option value="AVIT_HEAD">AVIT Head</option>
-                  {/* THE FIX: Added Receptionist to the dropdown */}
                   <option value="RECEPTIONIST">Help Desk / Receptionist</option>
                   <option value="SUPER_ADMIN">System Administrator</option>
                 </select>
