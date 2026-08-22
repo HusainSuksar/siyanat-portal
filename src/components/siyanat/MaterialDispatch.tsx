@@ -2,10 +2,11 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../hooks/useToast';
-import { Package, SplitSquareHorizontal, CheckCircle, ShoppingCart, MessageSquare, Trash2, X, ListFilter, History as HistoryIcon } from 'lucide-react';
+import { Package, SplitSquareHorizontal, CheckCircle, ShoppingCart, MessageSquare, Trash2, X, ListFilter, History as HistoryIcon, Printer } from 'lucide-react';
 import type { WorkOrder } from '../../types';
 import VendorPOEngine from './VendorPOEngine';
 import BatchDetailsModal from '../BatchDetailsModal';
+import { generateDispatchSlip } from '../../utils/printDispatchSlip';
 
 export default function MaterialDispatch({ userRole }: { userRole: string }) {
   const { user } = useAuth();
@@ -30,7 +31,7 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
 
     const { data, error } = await supabase
       .from('work_orders')
-      .select(`*, requester:profiles(full_name, department), items:work_order_items!inner(id, requested_qty, item_type, custom_item_name, status, eta_days, fulfillment_dept, inventory_id, inventory:inventory_items(id, name, physical_stock, freezed_stock))`)
+      .select(`*, requester:profiles(full_name, department), items:work_order_items!inner(id, requested_qty, item_type, custom_item_name, status, eta_days, fulfillment_dept, inventory_id, inventory:inventory_items(id, name, physical_stock, freezed_stock, unit))`)
       .in('pipeline_state', targetStates)
       .order('created_at', { ascending: false });
 
@@ -43,7 +44,6 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
 
   useEffect(() => { fetchMaterials(); }, [userRole, viewMode]);
 
-  // SMART PRE-SELECTION BASED ON STOCK
   const openReviewModal = (batch: WorkOrder) => {
     setReviewBatch(batch);
     const initial: any = {};
@@ -56,7 +56,6 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
         const available = Math.max(0, physical - freezed);
         const hasEnoughStock = item.inventory_id && available >= item.requested_qty;
 
-        // Auto-select Available if in stock, else auto-select Ordered (Requires PO)
         const defaultStatus = item.status !== 'Pending' 
           ? item.status 
           : (hasEnoughStock ? 'Available' : 'Ordered');
@@ -173,21 +172,39 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
                   {viewMode === 'active' && (
                     <>
                       {needsReview && (
-                        <button onClick={() => openReviewModal(b)} className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5 shadow-sm transition"><SplitSquareHorizontal className="w-4 h-4"/> Review & Split</button>
+                        <button onClick={() => openReviewModal(b)} className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5 shadow-sm transition">
+                          <SplitSquareHorizontal className="w-4 h-4"/> Review & Split
+                        </button>
                       )}
                       {!needsReview && needsPO && (
-                        <button onClick={() => setPoBatch(b)} className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5 shadow-sm transition"><ShoppingCart className="w-4 h-4"/> Issue PO (Missing)</button>
+                        <button onClick={() => setPoBatch(b)} className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5 shadow-sm transition">
+                          <ShoppingCart className="w-4 h-4"/> Issue PO (Missing)
+                        </button>
                       )}
                       {!needsReview && !needsPO && (
-                        <div className="w-full py-3 bg-slate-100 text-slate-500 font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5 border border-slate-200"><CheckCircle className="w-4 h-4"/> Fully Reviewed</div>
+                        <div className="w-full py-3 bg-slate-100 text-slate-500 font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5 border border-slate-200">
+                          <CheckCircle className="w-4 h-4"/> Fully Reviewed
+                        </div>
                       )}
                     </>
                   )}
                   
-                  <button onClick={() => setChatBatch(b)} className="w-full py-3 bg-slate-800 hover:bg-slate-900 text-white font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5 shadow-sm transition"><MessageSquare className="w-4 h-4"/> Thread</button>
+                  {/* 1-Click Printable Gate Pass Button */}
+                  <button 
+                    onClick={() => generateDispatchSlip(b, userRole)} 
+                    className="w-full py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5 border border-slate-300 shadow-sm transition"
+                  >
+                    <Printer className="w-4 h-4 text-slate-600"/> Print Gate Slip
+                  </button>
+
+                  <button onClick={() => setChatBatch(b)} className="w-full py-3 bg-slate-800 hover:bg-slate-900 text-white font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5 shadow-sm transition">
+                    <MessageSquare className="w-4 h-4"/> Thread
+                  </button>
                   
                   {userRole === 'SUPER_ADMIN' && viewMode === 'active' && (
-                    <button onClick={() => setDeleteTarget(b)} className="w-full py-3 bg-white hover:bg-red-50 text-red-600 font-black uppercase tracking-wider rounded-xl border border-red-200 text-[10px] flex items-center justify-center shadow-sm transition"><Trash2 className="w-4 h-4"/></button>
+                    <button onClick={() => setDeleteTarget(b)} className="w-full py-3 bg-white hover:bg-red-50 text-red-600 font-black uppercase tracking-wider rounded-xl border border-red-200 text-[10px] flex items-center justify-center shadow-sm transition">
+                      <Trash2 className="w-4 h-4"/>
+                    </button>
                   )}
                 </div>
               </div>

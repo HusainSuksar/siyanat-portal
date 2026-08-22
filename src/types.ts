@@ -27,6 +27,7 @@ export interface WorkOrderItem {
 }
 
 export interface WorkOrder {
+  urgency: string;
   id: string;
   batch_id: string;
   location: string;
