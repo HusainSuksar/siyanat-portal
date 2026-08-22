@@ -27,43 +27,60 @@ import RequestToOrder from "./pages/RequestToOrder";
 import NotificationBell from './components/NotificationBell';
 import InstallAppButton from './components/InstallAppButton';
 
-// Global Logout Cleanup Handler
+// Global Clean Logout Handler
 const performCleanLogout = async () => {
   try {
-    // 1. Unregister active browser push subscription without deleting from the DB
-    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
-      const regPromise = navigator.serviceWorker.ready;
-      const timeoutPromise = new Promise((resolve) => setTimeout(resolve, 800));
-      
-      const reg = await Promise.race([regPromise, timeoutPromise]) as ServiceWorkerRegistration | undefined;
-      if (reg && reg.pushManager) {
-        const sub = await reg.pushManager.getSubscription();
-        if (sub) {
-          // NOTE: We do NOT delete from user_push_subscriptions here anymore 
-          // so notifications remain active for this user profile upon next login.
-          await sub.unsubscribe();
-        }
-      }
-    }
-  } catch (err) {
-    console.warn("Push subscription cleanup skipped:", err);
-  }
-
-  // 2. Clear Supabase realtime websocket channels
-  try {
+    // 1. Remove active Supabase realtime websocket channels
     supabase.removeAllChannels();
-  } catch (err) {
-    console.warn("Channel cleanup skipped:", err);
-  }
 
-  // 3. Terminate Auth session and redirect
-  try {
+    // 2. Terminate Auth session
     await supabase.auth.signOut();
   } catch (err) {
     console.error("SignOut error:", err);
   } finally {
     window.location.href = "/login";
   }
+};
+
+// --- AUTO-SYNC PUSH SUBSCRIPTIONS ON AUTH ---
+const usePushNotificationSync = (userId: string | null) => {
+  useEffect(() => {
+    if (!userId) return;
+
+    const syncDeviceSubscription = async () => {
+      if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+
+      try {
+        const registration = await navigator.serviceWorker.ready;
+        const subscription = await registration.pushManager.getSubscription();
+
+        if (subscription) {
+          const rawSub = subscription.toJSON();
+          const endpoint = subscription.endpoint;
+          const p256dh = rawSub.keys?.p256dh || '';
+          const auth = rawSub.keys?.auth || '';
+
+          if (endpoint && p256dh && auth) {
+            // Upsert: Rebind this device endpoint to the newly active user session
+            await supabase.from('user_push_subscriptions').upsert(
+              {
+                user_id: userId,
+                endpoint,
+                p256dh,
+                auth,
+                user_agent: navigator.userAgent
+              },
+              { onConflict: 'endpoint' }
+            );
+          }
+        }
+      } catch (err) {
+        console.warn("Push sync bypassed:", err);
+      }
+    };
+
+    syncDeviceSubscription();
+  }, [userId]);
 };
 
 // --- NOTIFICATION MANAGER ---
@@ -145,7 +162,6 @@ const DesktopNavigation = ({ userRole }: { userRole: string }) => {
           <Link to="/book-vehicle" className={getTabClass("/book-vehicle")}><Car className="w-4 h-4" /><span>Book Vehicle</span></Link>
         )}
 
-        {/* --- RECEPTIONIST WATCHTOWER --- */}
         {isReceptionist && (
           <Link to="/watchtower" className={getTabClass("/watchtower")}><Eye className="w-4 h-4" /><span>Omni-Tracker</span></Link>
         )}
@@ -230,7 +246,6 @@ const MobileDrawerNavigation = ({ userRole, isOpen, setIsOpen }: { userRole: str
           
           {!isStandardUser && navItem("/book-vehicle", Car, "Book Vehicle")}
 
-          {/* --- RECEPTIONIST WATCHTOWER --- */}
           {isReceptionist && (
              <>
                <div className="pt-4 pb-2 text-[10px] font-black uppercase text-slate-400 tracking-wider">Help Desk Tools</div>
@@ -343,6 +358,9 @@ const PortalLayout = ({ children, userRole, userId }: { children: React.ReactNod
 // --- APP ROUTER ---
 export default function App() {
   const { session, role, loading } = useAuth();
+
+  // Auto-bind device endpoint to whichever user is actively logged in
+  usePushNotificationSync(session?.user?.id || null);
 
   if (loading) return <div className="flex justify-center items-center min-h-screen bg-brand-maroon text-brand-gold font-bold">Loading Portal...</div>;
 
