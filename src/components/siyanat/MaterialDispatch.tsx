@@ -43,12 +43,30 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
 
   useEffect(() => { fetchMaterials(); }, [userRole, viewMode]);
 
+  // SMART PRE-SELECTION BASED ON STOCK
   const openReviewModal = (batch: WorkOrder) => {
     setReviewBatch(batch);
     const initial: any = {};
-    batch.items.filter(i => userRole === 'SUPER_ADMIN' || i.fulfillment_dept === userRole).forEach(item => {
-      initial[item.id] = { status: item.status === 'Pending' ? 'Available' : item.status, eta: item.eta_days || 0 };
-    });
+    
+    batch.items
+      .filter(i => userRole === 'SUPER_ADMIN' || userRole === 'ADMIN' || i.fulfillment_dept === userRole)
+      .forEach(item => {
+        const physical = item.inventory?.physical_stock || 0;
+        const freezed = item.inventory?.freezed_stock || 0;
+        const available = Math.max(0, physical - freezed);
+        const hasEnoughStock = item.inventory_id && available >= item.requested_qty;
+
+        // Auto-select Available if in stock, else auto-select Ordered (Requires PO)
+        const defaultStatus = item.status !== 'Pending' 
+          ? item.status 
+          : (hasEnoughStock ? 'Available' : 'Ordered');
+
+        initial[item.id] = { 
+          status: defaultStatus, 
+          eta: item.eta_days || 0 
+        };
+      });
+
     setItemDecisions(initial);
   };
 
@@ -111,9 +129,7 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
       ) : (
         <div className="grid grid-cols-1 gap-4">
           {batches.map(b => {
-            const myItems = b.items.filter(i => userRole === 'SUPER_ADMIN' || i.fulfillment_dept === userRole);
-            
-            // THE FIX: Smart UI Rendering triggers - ALL requests go through here
+            const myItems = b.items.filter(i => userRole === 'SUPER_ADMIN' || userRole === 'ADMIN' || i.fulfillment_dept === userRole);
             const needsReview = myItems.some(i => i.status === 'Pending');
             const needsPO = myItems.some(i => i.status === 'Ordered');
 
@@ -135,7 +151,7 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
                   <p className="text-xs text-slate-600 font-bold uppercase tracking-wider">{b.requester?.full_name} • {b.location}</p>
                   
                   <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 mt-2">
-                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Items Processed by {userRole.replace('_HEAD', '')}:</span>
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Items Processed:</span>
                     <div className="space-y-1">
                       {myItems.map((item) => (
                         <div key={item.id} className="text-xs font-bold text-slate-700 flex justify-between items-center py-1">
@@ -156,15 +172,12 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
                 <div className="flex gap-2 flex-wrap md:flex-col md:w-48 justify-center border-t md:border-t-0 md:border-l border-slate-100 pt-4 md:pt-0 md:pl-5">
                   {viewMode === 'active' && (
                     <>
-                      {/* Step 1: Force Review Split First for everything */}
                       {needsReview && (
                         <button onClick={() => openReviewModal(b)} className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5 shadow-sm transition"><SplitSquareHorizontal className="w-4 h-4"/> Review & Split</button>
                       )}
-                      {/* Step 2: PO Button only appears for items marked "Ordered" during the review */}
                       {!needsReview && needsPO && (
                         <button onClick={() => setPoBatch(b)} className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5 shadow-sm transition"><ShoppingCart className="w-4 h-4"/> Issue PO (Missing)</button>
                       )}
-                      {/* Fully complete state */}
                       {!needsReview && !needsPO && (
                         <div className="w-full py-3 bg-slate-100 text-slate-500 font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5 border border-slate-200"><CheckCircle className="w-4 h-4"/> Fully Reviewed</div>
                       )}
@@ -199,6 +212,7 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
         </div>
       )}
 
+      {/* --- SMART REVIEW MODAL WITH STOCK DISPLAY & ADAPTIVE OPTIONS --- */}
       {reviewBatch && (
          <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
            <div className="bg-white rounded-3xl w-full max-w-2xl overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
@@ -207,28 +221,77 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
                <button onClick={() => setReviewBatch(null)} className="hover:text-red-200 transition"><X className="w-5 h-5"/></button>
              </div>
              <form onSubmit={handleReviewSubmit} className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
-               {reviewBatch.items.map(item => (
-                 <div key={item.id} className="p-4 border border-slate-200 rounded-2xl grid grid-cols-1 md:grid-cols-12 gap-4 items-center bg-slate-50 shadow-sm">
-                    <div className="md:col-span-5">
-                      <div className="font-bold text-slate-800 text-sm">{item.custom_item_name || item.inventory?.name}</div>
-                      <div className="text-[11px] text-slate-500 font-medium">Requested: <span className="font-black text-brand-maroon">{item.requested_qty}</span></div>
-                    </div>
-                    <div className="md:col-span-4">
-                      {/* THE FIX: Updated Dropdown Language for clarity */}
-                      <select value={itemDecisions[item.id]?.status || 'Available'} onChange={e => setItemDecisions({...itemDecisions, [item.id]: {...itemDecisions[item.id], status: e.target.value}})} className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-brand-maroon">
-                        <option value="Available">Available (Freeze Stock)</option>
-                        <option value="Ordered">Not in Stock (Requires PO)</option>
-                        <option value="Not Provided">Not Provided (Reject)</option>
-                      </select>
-                    </div>
-                    {itemDecisions[item.id]?.status === 'Ordered' && (
-                      <div className="md:col-span-3 animate-in fade-in duration-200">
-                        <label className="block text-[9px] font-bold text-slate-500 uppercase mb-1">ETA (Days)</label>
-                        <input type="number" min="1" required placeholder="ETA Days" value={itemDecisions[item.id]?.eta || ''} onChange={e => setItemDecisions({...itemDecisions, [item.id]: {...itemDecisions[item.id], eta: parseInt(e.target.value)||0}})} className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold outline-none text-center focus:ring-2 focus:ring-amber-500"/>
-                      </div>
-                    )}
-                 </div>
-               ))}
+               {reviewBatch.items
+                 .filter(item => userRole === 'SUPER_ADMIN' || userRole === 'ADMIN' || item.fulfillment_dept === userRole)
+                 .map(item => {
+                   const physical = item.inventory?.physical_stock || 0;
+                   const freezed = item.inventory?.freezed_stock || 0;
+                   const availableStock = Math.max(0, physical - freezed);
+                   const isCatalogItem = !!item.inventory_id;
+                   const hasEnoughStock = isCatalogItem && availableStock >= item.requested_qty;
+
+                   return (
+                     <div key={item.id} className="p-4 border border-slate-200 rounded-2xl grid grid-cols-1 md:grid-cols-12 gap-4 items-center bg-slate-50 shadow-sm">
+                        <div className="md:col-span-5">
+                          <div className="font-bold text-slate-800 text-sm">{item.custom_item_name || item.inventory?.name}</div>
+                          <div className="flex items-center gap-2 mt-1 text-[11px]">
+                            <span className="text-slate-500 font-medium">Req: <strong className="text-brand-maroon font-black">{item.requested_qty}</strong></span>
+                            <span className="text-slate-300">•</span>
+                            {isCatalogItem ? (
+                              <span className={`font-black px-1.5 py-0.5 rounded text-[10px] ${hasEnoughStock ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-700'}`}>
+                                Stock Avail: {availableStock}
+                              </span>
+                            ) : (
+                              <span className="bg-amber-100 text-amber-800 font-black px-1.5 py-0.5 rounded text-[10px]">
+                                Custom (No Stock)
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="md:col-span-4">
+                          <select 
+                            value={itemDecisions[item.id]?.status || (hasEnoughStock ? 'Available' : 'Ordered')} 
+                            onChange={e => setItemDecisions({
+                              ...itemDecisions, 
+                              [item.id]: { ...itemDecisions[item.id], status: e.target.value }
+                            })} 
+                            className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-brand-maroon"
+                          >
+                            {hasEnoughStock ? (
+                              <>
+                                <option value="Available">Available (Freeze Stock)</option>
+                                <option value="Not Provided">Not Provided (Reject)</option>
+                              </>
+                            ) : (
+                              <>
+                                <option value="Ordered">Not in Stock (Requires PO)</option>
+                                <option value="Not Provided">Not Provided (Reject)</option>
+                              </>
+                            )}
+                          </select>
+                        </div>
+
+                        {itemDecisions[item.id]?.status === 'Ordered' && (
+                          <div className="md:col-span-3 animate-in fade-in duration-200">
+                            <label className="block text-[9px] font-bold text-slate-500 uppercase mb-1">ETA (Days)</label>
+                            <input 
+                              type="number" 
+                              min="1" 
+                              required 
+                              placeholder="ETA Days" 
+                              value={itemDecisions[item.id]?.eta || ''} 
+                              onChange={e => setItemDecisions({
+                                ...itemDecisions, 
+                                [item.id]: { ...itemDecisions[item.id], eta: parseInt(e.target.value) || 0 }
+                              })} 
+                              className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold outline-none text-center focus:ring-2 focus:ring-amber-500"
+                            />
+                          </div>
+                        )}
+                     </div>
+                   );
+               })}
                <button type="submit" disabled={!!processingId} className="w-full py-4 mt-4 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase tracking-widest rounded-xl shadow-lg transition disabled:opacity-50">Confirm Stock Allocation</button>
              </form>
            </div>

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
+import imageCompression from 'browser-image-compression';
 import { Camera, Send, MapPin, Wrench, ImagePlus, Trash2, CheckCircle } from 'lucide-react';
 import { ZONE_FLOW_MAP, MASTER_ZONES } from '../constants/locations';
 
@@ -18,6 +19,7 @@ const PRIORITIES = [
 
 export default function NewComplaint() {
   const [loading, setLoading] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState<string>('');
   const [photos, setPhotos] = useState<File[]>([]);
   const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
   const [successRef, setSuccessRef] = useState<string | null>(null);
@@ -101,6 +103,7 @@ export default function NewComplaint() {
   const submitComplaint = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    setUploadStatus('Registering ticket...');
 
     try {
       const { data: authData } = await supabase.auth.getUser();
@@ -112,8 +115,8 @@ export default function NewComplaint() {
           requester_id: authData.user.id,
           zone: selectedZone,
           venue: selectedVenue,
-          floor: selectedFloor, // Will safely be empty if not applicable
-          room_area: selectedRoom, // Will safely be empty if not applicable
+          floor: selectedFloor,
+          room_area: selectedRoom,
           student_tr_no: studentTr,
           category: category,
           priority: priority,
@@ -124,16 +127,44 @@ export default function NewComplaint() {
 
       if (complaintError) throw complaintError;
 
+      // CLIENT-SIDE IMAGE COMPRESSION & UPLOAD ENGINE
       if (photos.length > 0) {
-        for (const file of photos) {
-          const fileExt = file.name.split('.').pop();
+        const compressionOptions = {
+          maxSizeMB: 0.15,          // Max size: ~150 KB (98% reduction from standard camera photos)
+          maxWidthOrHeight: 1280,   // Standard HD resolution
+          useWebWorker: true,
+        };
+
+        for (let i = 0; i < photos.length; i++) {
+          const originalFile = photos[i];
+          setUploadStatus(`Compressing & uploading photo ${i + 1} of ${photos.length}...`);
+
+          let fileToUpload: File | Blob = originalFile;
+          try {
+            // Compress in browser thread
+            fileToUpload = await imageCompression(originalFile, compressionOptions);
+          } catch (compErr) {
+            console.warn("Compression fallback to original file:", compErr);
+          }
+
+          const fileExt = originalFile.name.split('.').pop() || 'jpg';
           const fileName = `${Math.random().toString(36).substring(2, 15)}.${fileExt}`;
           const filePath = `${complaintData.id}/${fileName}`;
-          const { error: uploadError } = await supabase.storage.from('complaint_photos').upload(filePath, file);
+
+          const { error: uploadError } = await supabase.storage
+            .from('complaint_photos')
+            .upload(filePath, fileToUpload);
 
           if (!uploadError) {
-            const { data: publicUrlData } = supabase.storage.from('complaint_photos').getPublicUrl(filePath);
-            await supabase.from('complaint_photos').insert({ complaint_id: complaintData.id, file_name: file.name, file_url: publicUrlData.publicUrl });
+            const { data: publicUrlData } = supabase.storage
+              .from('complaint_photos')
+              .getPublicUrl(filePath);
+
+            await supabase.from('complaint_photos').insert({ 
+              complaint_id: complaintData.id, 
+              file_name: originalFile.name, 
+              file_url: publicUrlData.publicUrl 
+            });
           }
         }
       }
@@ -156,6 +187,7 @@ export default function NewComplaint() {
       alert(`Error submitting complaint: ${err.message}`);
     } finally {
       setLoading(false);
+      setUploadStatus('');
     }
   };
 
@@ -281,7 +313,7 @@ export default function NewComplaint() {
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
               <div>
                 <span className="block text-sm font-black text-slate-800">Photo Evidence</span>
-                <span className="text-xs font-bold text-slate-500">Upload images to help technicians understand the issue faster.</span>
+                <span className="text-xs font-bold text-slate-500">Auto-compressed for fast upload and minimal storage.</span>
               </div>
               <label className="cursor-pointer px-4 py-2.5 bg-white border border-slate-200 hover:border-brand-maroon hover:text-brand-maroon rounded-xl text-xs font-black uppercase tracking-wide flex items-center justify-center space-x-2 transition shadow-sm w-full sm:w-auto">
                 <ImagePlus className="w-4 h-4" />
@@ -311,7 +343,7 @@ export default function NewComplaint() {
           className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs md:text-sm uppercase tracking-widest rounded-2xl shadow-xl transition flex justify-center items-center space-x-2 disabled:opacity-70"
         >
           {loading ? (
-            <span className="animate-pulse">Uploading Complaint & Photos...</span>
+            <span className="animate-pulse">{uploadStatus || 'Processing...'}</span>
           ) : (
             <>
               <Send className="w-5 h-5" />

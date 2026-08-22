@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Bell, CheckCircle2, Circle, Clock } from 'lucide-react';
+import { Bell, CheckCircle2, Circle, Clock, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -12,7 +12,7 @@ export default function NotificationBell() {
   const dropdownRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
 
-  // Sync unread count to the native device App Icon (iOS/Android/Desktop)
+  // Sync unread count to native device App Icon badge
   useEffect(() => {
     const nav = navigator as any;
     if ('setAppBadge' in nav) {
@@ -35,7 +35,6 @@ export default function NotificationBell() {
   }, []);
 
   useEffect(() => {
-    // THE FIX: Wait until the user session is fully verified before fetching
     if (!user) return; 
 
     const fetchNotifications = async () => {
@@ -54,7 +53,6 @@ export default function NotificationBell() {
 
     fetchNotifications();
 
-    // REAL-TIME LISTENER
     const uniqueChannelId = `siyanat_notifs_${user.id}_${Math.random().toString(36).substring(7)}`;
     const channel = supabase
       .channel(uniqueChannelId)
@@ -106,23 +104,36 @@ export default function NotificationBell() {
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 mt-3 w-80 md:w-96 bg-white rounded-2xl shadow-2xl border border-slate-200 z-50 overflow-hidden flex flex-col max-h-[400px] animate-in slide-in-from-top-2 duration-200">
-          <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center shrink-0">
-            <h3 className="font-extrabold text-slate-800 text-sm flex items-center gap-2">
-              Alerts
-              {unreadCount > 0 && <span className="bg-red-100 text-red-700 text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider">{unreadCount} new</span>}
-            </h3>
-            {unreadCount > 0 && (
-              <button onClick={markAllAsRead} className="text-[10px] font-bold text-slate-500 hover:text-slate-800 uppercase">
-                Mark all read
-              </button>
-            )}
-          </div>
+        <>
+          {/* Mobile Backdrop */}
+          <div className="fixed inset-0 bg-black/40 z-40 md:hidden" onClick={() => setIsOpen(false)} />
+          
+          {/* Responsive Dropdown: Fixed centered on mobile, absolute right-aligned on desktop */}
+          <div className="fixed inset-x-4 top-16 md:inset-x-auto md:absolute md:right-0 md:top-auto md:mt-3 md:w-96 bg-white rounded-2xl shadow-2xl border border-slate-200 z-50 overflow-hidden flex flex-col max-h-[80vh] md:max-h-[450px] animate-in zoom-in-95 md:slide-in-from-top-2 duration-200">
+            <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center shrink-0">
+              <div className="flex items-center gap-2">
+                <h3 className="font-extrabold text-slate-800 text-sm">Alerts</h3>
+                {unreadCount > 0 && (
+                  <span className="bg-red-100 text-red-700 text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider">
+                    {unreadCount} new
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-3">
+                {unreadCount > 0 && (
+                  <button onClick={markAllAsRead} className="text-[10px] font-bold text-slate-500 hover:text-slate-800 uppercase tracking-wider">
+                    Mark all read
+                  </button>
+                )}
+                <button onClick={() => setIsOpen(false)} className="md:hidden text-slate-400 hover:text-slate-600">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
 
-          <div className="flex-1 overflow-y-auto">
-            {notifications.length > 0 ? (
-              <div className="divide-y divide-slate-100">
-                {notifications.map(notif => (
+            <div className="flex-1 overflow-y-auto divide-y divide-slate-100">
+              {notifications.length > 0 ? (
+                notifications.map(notif => (
                   <div 
                     key={notif.id}
                     onClick={() => handleNotificationClick(notif)}
@@ -130,31 +141,31 @@ export default function NotificationBell() {
                   >
                     <div className="mt-1 shrink-0">
                       {!notif.is_read ? (
-                        <Circle className="w-3 h-3 fill-amber-500 text-amber-500" />
+                        <Circle className="w-2.5 h-2.5 fill-amber-500 text-amber-500" />
                       ) : (
-                        <CheckCircle2 className="w-4 h-4 text-slate-300" />
+                        <CheckCircle2 className="w-3.5 h-3.5 text-slate-300" />
                       )}
                     </div>
-                    <div>
-                      <p className={`text-xs ${!notif.is_read ? 'font-bold text-slate-800' : 'font-medium text-slate-600'}`}>
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-xs ${!notif.is_read ? 'font-black text-slate-800' : 'font-semibold text-slate-600'}`}>
                         {notif.title}
                       </p>
-                      <p className="text-[11px] text-slate-500 mt-1 line-clamp-2 leading-relaxed">{notif.message}</p>
-                      <p className="text-[9px] font-bold text-slate-400 mt-2 flex items-center gap-1">
+                      <p className="text-[11px] text-slate-500 mt-0.5 line-clamp-2 leading-relaxed break-words">{notif.message}</p>
+                      <p className="text-[9px] font-bold text-slate-400 mt-1.5 flex items-center gap-1">
                         <Clock className="w-3 h-3" /> {new Date(notif.created_at).toLocaleString()}
                       </p>
                     </div>
                   </div>
-                ))}
-              </div>
-            ) : (
-              <div className="p-8 text-center flex flex-col items-center justify-center text-slate-400">
-                <Bell className="w-10 h-10 mb-3 opacity-20" />
-                <p className="font-bold text-xs uppercase">All caught up!</p>
-              </div>
-            )}
+                ))
+              ) : (
+                <div className="p-8 text-center flex flex-col items-center justify-center text-slate-400">
+                  <Bell className="w-8 h-8 mb-2 opacity-20" />
+                  <p className="font-bold text-xs uppercase tracking-wider">All caught up!</p>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        </>
       )}
     </div>
   );

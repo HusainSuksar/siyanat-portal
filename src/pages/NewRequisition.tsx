@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { supabase, type InventoryItem } from '../lib/supabase';
-import { ShoppingBag, Send, PlusCircle, Trash2, CheckCircle, PackageSearch } from 'lucide-react';
+import { ShoppingBag, Send, PlusCircle, Trash2, CheckCircle, PackageSearch, Search, Filter } from 'lucide-react';
 import { ZONE_FLOW_MAP, MASTER_ZONES } from '../constants/locations'; 
 
 export default function NewRequisition() {
@@ -22,6 +22,10 @@ export default function NewRequisition() {
   const [catalog, setCatalog] = useState<InventoryItem[]>([]);
   const [cart, setCart] = useState<{ [key: string]: { item: InventoryItem, qty: number } }>({});
   
+  // Search & Department Filter State
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedDeptFilter, setSelectedDeptFilter] = useState('ALL');
+
   const [customItems, setCustomItems] = useState<{ name: string, category: string, qty: number }[]>([]);
   const [customName, setCustomName] = useState('');
   const [customQty, setCustomQty] = useState(1);
@@ -61,6 +65,16 @@ export default function NewRequisition() {
     }
     setLoading(false);
   };
+
+  // Filtered Catalog based on search text and department filter
+  const filteredCatalog = useMemo(() => {
+    return catalog.filter(item => {
+      const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                            item.category.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesDept = selectedDeptFilter === 'ALL' || item.fulfillment_dept === selectedDeptFilter;
+      return matchesSearch && matchesDept;
+    });
+  }, [catalog, searchQuery, selectedDeptFilter]);
 
   // --- DYNAMIC LOGIC ENGINE ---
   const activeVenues = selectedZone ? ZONE_FLOW_MAP[selectedZone] : [];
@@ -278,18 +292,62 @@ export default function NewRequisition() {
 
       {/* --- Catalog Section --- */}
       <div className="bg-white rounded-3xl p-5 md:p-8 shadow-sm border border-slate-200">
-        <div className="flex items-center space-x-2 border-b border-slate-100 pb-4 mb-6">
-          <span className="flex items-center justify-center w-6 h-6 bg-brand-maroon text-white text-xs font-black rounded-lg">2</span>
-          <h3 className="font-black text-sm uppercase tracking-wide text-slate-800">Select Materials</h3>
+        <div className="flex flex-col sm:flex-row justify-between sm:items-center border-b border-slate-100 pb-4 mb-6 gap-3">
+          <div className="flex items-center space-x-2">
+            <span className="flex items-center justify-center w-6 h-6 bg-brand-maroon text-white text-xs font-black rounded-lg">2</span>
+            <h3 className="font-black text-sm uppercase tracking-wide text-slate-800">Select Materials</h3>
+          </div>
+          <span className="text-[11px] font-bold text-slate-400 uppercase">
+            Showing {filteredCatalog.length} item(s)
+          </span>
+        </div>
+
+        {/* SEARCH & DEPARTMENT FILTER BAR */}
+        <div className="flex flex-col md:flex-row gap-3 mb-6">
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 absolute left-3.5 top-3.5 text-slate-400" />
+            <input 
+              type="text" 
+              placeholder="Search items by name or category..." 
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 placeholder-slate-400 outline-none focus:ring-2 focus:ring-brand-maroon transition shadow-sm"
+            />
+          </div>
+
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 md:pb-0">
+            <Filter className="w-4 h-4 text-slate-400 shrink-0 hidden sm:block" />
+            {[
+              { id: 'ALL', label: 'All Items' },
+              { id: 'SIYANAT_HEAD', label: 'Siyanat' },
+              { id: 'AVIT_HEAD', label: 'AVIT' },
+              { id: 'TANZEEM_HEAD', label: 'Stationery' },
+            ].map(dept => (
+              <button
+                key={dept.id}
+                type="button"
+                onClick={() => setSelectedDeptFilter(dept.id)}
+                className={`px-3 py-2 rounded-xl text-[11px] font-black uppercase tracking-wider whitespace-nowrap transition border ${
+                  selectedDeptFilter === dept.id
+                    ? 'bg-brand-maroon text-white border-brand-maroon shadow-sm'
+                    : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                }`}
+              >
+                {dept.label}
+              </button>
+            ))}
+          </div>
         </div>
         
         {loading ? (
           <div className="text-center py-12 text-slate-500 text-sm font-bold animate-pulse bg-slate-50 rounded-2xl border border-slate-100">Loading Warehouse Catalog...</div>
-        ) : catalog.length === 0 ? (
-          <div className="text-center py-12 text-slate-500 text-sm font-bold bg-slate-50 rounded-2xl border border-slate-100">No items available in your approved catalog.</div>
+        ) : filteredCatalog.length === 0 ? (
+          <div className="text-center py-12 text-slate-500 text-sm font-bold bg-slate-50 rounded-2xl border border-slate-100">
+            No items found matching your filters.
+          </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-            {catalog.map(item => {
+            {filteredCatalog.map(item => {
               const available = Math.max(0, item.physical_stock - item.freezed_stock);
               const isOutOfStock = available <= 0;
               const currentQty = cart[item.id]?.qty || 0;

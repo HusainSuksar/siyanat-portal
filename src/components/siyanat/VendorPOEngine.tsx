@@ -18,27 +18,29 @@ export default function VendorPOEngine({ batch, userEmail, onClose, onSuccess }:
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [selectedVendorId, setSelectedVendorId] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
-  
-  // THE FIX: Map to track the elevated quantities being ordered
   const [orderQuantities, setOrderQuantities] = useState<Record<string, number>>({});
-  
-  // Only process items that the Head marked as "Ordered" during the Split phase
+
   const pendingItems = batch.items.filter(i => i.status === 'Ordered');
 
+  // 1. Fetch vendors only once on mount
   useEffect(() => {
     const fetchVendors = async () => {
       const { data } = await supabase.from('vendors').select('*').eq('is_active', true).order('name');
       if (data) setVendors(data as Vendor[]);
     };
     fetchVendors();
-    
-    // Initialize order quantities with the Technician's base requested amount
+  }, []);
+
+  // 2. Initialize order quantities when batch changes without infinite loop
+  useEffect(() => {
     const initial: Record<string, number> = {};
-    pendingItems.forEach(item => {
+    batch.items
+      .filter(i => i.status === 'Ordered')
+      .forEach(item => {
         initial[item.id] = item.requested_qty;
-    });
+      });
     setOrderQuantities(initial);
-  }, [batch, pendingItems]);
+  }, [batch.id]);
 
   const generatePO = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -50,8 +52,7 @@ export default function VendorPOEngine({ batch, userEmail, onClose, onSuccess }:
         item_type: item.item_type,
         inventory_id: item.inventory_id,
         custom_item_name: item.custom_item_name,
-        // Submitting the elevated quantity for the Vendor
-        requested_qty: orderQuantities[item.id] 
+        requested_qty: orderQuantities[item.id] || item.requested_qty
       }));
 
       const { data: poNumber, error } = await supabase.rpc('generate_vendor_po', {
@@ -105,7 +106,7 @@ export default function VendorPOEngine({ batch, userEmail, onClose, onSuccess }:
                    <label className="block text-[9px] font-black text-slate-400 uppercase mb-1">Order Qty</label>
                    <input
                      type="number"
-                     min={item.requested_qty} // Prevents ordering less than what the Tech requires
+                     min={item.requested_qty}
                      value={orderQuantities[item.id] || item.requested_qty}
                      onChange={e => setOrderQuantities({...orderQuantities, [item.id]: parseInt(e.target.value) || item.requested_qty})}
                      className="w-full p-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-center outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm"

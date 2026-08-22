@@ -27,6 +27,47 @@ import RequestToOrder from "./pages/RequestToOrder";
 import NotificationBell from './components/NotificationBell';
 import InstallAppButton from './components/InstallAppButton';
 
+// Global Logout Cleanup Handler
+const performCleanLogout = async () => {
+  // 1. Unregister push subscription (non-blocking with fallback)
+  try {
+    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+      const regPromise = navigator.serviceWorker.ready;
+      const timeoutPromise = new Promise((resolve) => setTimeout(resolve, 800));
+      
+      const reg = await Promise.race([regPromise, timeoutPromise]) as ServiceWorkerRegistration | undefined;
+      if (reg && reg.pushManager) {
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) {
+          const { data: authData } = await supabase.auth.getUser();
+          if (authData?.user) {
+            await supabase.from('user_push_subscriptions').delete().eq('endpoint', sub.endpoint);
+          }
+          await sub.unsubscribe();
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("Push subscription cleanup skipped:", err);
+  }
+
+  // 2. Clear Supabase realtime websocket channels
+  try {
+    supabase.removeAllChannels();
+  } catch (err) {
+    console.warn("Channel cleanup skipped:", err);
+  }
+
+  // 3. Clear auth session and force redirect
+  try {
+    await supabase.auth.signOut();
+  } catch (err) {
+    console.error("SignOut error:", err);
+  } finally {
+    window.location.href = "/login";
+  }
+};
+
 // --- NOTIFICATION MANAGER ---
 const NotificationManager = ({ userRole, userId }: { userRole: string | null; userId: string | null; }) => {
   const [toast, setToast] = useState<{ id: string; message: string; title: string; } | null>(null);
@@ -153,7 +194,7 @@ const DesktopNavigation = ({ userRole }: { userRole: string }) => {
 };
 
 // --- MOBILE DRAWER NAVIGATION ---
-const MobileDrawerNavigation = ({ userRole, isOpen, setIsOpen, handleLogout }: { userRole: string; isOpen: boolean; setIsOpen: (val: boolean) => void; handleLogout: () => void; }) => {
+const MobileDrawerNavigation = ({ userRole, isOpen, setIsOpen }: { userRole: string; isOpen: boolean; setIsOpen: (val: boolean) => void; }) => {
   const location = useLocation();
   if (!isOpen) return null;
 
@@ -250,7 +291,7 @@ const MobileDrawerNavigation = ({ userRole, isOpen, setIsOpen, handleLogout }: {
           <Link to="/profile" onClick={() => setIsOpen(false)} className="w-full flex items-center justify-center space-x-2 p-3 bg-slate-50 text-slate-700 font-bold rounded-xl border border-slate-200 hover:bg-slate-100">
             <UserCircle className="w-5 h-5" /><span>My Profile</span>
           </Link>
-          <button onClick={handleLogout} className="w-full flex items-center justify-center space-x-2 p-3 bg-red-50 text-red-700 font-bold rounded-xl border border-red-200">
+          <button onClick={performCleanLogout} className="w-full flex items-center justify-center space-x-2 p-3 bg-red-50 text-red-700 font-bold rounded-xl border border-red-200">
             <LogOut className="w-5 h-5" /><span>Logout</span>
           </button>
         </div>
@@ -262,7 +303,6 @@ const MobileDrawerNavigation = ({ userRole, isOpen, setIsOpen, handleLogout }: {
 // --- LAYOUT WRAPPER ---
 const PortalLayout = ({ children, userRole, userId }: { children: React.ReactNode; userRole: string; userId: string | null; }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const handleLogout = async () => { await supabase.auth.signOut(); window.location.href = "/login"; };
 
   return (
     <div className="min-h-screen flex flex-col bg-[#f8f6f0] font-sans">
@@ -280,7 +320,7 @@ const PortalLayout = ({ children, userRole, userId }: { children: React.ReactNod
             <Link to="/profile" className="hidden md:flex items-center space-x-1 px-3 py-1.5 bg-brand-gold/20 hover:bg-brand-gold/30 text-brand-gold text-xs font-semibold rounded-lg border border-brand-gold/30 transition">
               <UserCircle className="w-4 h-4" /><span>Profile</span>
             </Link>
-            <button onClick={handleLogout} className="hidden md:flex items-center space-x-1 px-3 py-1.5 bg-red-900/50 hover:bg-red-800 text-xs font-semibold rounded-lg border border-red-400/30 transition">
+            <button onClick={performCleanLogout} className="hidden md:flex items-center space-x-1 px-3 py-1.5 bg-red-900/50 hover:bg-red-800 text-xs font-semibold rounded-lg border border-red-400/30 transition">
               <LogOut className="w-4 h-4" /><span>Logout</span>
             </button>
             <button onClick={() => setIsMobileMenuOpen(true)} className="md:hidden p-2 bg-brand-dark rounded-lg"><Menu className="w-6 h-6 text-brand-gold" /></button>
@@ -290,7 +330,7 @@ const PortalLayout = ({ children, userRole, userId }: { children: React.ReactNod
 
       <NotificationManager userRole={userRole} userId={userId} />
       <DesktopNavigation userRole={userRole} />
-      <MobileDrawerNavigation userRole={userRole} isOpen={isMobileMenuOpen} setIsOpen={setIsMobileMenuOpen} handleLogout={handleLogout} />
+      <MobileDrawerNavigation userRole={userRole} isOpen={isMobileMenuOpen} setIsOpen={setIsMobileMenuOpen} />
 
       <main className="max-w-7xl mx-auto px-4 py-6 flex-grow w-full relative">
         {children}

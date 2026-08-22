@@ -148,13 +148,19 @@ export default function TechnicianPortal() {
 
       if (woError) throw woError;
 
-      const itemsToInsert = selectedItems.map(item => ({
-        work_order_id: woData.id,
-        inventory_id: item.type === 'Catalog' ? item.id : null,
-        custom_item_name: item.type === 'Custom' ? item.name : null,
-        requested_qty: item.qty,
-        item_type: item.type
-      }));
+      // Inside submitMaterialRequest in TechnicianPortal.tsx
+const itemsToInsert = selectedItems.map(item => {
+  // Look up catalog item fulfillment department (defaults to SIYANAT_HEAD if custom)
+  const catalogItem = catalog.find(c => c.id === item.id);
+  return {
+    work_order_id: woData.id,
+    inventory_id: item.type === 'Catalog' ? item.id : null,
+    custom_item_name: item.type === 'Custom' ? item.name : null,
+    requested_qty: item.qty,
+    item_type: item.type,
+    fulfillment_dept: catalogItem?.fulfillment_dept || 'SIYANAT_HEAD'
+  };
+});
 
       const { error: itemsError } = await supabase.from('work_order_items').insert(itemsToInsert);
       if (itemsError) throw itemsError;
