@@ -2,11 +2,11 @@ import { BrowserRouter as Router, Routes, Route, Navigate, Link, useLocation } f
 import { useState, useEffect } from "react";
 import { supabase } from "./lib/supabase";
 import { useAuth } from "./contexts/AuthContext"; 
-import { PackageCheck, LogOut, LayoutDashboard, PlusCircle, Truck, Warehouse, Bell, X, Server, PieChart, ShieldAlert, Users, Menu, Wrench, ClipboardList, Calendar, Car, CalendarCheck, ShoppingCart, Package, UserCircle } from "lucide-react";
+import { PackageCheck, LogOut, LayoutDashboard, PlusCircle, Truck, Warehouse, Bell, X, Server, PieChart, ShieldAlert, Users, Menu, Wrench, ClipboardList, Calendar, Car, CalendarCheck, ShoppingCart, Package, UserCircle, Eye } from "lucide-react";
 
-// --- NEW SECURITY & PROFILE IMPORTS ---
 import ForcePasswordChange from "./components/ForcePasswordChange";
 import UserProfile from "./pages/UserProfile";
+import ReceptionWatchtower from "./pages/ReceptionWatchtower";
 
 import SupervisorQueue from "./pages/SupervisorQueue";
 import Login from "./pages/Login";
@@ -91,8 +91,8 @@ const DesktopNavigation = ({ userRole }: { userRole: string }) => {
   const isSiyanatHead = userRole === 'SIYANAT_HEAD' || isGodMode;
   const isTanzeemHead = userRole === 'TANZEEM_HEAD' || isGodMode;
   const isAvitHead = userRole === 'AVIT_HEAD' || isGodMode;
-  
-  const isStandardUser = userRole === 'STANDARD_USER' || userRole === 'REQUESTER';
+  const isReceptionist = userRole === 'RECEPTIONIST' || isGodMode;
+  const isStandardUser = userRole === 'STANDARD_USER' || userRole === 'REQUESTER' || userRole === 'RECEPTIONIST';
 
   return (
     <div className="hidden md:block bg-white border-b border-slate-200 shadow-sm sticky top-[57px] z-40">
@@ -104,6 +104,11 @@ const DesktopNavigation = ({ userRole }: { userRole: string }) => {
         
         {!isStandardUser && (
           <Link to="/book-vehicle" className={getTabClass("/book-vehicle")}><Car className="w-4 h-4" /><span>Book Vehicle</span></Link>
+        )}
+
+        {/* --- RECEPTIONIST WATCHTOWER --- */}
+        {isReceptionist && (
+          <Link to="/watchtower" className={getTabClass("/watchtower")}><Eye className="w-4 h-4" /><span>Omni-Tracker</span></Link>
         )}
 
         {isSiyanatHead && (
@@ -167,7 +172,8 @@ const MobileDrawerNavigation = ({ userRole, isOpen, setIsOpen, handleLogout }: {
   const isSiyanatHead = userRole === 'SIYANAT_HEAD' || isGodMode;
   const isTanzeemHead = userRole === 'TANZEEM_HEAD' || isGodMode;
   const isAvitHead = userRole === 'AVIT_HEAD' || isGodMode;
-  const isStandardUser = userRole === 'STANDARD_USER' || userRole === 'REQUESTER';
+  const isReceptionist = userRole === 'RECEPTIONIST' || isGodMode;
+  const isStandardUser = userRole === 'STANDARD_USER' || userRole === 'REQUESTER' || userRole === 'RECEPTIONIST';
 
   return (
     <div className="md:hidden fixed inset-0 z-50 bg-black/50 flex justify-end">
@@ -184,6 +190,14 @@ const MobileDrawerNavigation = ({ userRole, isOpen, setIsOpen, handleLogout }: {
           {navItem("/book-event", Calendar, "Book Event")}
           
           {!isStandardUser && navItem("/book-vehicle", Car, "Book Vehicle")}
+
+          {/* --- RECEPTIONIST WATCHTOWER --- */}
+          {isReceptionist && (
+             <>
+               <div className="pt-4 pb-2 text-[10px] font-black uppercase text-slate-400 tracking-wider">Help Desk Tools</div>
+               {navItem("/watchtower", Eye, "Omni-Tracker Watchtower")}
+             </>
+          )}
 
           {isSiyanatHead && (
             <>
@@ -233,7 +247,6 @@ const MobileDrawerNavigation = ({ userRole, isOpen, setIsOpen, handleLogout }: {
         </div>
 
         <div className="p-4 border-t border-slate-200 pb-safe space-y-2">
-          {/* THE FIX: Added Profile Link for Mobile Users */}
           <Link to="/profile" onClick={() => setIsOpen(false)} className="w-full flex items-center justify-center space-x-2 p-3 bg-slate-50 text-slate-700 font-bold rounded-xl border border-slate-200 hover:bg-slate-100">
             <UserCircle className="w-5 h-5" /><span>My Profile</span>
           </Link>
@@ -264,7 +277,6 @@ const PortalLayout = ({ children, userRole, userId }: { children: React.ReactNod
           </div>
           <div className="flex items-center gap-2 md:gap-4">
             <NotificationBell />
-            {/* THE FIX: Added Profile link to desktop header */}
             <Link to="/profile" className="hidden md:flex items-center space-x-1 px-3 py-1.5 bg-brand-gold/20 hover:bg-brand-gold/30 text-brand-gold text-xs font-semibold rounded-lg border border-brand-gold/30 transition">
               <UserCircle className="w-4 h-4" /><span>Profile</span>
             </Link>
@@ -300,15 +312,15 @@ export default function App() {
   const isSiyanatHead = role === 'SIYANAT_HEAD' || isGodMode;
   const isTanzeemHead = role === 'TANZEEM_HEAD' || isGodMode;
   const isAvitHead = role === 'AVIT_HEAD' || isGodMode;
-  const isStandardUser = role === 'STANDARD_USER' || role === 'REQUESTER';
+  const isStandardUser = role === 'STANDARD_USER' || role === 'REQUESTER' || role === 'RECEPTIONIST';
   
+  const isReceptionist = role === 'RECEPTIONIST' || isGodMode;
   const isOpsHead = isSiyanatHead || isTanzeemHead || isAvitHead;
   const isTech = role === 'EXECUTOR' || role === 'TECHNICIAN' || isGodMode;
   const isSupervisor = role === 'SUPERVISOR' || isGodMode;
 
   return (
     <Router>
-      {/* THE FIX: ForcePasswordChange wrapper intercepts routing logic securely */}
       <ForcePasswordChange>
         <Routes>
           <Route path="/login" element={!session ? <Login /> : <Navigate to="/" />} />
@@ -318,14 +330,15 @@ export default function App() {
           <Route path="/new-requisition" element={session ? <PortalLayout userRole={role} userId={session.user.id}><NewRequisition /></PortalLayout> : <Navigate to="/login" />} />
           <Route path="/new-complaint" element={session ? <PortalLayout userRole={role} userId={session.user.id}><NewComplaint /></PortalLayout> : <Navigate to="/login" />} />
           <Route path="/book-event" element={session ? <PortalLayout userRole={role} userId={session.user.id}><BookEvent /></PortalLayout> : <Navigate to="/login" />} />
-          
-          {/* User Profile */}
           <Route path="/profile" element={session ? <PortalLayout userRole={role} userId={session.user.id}><UserProfile /></PortalLayout> : <Navigate to="/login" />} />
+
+          {/* Receptionist Read-Only View */}
+          <Route path="/watchtower" element={session && isReceptionist ? <PortalLayout userRole={role} userId={session.user.id}><ReceptionWatchtower /></PortalLayout> : <Navigate to="/" />} />
 
           {/* Restrict Vehicle Booking */}
           <Route path="/book-vehicle" element={session && !isStandardUser ? <PortalLayout userRole={role} userId={session.user.id}><BookVehicle /></PortalLayout> : <Navigate to="/" />} />
 
-          {/* Head Routes (Unlocked via isOpsHead) */}
+          {/* Head Routes */}
           <Route path="/siyanat-operations" element={session && isOpsHead ? <PortalLayout userRole={role} userId={session.user.id}><SiyanatOperations /></PortalLayout> : <Navigate to="/" />} />
           <Route path="/restock" element={session && isOpsHead ? <PortalLayout userRole={role} userId={session.user.id}><RestockInventory /></PortalLayout> : <Navigate to="/" />} />
           <Route path="/rto" element={session && isOpsHead ? <PortalLayout userRole={role} userId={session.user.id}><RequestToOrder /></PortalLayout> : <Navigate to="/" />} />

@@ -239,6 +239,7 @@ export default function TeamManagement() {
                 team.map((user) => {
                   const isAdmin = user.role === 'SUPER_ADMIN';
                   const isHead = user.role.includes('_HEAD');
+                  const isReceptionist = user.role === 'RECEPTIONIST';
 
                   return (
                     <tr key={user.id} className="hover:bg-slate-50 transition">
@@ -253,12 +254,11 @@ export default function TeamManagement() {
                       <td className="p-3">
                         <div className="flex flex-col gap-1 items-start">
                           <span className={`px-2 py-1 rounded text-[10px] font-bold flex items-center w-max space-x-1 ${
-                            isAdmin ? 'bg-brand-maroon text-brand-gold' : isHead ? 'bg-indigo-100 text-indigo-800' : 'bg-slate-100 text-slate-700'
+                            isAdmin ? 'bg-brand-maroon text-brand-gold' : isHead ? 'bg-indigo-100 text-indigo-800' : isReceptionist ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-700'
                           }`}>
                             {(isAdmin || isHead) && <Shield className="w-3 h-3" />}
                             <span>{user.role.replace('_', ' ')}</span>
                           </span>
-                          {/* THE FIX: Render zone column */}
                           {user.role === 'SUPERVISOR' && user.zone && (
                             <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">Zone: {user.zone}</span>
                           )}
@@ -357,6 +357,8 @@ export default function TeamManagement() {
                   <option value="SIYANAT_HEAD">Siyanat Head</option>
                   <option value="TANZEEM_HEAD">Tanzeem Head</option>
                   <option value="AVIT_HEAD">AVIT Head</option>
+                  {/* THE FIX: Added Receptionist to the dropdown */}
+                  <option value="RECEPTIONIST">Help Desk / Receptionist</option>
                   <option value="SUPER_ADMIN">System Administrator</option>
                 </select>
               </div>
