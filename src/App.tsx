@@ -29,8 +29,8 @@ import InstallAppButton from './components/InstallAppButton';
 
 // Global Logout Cleanup Handler
 const performCleanLogout = async () => {
-  // 1. Unregister push subscription (non-blocking with fallback)
   try {
+    // 1. Unregister active browser push subscription without deleting from the DB
     if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
       const regPromise = navigator.serviceWorker.ready;
       const timeoutPromise = new Promise((resolve) => setTimeout(resolve, 800));
@@ -39,10 +39,8 @@ const performCleanLogout = async () => {
       if (reg && reg.pushManager) {
         const sub = await reg.pushManager.getSubscription();
         if (sub) {
-          const { data: authData } = await supabase.auth.getUser();
-          if (authData?.user) {
-            await supabase.from('user_push_subscriptions').delete().eq('endpoint', sub.endpoint);
-          }
+          // NOTE: We do NOT delete from user_push_subscriptions here anymore 
+          // so notifications remain active for this user profile upon next login.
           await sub.unsubscribe();
         }
       }
@@ -58,7 +56,7 @@ const performCleanLogout = async () => {
     console.warn("Channel cleanup skipped:", err);
   }
 
-  // 3. Clear auth session and force redirect
+  // 3. Terminate Auth session and redirect
   try {
     await supabase.auth.signOut();
   } catch (err) {
