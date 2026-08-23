@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
 import { supabase, type InventoryItem } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
 import { Wrench, Printer, CheckCircle, MapPin, AlertCircle, PackageSearch, X, PlusCircle, Trash2, Send, PackageCheck, ListFilter, History as HistoryIcon } from 'lucide-react';
 
 export default function TechnicianPortal() {
+  const { user } = useAuth();
   const [viewMode, setViewMode] = useState<'active' | 'history'>('active');
   const [assignments, setAssignments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -22,18 +24,17 @@ export default function TechnicianPortal() {
 
   const fetchAssignments = async () => {
     setLoading(true);
-    const { data: authData } = await supabase.auth.getUser();
+    const userId = user?.id;
     
-    if (authData.user) {
+    if (userId) {
       const { data: profile } = await supabase
         .from('profiles')
         .select('*')
-        .eq('id', authData.user.id)
+        .eq('id', userId)
         .single();
       
       setUserProfile(profile);
 
-      // Switch database target based on the view mode
       const targetStates = viewMode === 'active' 
         ? ['PROCESSING', 'ACTION_REQUIRED'] 
         : ['CLOSED'];
@@ -44,7 +45,7 @@ export default function TechnicianPortal() {
           *,
           complaint:complaints(*)
         `)
-        .eq('technician_id', authData.user.id)
+        .eq('technician_id', userId)
         .in('complaint.pipeline_state', targetStates)
         .order('assigned_at', { ascending: false });
 
@@ -67,7 +68,7 @@ export default function TechnicianPortal() {
   useEffect(() => {
     fetchAssignments();
     fetchCatalog();
-  }, [viewMode]);
+  }, [viewMode, user]);
 
   const completeTask = async (assignmentId: string, complaintId: string) => {
     if (!confirm(`Mark this task as fully completed? The Supervisor will be notified to verify.`)) return;
@@ -78,7 +79,7 @@ export default function TechnicianPortal() {
     await supabase.from('system_logs').insert({
       action_type: 'TASK_COMPLETED',
       description: `Technician ${userProfile?.full_name} marked task for complaint ${complaintId} as completed.`,
-      user_email: userProfile?.email || 'Technician'
+      user_email: userProfile?.email || user?.email || 'Technician'
     });
 
     fetchAssignments();
@@ -90,7 +91,7 @@ export default function TechnicianPortal() {
       await supabase.from('system_logs').insert({
         action_type: 'TECH_RESUMED_TASK',
         description: `Technician ${userProfile?.full_name} picked up requested materials and resumed work.`,
-        user_email: userProfile?.email || 'Technician'
+        user_email: userProfile?.email || user?.email || 'Technician'
       });
       fetchAssignments();
     } catch (err: any) {
@@ -117,7 +118,7 @@ export default function TechnicianPortal() {
 
   const addCustomItem = () => {
     if (!customName.trim()) return;
-    const tempId = `custom-${Math.random().toString(36).substr(2, 9)}`;
+    const tempId = `custom-${Math.random().toString(36).substring(2, 9)}`;
     setSelectedItems(prev => [...prev, { id: tempId, name: customName, qty: customQty, type: 'Custom' }]);
     setCustomName('');
     setCustomQty(1);
@@ -137,7 +138,7 @@ export default function TechnicianPortal() {
 
     try {
       const { data: woData, error: woError } = await supabase.from('work_orders').insert({
-        requester_id: userProfile.id,
+        requester_id: userProfile?.id || user?.id,
         department: 'Technician Procurement',
         location: activeAssignment.complaint.venue,
         urgency: 'High',
@@ -148,19 +149,17 @@ export default function TechnicianPortal() {
 
       if (woError) throw woError;
 
-      // Inside submitMaterialRequest in TechnicianPortal.tsx
-const itemsToInsert = selectedItems.map(item => {
-  // Look up catalog item fulfillment department (defaults to SIYANAT_HEAD if custom)
-  const catalogItem = catalog.find(c => c.id === item.id);
-  return {
-    work_order_id: woData.id,
-    inventory_id: item.type === 'Catalog' ? item.id : null,
-    custom_item_name: item.type === 'Custom' ? item.name : null,
-    requested_qty: item.qty,
-    item_type: item.type,
-    fulfillment_dept: catalogItem?.fulfillment_dept || 'SIYANAT_HEAD'
-  };
-});
+      const itemsToInsert = selectedItems.map(item => {
+        const catalogItem = catalog.find(c => c.id === item.id);
+        return {
+          work_order_id: woData.id,
+          inventory_id: item.type === 'Catalog' ? item.id : null,
+          custom_item_name: item.type === 'Custom' ? item.name : null,
+          requested_qty: item.qty,
+          item_type: item.type,
+          fulfillment_dept: catalogItem?.fulfillment_dept || 'SIYANAT_HEAD'
+        };
+      });
 
       const { error: itemsError } = await supabase.from('work_order_items').insert(itemsToInsert);
       if (itemsError) throw itemsError;
@@ -170,7 +169,7 @@ const itemsToInsert = selectedItems.map(item => {
       await supabase.from('system_logs').insert({
         action_type: 'TECH_MATERIAL_REQUEST',
         description: `Technician ${userProfile?.full_name} requested materials for ${activeAssignment.complaint.complaint_id}.`,
-        user_email: userProfile?.email || 'Technician'
+        user_email: userProfile?.email || user?.email || 'Technician'
       });
 
       alert("Material request sent to Siyanat Operations for Purchase Order generation!");
@@ -215,7 +214,7 @@ const itemsToInsert = selectedItems.map(item => {
             <h2 style="margin: 0; color: #581c28;">SIYANAT UL MUMTALEKAAT</h2>
             <h3 style="margin: 5px 0;">TECHNICIAN WORKLOAD SLIP</h3>
           </div>
-          <p><strong>Technician:</strong> ${userProfile?.full_name}</p>
+          <p><strong>Technician:</strong> ${userProfile?.full_name || 'N/A'}</p>
           <p><strong>Trade:</strong> ${userProfile?.trade || 'General'}</p>
           <p><strong>Date:</strong> ${new Date().toLocaleDateString()}</p>
           <p><strong>Total Tasks Shown:</strong> ${assignments.length}</p>
@@ -238,7 +237,7 @@ const itemsToInsert = selectedItems.map(item => {
             <Wrench className="w-7 h-7" />
             My Workload
           </h2>
-          <p className="text-sm font-bold text-brand-gold/80 mt-1 uppercase tracking-wide">Technician: {userProfile?.full_name}</p>
+          <p className="text-sm font-bold text-brand-gold/80 mt-1 uppercase tracking-wide">Technician: {userProfile?.full_name || 'Active'}</p>
         </div>
         <button 
           onClick={printWorkloadSlip}
@@ -269,13 +268,13 @@ const itemsToInsert = selectedItems.map(item => {
           </div>
           <div className="bg-white p-4 md:p-5 rounded-2xl shadow-sm border border-slate-200 text-center">
             <div className="text-2xl md:text-3xl font-black text-red-600">
-              {assignments.filter(a => a.complaint.priority.includes('URGENT')).length}
+              {assignments.filter(a => a.complaint?.priority?.includes('URGENT')).length}
             </div>
             <div className="text-[9px] md:text-[10px] font-black tracking-widest text-slate-400 uppercase mt-1">Urgent</div>
           </div>
           <div className="bg-white p-4 md:p-5 rounded-2xl shadow-sm border border-slate-200 text-center">
             <div className="text-2xl md:text-3xl font-black text-emerald-600">
-              {assignments.filter(a => a.complaint.pipeline_state === 'ACTION_REQUIRED').length}
+              {assignments.filter(a => a.complaint?.pipeline_state === 'ACTION_REQUIRED').length}
             </div>
             <div className="text-[9px] md:text-[10px] font-black tracking-widest text-slate-400 uppercase mt-1">Pending Verify</div>
           </div>
@@ -291,8 +290,8 @@ const itemsToInsert = selectedItems.map(item => {
           </div>
         ) : (
           assignments.map(a => {
-            const isUrgent = a.complaint.priority.includes('URGENT');
-            const isCompleted = a.complaint.pipeline_state === 'ACTION_REQUIRED' || a.complaint.pipeline_state === 'CLOSED';
+            const isUrgent = a.complaint?.priority?.includes('URGENT');
+            const isCompleted = a.complaint?.pipeline_state === 'ACTION_REQUIRED' || a.complaint?.pipeline_state === 'CLOSED';
             const isWaiting = a.status === 'Waiting for Material';
 
             return (
@@ -333,7 +332,6 @@ const itemsToInsert = selectedItems.map(item => {
                   </div>
                 </div>
 
-                {/* Only render action buttons in Active mode */}
                 {viewMode === 'active' && !isCompleted && !isWaiting && (
                   <div className="flex gap-2 pt-4 border-t border-slate-100">
                     <button 
@@ -371,7 +369,6 @@ const itemsToInsert = selectedItems.map(item => {
         )}
       </div>
 
-      {/* --- MATERIAL PROCUREMENT MODAL --- */}
       {materialModalOpen && activeAssignment && (
         <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm flex justify-center items-end sm:items-center p-4">
           <div className="bg-white rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom sm:slide-in-from-bottom-0 sm:zoom-in-95 duration-300 max-h-[90vh] flex flex-col">
@@ -385,7 +382,6 @@ const itemsToInsert = selectedItems.map(item => {
             </div>
 
             <div className="flex-1 overflow-y-auto p-5 space-y-6">
-              
               {selectedItems.length > 0 && (
                 <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 shadow-inner">
                   <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-3">Cart / Requested Items</h4>

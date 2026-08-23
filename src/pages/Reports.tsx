@@ -1,9 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { BarChart3, Download, FileSpreadsheet, Package, Wrench, Calendar, Car, Trash2, } from 'lucide-react';
+import { BarChart3, Download, FileSpreadsheet, Package, Wrench, Calendar, Car, Trash2 } from 'lucide-react';
 import { useToast } from '../hooks/useToast';
-// Use strict typing
-// Use strict typing
 import type { WorkOrder } from '../types';
 
 export default function Reports() {
@@ -49,7 +47,7 @@ export default function Reports() {
     fetchActiveData();
   }, [activeTab]);
 
-  // 🔴 GOD MODE: Universal Hard Delete (Secured with modern modal)
+  // Universal Hard Delete (Admin God Mode)
   const executeDelete = async () => {
     if (!deleteTarget) return;
     setProcessingId(deleteTarget.id);
@@ -64,9 +62,8 @@ export default function Reports() {
         user_email: currentUser?.email || 'Admin'
       });
       
-      showToast(`Record ${deleteTarget.reference} permanently eradicated.`, 'success');
+      showToast(`Record ${deleteTarget.reference} permanently deleted.`, 'success');
       
-      // Update local state directly to avoid re-fetching the whole table immediately
       if (activeTab === 'materials') setMaterials(prev => prev.filter(item => item.id !== deleteTarget.id));
       if (activeTab === 'complaints') setComplaints(prev => prev.filter(item => item.id !== deleteTarget.id));
       if (activeTab === 'events') setEvents(prev => prev.filter(item => item.id !== deleteTarget.id));
@@ -80,7 +77,7 @@ export default function Reports() {
     }
   };
 
-  // --- DYNAMIC CSV EXPORT ENGINE ---
+  // CSV Export Engine
   const downloadCSV = () => {
     let headers: string[] = [];
     let rows: string[] = [];
@@ -92,7 +89,7 @@ export default function Reports() {
       headers = ["Batch ID", "Date Submitted", "Requester", "Location", "Pipeline State", "Items Requested"];
       rows = materials.map(m => {
         const itemsString = m.items?.map((i: any) => `${i.item_type === 'Catalog' && i.inventory ? i.inventory.name : i.custom_item_name} (x${i.requested_qty})`).join('; ');
-        return [m.batch_id, new Date(m.created_at || '').toLocaleDateString(), m.requester?.full_name || 'N/A', m.location, m.pipeline_state, `"${itemsString}"`].join(',');
+        return [m.batch_id, m.created_at ? new Date(m.created_at).toLocaleDateString() : '', m.requester?.full_name || 'N/A', `"${m.location}"`, m.pipeline_state, `"${itemsString}"`].join(',');
       });
     } 
     else if (activeTab === 'complaints') {
@@ -100,7 +97,7 @@ export default function Reports() {
       filename = "Complaints_Report";
       headers = ["Complaint ID", "Date", "Requester", "Zone", "Venue", "Category", "Priority", "Pipeline State"];
       rows = complaints.map(c => [
-        c.complaint_id, new Date(c.created_at).toLocaleDateString(), c.requester?.full_name || 'N/A', c.zone, `"${c.venue} (${c.room_area})"`, c.category, c.priority, c.pipeline_state
+        c.complaint_id, c.created_at ? new Date(c.created_at).toLocaleDateString() : '', c.requester?.full_name || 'N/A', c.zone, `"${c.venue} (${c.room_area})"`, c.category, c.priority, c.pipeline_state
       ].join(','));
     }
     else if (activeTab === 'events') {
@@ -108,7 +105,7 @@ export default function Reports() {
       filename = "Events_Report";
       headers = ["Event Title", "Event Date", "Time Slot", "Requester", "Location", "Total Pax", "Pipeline State"];
       rows = events.map(e => [
-        `"${e.event_title}"`, new Date(e.event_date).toLocaleDateString(), e.time_slot, e.requester?.full_name || 'N/A', e.location, e.total_count, e.pipeline_state
+        `"${e.event_title}"`, e.event_date ? new Date(e.event_date).toLocaleDateString() : '', e.time_slot, e.requester?.full_name || 'N/A', `"${e.location}"`, e.total_count, e.pipeline_state
       ].join(','));
     }
     else if (activeTab === 'fleet') {
@@ -116,7 +113,7 @@ export default function Reports() {
       filename = "Fleet_Logistics_Report";
       headers = ["Destination", "Purpose", "Date", "Requester", "Total Pax", "Reach By", "Assigned Vehicles", "Pipeline State"];
       rows = fleet.map(f => [
-        `"${f.destination}"`, `"${f.purpose}"`, new Date(f.request_date).toLocaleDateString(), f.requester?.full_name || 'N/A', f.total_count, f.arrival_time, `"${f.assigned_vehicles || ''}"`, f.pipeline_state
+        `"${f.destination}"`, `"${f.purpose}"`, f.request_date ? new Date(f.request_date).toLocaleDateString() : '', f.requester?.full_name || 'N/A', f.total_count, f.arrival_time, `"${f.assigned_vehicles || ''}"`, f.pipeline_state
       ].join(','));
     }
 
@@ -130,7 +127,6 @@ export default function Reports() {
     document.body.removeChild(link);
   };
 
-  // --- DYNAMIC METRICS (Updated to map pipeline_state) ---
   const getMetrics = () => {
     if (activeTab === 'materials') return {
       title1: 'Total Batches', val1: materials.length,
@@ -162,7 +158,6 @@ export default function Reports() {
 
   return (
     <div className="space-y-6 pb-24">
-      {/* Header */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h2 className="text-xl font-extrabold text-brand-maroon flex items-center gap-2">
@@ -181,7 +176,6 @@ export default function Reports() {
         </button>
       </div>
 
-      {/* Tabs */}
       <div className="flex space-x-2 border-b border-slate-200 overflow-x-auto pb-1">
         <button onClick={() => setActiveTab('materials')} className={`px-4 py-2 text-sm font-bold border-b-2 transition whitespace-nowrap flex items-center gap-2 ${activeTab === 'materials' ? 'border-brand-maroon text-brand-maroon' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
           <Package className="w-4 h-4" /> Materials
@@ -197,7 +191,6 @@ export default function Reports() {
         </button>
       </div>
 
-      {/* Dynamic Metrics */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex flex-col justify-between">
           <span className="text-[10px] font-extrabold uppercase text-slate-400">{currentMetrics.title1}</span>
@@ -217,7 +210,6 @@ export default function Reports() {
         </div>
       </div>
 
-      {/* Historical Data View */}
       <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 space-y-4">
         <div className="flex items-center justify-between border-b pb-3">
           <div className="flex items-center space-x-2">
@@ -231,8 +223,6 @@ export default function Reports() {
         ) : (
           <div className="overflow-y-auto max-h-[500px] border border-slate-100 rounded-lg">
             <table className="w-full text-left text-[11px]">
-              
-              {/* MATERIALS */}
               {activeTab === 'materials' && (
                 <>
                   <thead className="bg-slate-50 text-slate-600 uppercase sticky top-0 shadow-sm">
@@ -242,7 +232,7 @@ export default function Reports() {
                     {materials.map(m => (
                       <tr key={m.id} className="hover:bg-slate-50">
                         <td className="p-3 font-bold text-brand-maroon">{m.batch_id}</td>
-                        <td className="p-3 text-slate-500">{new Date(m.created_at || '').toLocaleDateString()}</td>
+                        <td className="p-3 text-slate-500">{m.created_at ? new Date(m.created_at).toLocaleDateString() : 'N/A'}</td>
                         <td className="p-3 font-semibold">{m.requester?.full_name}</td>
                         <td className="p-3"><span className="px-2 py-1 rounded bg-slate-100 font-bold uppercase">{m.pipeline_state}</span></td>
                         <td className="p-3 text-right">
@@ -254,7 +244,6 @@ export default function Reports() {
                 </>
               )}
 
-              {/* COMPLAINTS */}
               {activeTab === 'complaints' && (
                 <>
                   <thead className="bg-slate-50 text-slate-600 uppercase sticky top-0 shadow-sm">
@@ -264,7 +253,7 @@ export default function Reports() {
                     {complaints.map(c => (
                       <tr key={c.id} className="hover:bg-slate-50">
                         <td className="p-3 font-bold text-brand-maroon">{c.complaint_id}</td>
-                        <td className="p-3 text-slate-500">{new Date(c.created_at).toLocaleDateString()}</td>
+                        <td className="p-3 text-slate-500">{c.created_at ? new Date(c.created_at).toLocaleDateString() : 'N/A'}</td>
                         <td className="p-3 font-semibold">{c.category}</td>
                         <td className="p-3"><span className="px-2 py-1 rounded bg-slate-100 font-bold uppercase">{c.pipeline_state}</span></td>
                         <td className="p-3 text-right">
@@ -276,7 +265,6 @@ export default function Reports() {
                 </>
               )}
 
-              {/* EVENTS */}
               {activeTab === 'events' && (
                 <>
                   <thead className="bg-slate-50 text-slate-600 uppercase sticky top-0 shadow-sm">
@@ -286,7 +274,7 @@ export default function Reports() {
                     {events.map(e => (
                       <tr key={e.id} className="hover:bg-slate-50">
                         <td className="p-3 font-bold text-brand-maroon">{e.event_title}</td>
-                        <td className="p-3 text-slate-500">{new Date(e.event_date).toLocaleDateString()}</td>
+                        <td className="p-3 text-slate-500">{e.event_date ? new Date(e.event_date).toLocaleDateString() : 'N/A'}</td>
                         <td className="p-3 font-semibold">{e.location}</td>
                         <td className="p-3"><span className="px-2 py-1 rounded bg-slate-100 font-bold uppercase">{e.pipeline_state}</span></td>
                         <td className="p-3 text-right">
@@ -298,7 +286,6 @@ export default function Reports() {
                 </>
               )}
 
-              {/* FLEET */}
               {activeTab === 'fleet' && (
                 <>
                   <thead className="bg-slate-50 text-slate-600 uppercase sticky top-0 shadow-sm">
@@ -308,7 +295,7 @@ export default function Reports() {
                     {fleet.map(f => (
                       <tr key={f.id} className="hover:bg-slate-50">
                         <td className="p-3 font-bold text-brand-maroon">{f.destination}</td>
-                        <td className="p-3 text-slate-500">{new Date(f.request_date).toLocaleDateString()}</td>
+                        <td className="p-3 text-slate-500">{f.request_date ? new Date(f.request_date).toLocaleDateString() : 'N/A'}</td>
                         <td className="p-3 font-semibold">{f.arrival_time}</td>
                         <td className="p-3"><span className="px-2 py-1 rounded bg-slate-100 font-bold uppercase">{f.pipeline_state}</span></td>
                         <td className="p-3 text-right">
@@ -319,26 +306,24 @@ export default function Reports() {
                   </tbody>
                 </>
               )}
-
             </table>
           </div>
         )}
       </div>
 
-      {/* GOD MODE Delete Confirmation Modal */}
       {deleteTarget && (
         <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4">
           <div className="bg-white p-6 rounded-2xl max-w-sm w-full text-center">
             <div className="w-12 h-12 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
               <Trash2 className="w-6 h-6" />
             </div>
-            <h3 className="text-lg font-black text-slate-800 mb-2">Eradicate Record?</h3>
+            <h3 className="text-lg font-black text-slate-800 mb-2">Delete Record?</h3>
             <p className="text-xs text-slate-500 mb-6 font-medium leading-relaxed">
               You are about to permanently delete <strong>{deleteTarget.reference}</strong> from the database. This action cannot be undone.
             </p>
             <div className="flex gap-3">
               <button onClick={() => setDeleteTarget(null)} className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition">Cancel</button>
-              <button onClick={executeDelete} disabled={!!processingId} className="flex-1 py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition disabled:opacity-50">Eradicate</button>
+              <button onClick={executeDelete} disabled={!!processingId} className="flex-1 py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition disabled:opacity-50">Delete</button>
             </div>
           </div>
         </div>
