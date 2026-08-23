@@ -28,7 +28,7 @@ export default function Login() {
     <div className="min-h-screen flex flex-col items-center justify-center p-4 relative bg-brand">
       {/* Background Image Layer with Opacity */}
       <div 
-        className="absolute inset-0 z-0 bg-cover bg-center bg-no-repeat opacity-30 mix-blend-overlay"
+        className="absolute inset-0 z-0 bg-cover bg-center bg-no-repeat opacity-40"
         style={{ backgroundImage: "url('/BG_img.jpeg')" }}
       />
       
