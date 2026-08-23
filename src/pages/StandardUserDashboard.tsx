@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { CheckSquare, RefreshCw, MessageSquare, Package, Wrench, Calendar, Car } from "lucide-react";
 import BatchDetailsModal from "../components/BatchDetailsModal";
+import VisualPipelineStepper from "../components/VisualPipelineStepper";
 import { useNavigate } from "react-router-dom";
 
 export default function StandardUserDashboard() {
@@ -43,13 +44,11 @@ export default function StandardUserDashboard() {
       setUserRole(role);
       const isGodMode = role === "SUPER_ADMIN" || role === "ADMIN";
 
-      // Build Queries
-      let matQuery = supabase.from("work_orders").select("*, logs:work_order_logs(author_id)").order("created_at", { ascending: false }).limit(30);
+      let matQuery = supabase.from("work_orders").select("*, logs:work_order_logs(author_id), items:work_order_items(custom_item_name, requested_qty, inventory:inventory_items(name))").order("created_at", { ascending: false }).limit(30);
       let compQuery = supabase.from("complaints").select("*").order("created_at", { ascending: false }).limit(30);
       let evQuery = supabase.from("events").select("*").order("event_date", { ascending: true }).limit(30);
       let fleetQuery = supabase.from("vehicle_requests").select("*").order("request_date", { ascending: true }).limit(30);
 
-      // Restrict to personal history unless Admin
       if (!isGodMode) {
         matQuery = matQuery.eq("requester_id", authData.user.id);
         compQuery = compQuery.eq("requester_id", authData.user.id);
@@ -57,7 +56,6 @@ export default function StandardUserDashboard() {
         fleetQuery = fleetQuery.eq("requester_id", authData.user.id);
       }
 
-      // Execute concurrently for speed
       const [matRes, compRes, evRes, fleetRes] = await Promise.all([matQuery, compQuery, evQuery, fleetQuery]);
 
       if (matRes.data) setMaterials(matRes.data);
@@ -79,14 +77,11 @@ export default function StandardUserDashboard() {
     fetchDashboardData();
   }, []);
 
-  // --- MATERIAL ACTIONS ---
-  // THE FIX: Secure RPC Call
   const confirmReceipt = async (batch: any) => {
     if (!confirm("Confirm you have physically received these items? This will finalize the inventory deduction and close the request.")) return;
     setProcessingId(batch.id);
 
     try {
-      // Execute the secure database engine
       const { error } = await supabase.rpc('receive_work_order', { target_id: batch.id });
       if (error) throw error;
       
@@ -199,180 +194,160 @@ export default function StandardUserDashboard() {
         )}
       </div>
 
-      {/* Tab Content Container */}
-      <div className="bg-white rounded-3xl p-5 md:p-6 shadow-sm border border-slate-200 space-y-3">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-slate-100 pb-4 mb-4">
-          <h3 className="font-black text-sm uppercase tracking-wide text-slate-800">
-            {activeTab} Queue
+      {/* Main Content Area */}
+      <div className="space-y-4">
+        <div className="flex justify-between items-center px-1">
+          <h3 className="font-black text-xs uppercase tracking-wider text-slate-500">
+            Active {activeTab} Tickets ({activeTab === 'materials' ? materials.length : activeTab === 'maintenance' ? complaints.length : activeTab === 'events' ? events.length : fleet.length})
           </h3>
-          <button onClick={fetchDashboardData} className="text-[10px] text-slate-400 font-bold uppercase tracking-widest flex items-center space-x-1.5 hover:text-brand-maroon transition bg-slate-50 hover:bg-brand-maroon/5 px-3 py-1.5 rounded-lg border border-slate-200">
+          <button onClick={fetchDashboardData} className="text-[10px] text-slate-400 font-bold uppercase tracking-widest flex items-center space-x-1.5 hover:text-brand-maroon transition bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-sm">
             <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} />
             <span>Sync</span>
           </button>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+        {loading ? (
+          <div className="p-12 text-center text-slate-400 font-bold animate-pulse bg-white rounded-3xl border border-slate-200">
+            Loading {activeTab} records...
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-4">
             
-            {/* --- MATERIALS TAB --- */}
+            {/* --- MATERIALS CARDS --- */}
             {activeTab === 'materials' && (
-              <>
-                <thead className="bg-slate-50 text-slate-500 uppercase font-black tracking-widest text-[9px]">
-                  <tr>
-                    <th className="p-4 rounded-tl-xl">Batch ID</th>
-                    <th className="p-4">Location</th>
-                    <th className="p-4">Status</th>
-                    <th className="p-4 text-right rounded-tr-xl">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {loading ? <tr><td colSpan={4} className="p-8 text-center text-slate-400 font-bold animate-pulse">Loading...</td></tr> : materials.length === 0 ? <tr><td colSpan={4} className="p-8 text-center text-slate-400 font-bold italic">No material requests found.</td></tr> : materials.map((req) => {
-                    const logs = req.logs || [];
-                    const hasUnread = logs.length > 0 && logs[logs.length - 1].author_id !== currentUser?.id;
-                    return (
-                      <tr key={req.id} className="hover:bg-slate-50/80 transition">
-                        <td className="p-4 font-black text-brand-maroon">{req.batch_id}</td>
-                        <td className="p-4 font-bold text-slate-700">{req.location}</td>
-                        <td className="p-4">
-                          <span className={`px-2 py-1 rounded text-[9px] font-black uppercase tracking-wider shadow-sm border ${req.pipeline_state === 'CLOSED' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : req.pipeline_state === 'ACTION_REQUIRED' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>{req.pipeline_state}</span>
-                        </td>
-                        <td className="p-4 text-right">
-                          <div className="flex items-center justify-end gap-2">
+              materials.length === 0 ? (
+                <div className="p-12 text-center bg-white rounded-3xl border border-slate-200 text-slate-400 italic font-bold">No material requisitions found.</div>
+              ) : (
+                materials.map((req) => {
+                  const logs = req.logs || [];
+                  const hasUnread = logs.length > 0 && logs[logs.length - 1].author_id !== currentUser?.id;
+                  const itemsSummary = (req.items || []).map((i: any) => `${i.inventory?.name || i.custom_item_name} (x${i.requested_qty})`).join(', ');
+
+                  return (
+                    <div key={req.id} className="bg-white rounded-3xl p-5 md:p-6 shadow-sm border border-slate-200 flex flex-col justify-between gap-4 transition hover:shadow-md">
+                      <div>
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <span className="font-black text-brand-maroon text-base">{req.batch_id}</span>
+                            <p className="text-xs font-bold text-slate-700 mt-0.5">{req.location}</p>
+                          </div>
+                          <div className="flex items-center gap-2">
                             {req.pipeline_state === "ACTION_REQUIRED" && (
-                              <button onClick={() => confirmReceipt(req)} disabled={processingId === req.id} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black uppercase tracking-wider rounded-lg text-[10px] flex items-center gap-1.5 shadow-sm transition disabled:opacity-50"><CheckSquare className="w-3.5 h-3.5" /><span className="hidden sm:inline">Receive</span></button>
+                              <button onClick={() => confirmReceipt(req)} disabled={processingId === req.id} className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center gap-1.5 shadow-sm transition disabled:opacity-50">
+                                <CheckSquare className="w-3.5 h-3.5" /> Confirm Receipt
+                              </button>
                             )}
-                            <button onClick={() => openChat(req)} className="relative px-3 py-2 bg-slate-800 hover:bg-black text-white font-black uppercase tracking-wider rounded-lg text-[10px] flex items-center gap-1.5 shadow-sm transition">
+                            <button onClick={() => openChat(req)} className="relative px-3 py-2 bg-slate-800 hover:bg-black text-white font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center gap-1.5 shadow-sm transition">
                               {hasUnread && <span className="absolute -top-1 -right-1 flex h-3.5 w-3.5"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span><span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-red-500 border-2 border-white"></span></span>}
-                              <MessageSquare className="w-3.5 h-3.5" /><span className="hidden sm:inline">Thread</span>
+                              <MessageSquare className="w-3.5 h-3.5" /> Thread
                             </button>
                           </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </>
-            )}
-
-            {/* --- MAINTENANCE TAB --- */}
-            {activeTab === 'maintenance' && (
-              <>
-                <thead className="bg-slate-50 text-slate-500 uppercase font-black tracking-widest text-[9px]">
-                  <tr>
-                    <th className="p-4 rounded-tl-xl">Complaint ID</th>
-                    <th className="p-4">Location & Issue</th>
-                    <th className="p-4 rounded-tr-xl text-right">Status Tracker</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {loading ? <tr><td colSpan={3} className="p-8 text-center text-slate-400 font-bold animate-pulse">Loading...</td></tr> : complaints.length === 0 ? <tr><td colSpan={3} className="p-8 text-center text-slate-400 font-bold italic">No complaints filed.</td></tr> : complaints.map((c) => (
-                    <tr key={c.id} className="hover:bg-slate-50/80 transition">
-                      <td className="p-4">
-                        <div className="font-black text-brand-maroon">{c.complaint_id}</div>
-                        <div className="text-[10px] font-bold text-slate-400 mt-1">{new Date(c.created_at).toLocaleDateString()}</div>
-                      </td>
-                      <td className="p-4">
-                        <div className="font-bold text-slate-800 mb-0.5">{c.category}</div>
-                        <div className="text-[10px] font-medium text-slate-500">{c.zone} - {c.venue} ({c.room_area})</div>
-                      </td>
-                      <td className="p-4 text-right">
-                        <div className="flex flex-col items-end gap-1.5">
-                          <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider border shadow-sm ${
-                            c.pipeline_state === 'CLOSED' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 
-                            c.pipeline_state === 'REJECTED' ? 'bg-red-50 text-red-700 border-red-200' : 
-                            c.pipeline_state === 'ACTION_REQUIRED' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 
-                            c.pipeline_state === 'PROCESSING' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 
-                            'bg-amber-50 text-amber-700 border-amber-200'
-                          }`}>
-                            {c.pipeline_state === 'PROCESSING' ? 'IN PROGRESS' : c.pipeline_state}
-                          </span>
                         </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </>
-            )}
 
-            {/* --- EVENTS TAB --- */}
-            {activeTab === 'events' && (
-              <>
-                <thead className="bg-slate-50 text-slate-500 uppercase font-black tracking-widest text-[9px]">
-                  <tr>
-                    <th className="p-4 rounded-tl-xl">Event Title</th>
-                    <th className="p-4">Schedule</th>
-                    <th className="p-4">Location</th>
-                    <th className="p-4 text-right rounded-tr-xl">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {loading ? <tr><td colSpan={4} className="p-8 text-center text-slate-400 font-bold animate-pulse">Loading...</td></tr> : events.length === 0 ? <tr><td colSpan={4} className="p-8 text-center text-slate-400 font-bold italic">No events booked.</td></tr> : events.map((e) => (
-                    <tr key={e.id} className="hover:bg-slate-50/80 transition">
-                      <td className="p-4 font-bold text-brand-maroon">{e.event_title}</td>
-                      <td className="p-4">
-                        <div className="font-bold text-slate-700">{new Date(e.event_date).toLocaleDateString()}</div>
-                        <div className="text-[9px] font-black text-slate-400 uppercase mt-0.5">{e.time_slot}</div>
-                      </td>
-                      <td className="p-4 font-medium text-slate-600">{e.location} {e.sub_location && <span className="block text-[10px] text-slate-400">({e.sub_location})</span>}</td>
-                      <td className="p-4 text-right">
-                        <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider border shadow-sm ${
-                          e.pipeline_state === 'CLOSED' ? 'bg-slate-100 text-slate-500 border-slate-200' : 
-                          e.pipeline_state === 'PROCESSING' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 
-                          e.pipeline_state === 'REJECTED' ? 'bg-red-50 text-red-700 border-red-200' : 
-                          'bg-amber-50 text-amber-700 border-amber-200'
-                        }`}>
-                          {e.pipeline_state === 'PROCESSING' ? 'SCHEDULED' : e.pipeline_state}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </>
-            )}
-
-            {/* --- FLEET TAB --- */}
-            {activeTab === 'fleet' && !isStandardUser && (
-              <>
-                <thead className="bg-slate-50 text-slate-500 uppercase font-black tracking-widest text-[9px]">
-                  <tr>
-                    <th className="p-4 rounded-tl-xl">Destination / Purpose</th>
-                    <th className="p-4">Date & Times</th>
-                    <th className="p-4">Status</th>
-                    <th className="p-4 text-right rounded-tr-xl">Dispatch Details</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {loading ? <tr><td colSpan={4} className="p-8 text-center text-slate-400 font-bold animate-pulse">Loading...</td></tr> : fleet.length === 0 ? <tr><td colSpan={4} className="p-8 text-center text-slate-400 font-bold italic">No fleet requests.</td></tr> : fleet.map((f) => (
-                    <tr key={f.id} className="hover:bg-slate-50/80 transition">
-                      <td className="p-4">
-                        <div className="font-black text-brand-maroon tracking-wide">{f.destination}</div>
-                        <div className="text-[10px] font-bold text-slate-500 mt-1">{f.purpose}</div>
-                      </td>
-                      <td className="p-4">
-                        <div className="font-bold text-slate-700">{new Date(f.request_date).toLocaleDateString()}</div>
-                        <div className="text-[10px] font-black text-emerald-600 uppercase mt-0.5">Reach By: {f.arrival_time}</div>
-                      </td>
-                      <td className="p-4">
-                        <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider border shadow-sm ${f.pipeline_state === 'PROCESSING' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : f.pipeline_state === 'REJECTED' ? 'bg-red-50 text-red-700 border-red-200' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>{f.pipeline_state}</span>
-                      </td>
-                      <td className="p-4 text-right">
-                        {f.assigned_vehicles ? (
-                          <div className="bg-indigo-50 p-2 rounded-lg border border-indigo-100 inline-block text-left">
-                            <div className="font-bold text-slate-800 text-[10px]">{f.assigned_vehicles}</div>
-                            <div className="text-indigo-600 font-black uppercase text-[9px] mt-0.5 tracking-wider">Depart @ {f.departure_time}</div>
+                        {itemsSummary && (
+                          <div className="mt-3 bg-slate-50 p-2.5 rounded-xl border border-slate-100 text-[11px] font-bold text-slate-600">
+                            <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 block mb-0.5">Items:</span>
+                            {itemsSummary}
                           </div>
-                        ) : (
-                          <span className="text-[10px] font-bold text-slate-400 italic">Pending Assignment</span>
                         )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </>
+                      </div>
+
+                      <VisualPipelineStepper type="REQUISITION" pipelineState={req.pipeline_state} />
+                    </div>
+                  );
+                })
+              )
             )}
 
-          </table>
-        </div>
+            {/* --- MAINTENANCE CARDS --- */}
+            {activeTab === 'maintenance' && (
+              complaints.length === 0 ? (
+                <div className="p-12 text-center bg-white rounded-3xl border border-slate-200 text-slate-400 italic font-bold">No maintenance complaints registered.</div>
+              ) : (
+                complaints.map((c) => (
+                  <div key={c.id} className="bg-white rounded-3xl p-5 md:p-6 shadow-sm border border-slate-200 flex flex-col justify-between gap-4 transition hover:shadow-md">
+                    <div>
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <span className="font-black text-brand-maroon text-base">{c.complaint_id}</span>
+                          <h4 className="font-bold text-slate-800 text-sm mt-0.5">{c.category}</h4>
+                          <p className="text-[11px] text-slate-500 font-medium">{c.zone} - {c.venue} ({c.room_area})</p>
+                        </div>
+                        <span className="text-[10px] font-bold text-slate-400 uppercase">
+                          {new Date(c.created_at).toLocaleDateString()}
+                        </span>
+                      </div>
+
+                      <p className="text-xs text-slate-600 font-medium mt-3 bg-slate-50 p-3 rounded-xl border border-slate-100 line-clamp-2">
+                        {c.description}
+                      </p>
+                    </div>
+
+                    <VisualPipelineStepper type="COMPLAINT" pipelineState={c.pipeline_state} />
+                  </div>
+                ))
+              )
+            )}
+
+            {/* --- EVENTS CARDS --- */}
+            {activeTab === 'events' && (
+              events.length === 0 ? (
+                <div className="p-12 text-center bg-white rounded-3xl border border-slate-200 text-slate-400 italic font-bold">No event requests booked.</div>
+              ) : (
+                events.map((e) => (
+                  <div key={e.id} className="bg-white rounded-3xl p-5 md:p-6 shadow-sm border border-slate-200 flex flex-col justify-between gap-4 transition hover:shadow-md">
+                    <div>
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <span className="font-black text-brand-maroon text-base">{e.event_title}</span>
+                          <p className="text-xs font-bold text-slate-700 mt-0.5">{e.location} {e.sub_location ? `(${e.sub_location})` : ''}</p>
+                        </div>
+                        <div className="text-right">
+                          <div className="font-bold text-slate-800 text-xs">{new Date(e.event_date).toLocaleDateString()}</div>
+                          <div className="text-[9px] font-black text-brand-maroon uppercase mt-0.5">{e.time_slot}</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <VisualPipelineStepper type="EVENT" pipelineState={e.pipeline_state} />
+                  </div>
+                ))
+              )
+            )}
+
+            {/* --- FLEET CARDS --- */}
+            {activeTab === 'fleet' && !isStandardUser && (
+              fleet.length === 0 ? (
+                <div className="p-12 text-center bg-white rounded-3xl border border-slate-200 text-slate-400 italic font-bold">No fleet requests booked.</div>
+              ) : (
+                fleet.map((f) => (
+                  <div key={f.id} className="bg-white rounded-3xl p-5 md:p-6 shadow-sm border border-slate-200 flex flex-col justify-between gap-4 transition hover:shadow-md">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <span className="font-black text-brand-maroon text-base">{f.destination}</span>
+                        <p className="text-xs font-bold text-slate-700 mt-0.5">Purpose: {f.purpose}</p>
+                      </div>
+                      <div className="text-right">
+                        <div className="font-bold text-slate-800 text-xs">{new Date(f.request_date).toLocaleDateString()}</div>
+                        <div className="text-[9px] font-black text-emerald-600 uppercase mt-0.5">Reach: {f.arrival_time}</div>
+                      </div>
+                    </div>
+
+                    {f.assigned_vehicles && (
+                      <div className="bg-indigo-50 p-3 rounded-xl border border-indigo-100 flex items-center justify-between text-xs font-bold">
+                        <span className="text-indigo-900">Vehicle: {f.assigned_vehicles}</span>
+                        <span className="text-indigo-600 uppercase text-[10px] font-black">Departure: {f.departure_time}</span>
+                      </div>
+                    )}
+
+                    <VisualPipelineStepper type="FLEET" pipelineState={f.pipeline_state} />
+                  </div>
+                ))
+              )
+            )}
+
+          </div>
+        )}
       </div>
 
       {/* Slide-out Chat Modal for Materials */}

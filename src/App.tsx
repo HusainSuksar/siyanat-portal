@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { supabase } from "./lib/supabase";
 import { useAuth } from "./contexts/AuthContext"; 
 import { PackageCheck, LogOut, LayoutDashboard, PlusCircle, Truck, Warehouse, Bell, X, Server, PieChart, ShieldAlert, Users, Menu, Wrench, ClipboardList, Calendar, Car, CalendarCheck, ShoppingCart, Package, UserCircle, Eye } from "lucide-react";
+import { useWorkloadBadges } from "./hooks/useWorkloadBadges";
 
 import ForcePasswordChange from "./components/ForcePasswordChange";
 import UserProfile from "./pages/UserProfile";
@@ -30,10 +31,7 @@ import InstallAppButton from './components/InstallAppButton';
 // Global Clean Logout Handler
 const performCleanLogout = async () => {
   try {
-    // 1. Remove active Supabase realtime websocket channels
     supabase.removeAllChannels();
-
-    // 2. Terminate Auth session
     await supabase.auth.signOut();
   } catch (err) {
     console.error("SignOut error:", err);
@@ -61,7 +59,6 @@ const usePushNotificationSync = (userId: string | null) => {
           const auth = rawSub.keys?.auth || '';
 
           if (endpoint && p256dh && auth) {
-            // Upsert: Rebind this device endpoint to the newly active user session
             await supabase.from('user_push_subscriptions').upsert(
               {
                 user_id: userId,
@@ -134,7 +131,7 @@ const NotificationManager = ({ userRole, userId }: { userRole: string | null; us
 };
 
 // --- DESKTOP NAVIGATION ---
-const DesktopNavigation = ({ userRole }: { userRole: string }) => {
+const DesktopNavigation = ({ userRole, badges }: { userRole: string; badges: any }) => {
   const location = useLocation();
   const getTabClass = (path: string) => {
     const isActive = location.pathname === path;
@@ -168,9 +165,17 @@ const DesktopNavigation = ({ userRole }: { userRole: string }) => {
 
         {isSiyanatHead && (
           <>
-            <Link to="/siyanat-operations" className={getTabClass("/siyanat-operations")}><Truck className="w-4 h-4" /><span>Operations</span></Link>
+            <Link to="/siyanat-operations" className={getTabClass("/siyanat-operations")}>
+              <Truck className="w-4 h-4" />
+              <span>Operations</span>
+              {badges.materialDispatch > 0 && <span className="bg-brand-gold text-brand-dark px-1.5 py-0.2 rounded-full text-[10px] font-black">{badges.materialDispatch}</span>}
+            </Link>
             <Link to="/restock" className={getTabClass("/restock")}><Warehouse className="w-4 h-4" /><span>Stock</span></Link>
-            <Link to="/rto" className={getTabClass("/rto")}><ShoppingCart className="w-4 h-4" /><span>RTO Queue</span></Link>
+            <Link to="/rto" className={getTabClass("/rto")}>
+              <ShoppingCart className="w-4 h-4" />
+              <span>RTO Queue</span>
+              {badges.pendingPOs > 0 && <span className="bg-amber-100 text-amber-900 px-1.5 py-0.2 rounded-full text-[10px] font-black">{badges.pendingPOs}</span>}
+            </Link>
             <Link to="/reports" className={getTabClass("/reports")}><PieChart className="w-4 h-4" /><span>Reports</span></Link>
             <Link to="/assets" className={getTabClass("/assets")}><Server className="w-4 h-4" /><span>Assets</span></Link>
             <Link to="/audit" className={getTabClass("/audit")}><ShieldAlert className="w-4 h-4" /><span>Audit</span></Link>
@@ -180,7 +185,11 @@ const DesktopNavigation = ({ userRole }: { userRole: string }) => {
 
         {isTanzeemHead && !isSiyanatHead && (
           <>
-            <Link to="/siyanat-operations" className={getTabClass("/siyanat-operations")}><Package className="w-4 h-4" /><span>Stationery Queue</span></Link>
+            <Link to="/siyanat-operations" className={getTabClass("/siyanat-operations")}>
+              <Package className="w-4 h-4" />
+              <span>Stationery Queue</span>
+              {badges.materialDispatch > 0 && <span className="bg-brand-gold text-brand-dark px-1.5 py-0.2 rounded-full text-[10px] font-black">{badges.materialDispatch}</span>}
+            </Link>
             <Link to="/restock" className={getTabClass("/restock")}><Warehouse className="w-4 h-4" /><span>Catalog</span></Link>
             <Link to="/rto" className={getTabClass("/rto")}><ShoppingCart className="w-4 h-4" /><span>RTO Queue</span></Link>
             <Link to="/tanzeem" className={getTabClass("/tanzeem")}><CalendarCheck className="w-4 h-4" /><span>Tanzeem Center</span></Link>
@@ -189,18 +198,30 @@ const DesktopNavigation = ({ userRole }: { userRole: string }) => {
 
         {isAvitHead && !isSiyanatHead && (
           <>
-            <Link to="/siyanat-operations" className={getTabClass("/siyanat-operations")}><Truck className="w-4 h-4" /><span>AVIT Operations</span></Link>
+            <Link to="/siyanat-operations" className={getTabClass("/siyanat-operations")}>
+              <Truck className="w-4 h-4" />
+              <span>AVIT Operations</span>
+              {badges.materialDispatch > 0 && <span className="bg-brand-gold text-brand-dark px-1.5 py-0.2 rounded-full text-[10px] font-black">{badges.materialDispatch}</span>}
+            </Link>
             <Link to="/restock" className={getTabClass("/restock")}><Warehouse className="w-4 h-4" /><span>Catalog</span></Link>
             <Link to="/rto" className={getTabClass("/rto")}><ShoppingCart className="w-4 h-4" /><span>RTO Queue</span></Link>
           </>
         )}
 
         {(userRole === "SUPERVISOR" || isGodMode) && (
-          <Link to="/supervisor-queue" className={getTabClass("/supervisor-queue")}><ClipboardList className="w-4 h-4" /><span>Review Queue</span></Link>
+          <Link to="/supervisor-queue" className={getTabClass("/supervisor-queue")}>
+            <ClipboardList className="w-4 h-4" />
+            <span>Review Queue</span>
+            {badges.supervisorReview > 0 && <span className="bg-red-500 text-white px-1.5 py-0.2 rounded-full text-[10px] font-black">{badges.supervisorReview}</span>}
+          </Link>
         )}
         
         {(userRole === "TECHNICIAN" || userRole === "EXECUTOR" || isGodMode) && (
-          <Link to="/technician-portal" className={getTabClass("/technician-portal")}><Wrench className="w-4 h-4" /><span>My Workload</span></Link>
+          <Link to="/technician-portal" className={getTabClass("/technician-portal")}>
+            <Wrench className="w-4 h-4" />
+            <span>My Workload</span>
+            {badges.techTasks > 0 && <span className="bg-indigo-600 text-white px-1.5 py-0.2 rounded-full text-[10px] font-black">{badges.techTasks}</span>}
+          </Link>
         )}
       </div>
     </div>
@@ -208,18 +229,26 @@ const DesktopNavigation = ({ userRole }: { userRole: string }) => {
 };
 
 // --- MOBILE DRAWER NAVIGATION ---
-const MobileDrawerNavigation = ({ userRole, isOpen, setIsOpen }: { userRole: string; isOpen: boolean; setIsOpen: (val: boolean) => void; }) => {
+const MobileDrawerNavigation = ({ userRole, isOpen, setIsOpen, badges }: { userRole: string; isOpen: boolean; setIsOpen: (val: boolean) => void; badges: any; }) => {
   const location = useLocation();
   if (!isOpen) return null;
 
   const getLinkClass = (path: string) => {
     const isActive = location.pathname === path;
-    return isActive ? "flex items-center space-x-3 p-3 bg-brand-maroon/10 text-brand-maroon font-bold rounded-xl" : "flex items-center space-x-3 p-3 text-slate-600 font-bold hover:bg-slate-100 rounded-xl";
+    return isActive ? "flex items-center justify-between p-3 bg-brand-maroon/10 text-brand-maroon font-bold rounded-xl" : "flex items-center justify-between p-3 text-slate-600 font-bold hover:bg-slate-100 rounded-xl";
   };
 
-  const navItem = (to: string, Icon: any, label: string) => (
+  const navItem = (to: string, Icon: any, label: string, badgeCount?: number) => (
     <Link to={to} onClick={() => setIsOpen(false)} className={getLinkClass(to)}>
-      <Icon className="w-5 h-5" /><span>{label}</span>
+      <div className="flex items-center space-x-3">
+        <Icon className="w-5 h-5" />
+        <span>{label}</span>
+      </div>
+      {!!badgeCount && badgeCount > 0 && (
+        <span className="bg-brand-maroon text-white text-[10px] font-black px-2 py-0.5 rounded-full shadow-sm">
+          {badgeCount}
+        </span>
+      )}
     </Link>
   );
 
@@ -256,9 +285,9 @@ const MobileDrawerNavigation = ({ userRole, isOpen, setIsOpen }: { userRole: str
           {isSiyanatHead && (
             <>
               <div className="pt-4 pb-2 text-[10px] font-black uppercase text-slate-400 tracking-wider">Siyanat Head Controls</div>
-              {navItem("/siyanat-operations", Truck, "Operations Queue")}
+              {navItem("/siyanat-operations", Truck, "Operations Queue", badges.materialDispatch)}
               {navItem("/restock", Warehouse, "Restock Inventory")}
-              {navItem("/rto", ShoppingCart, "Request-to-Order Queue")}
+              {navItem("/rto", ShoppingCart, "Request-to-Order Queue", badges.pendingPOs)}
               {navItem("/reports", PieChart, "Analytics & Reports")}
               {navItem("/assets", Server, "Asset Register")}
               {navItem("/audit", ShieldAlert, "Audit Trail")}
@@ -270,32 +299,32 @@ const MobileDrawerNavigation = ({ userRole, isOpen, setIsOpen }: { userRole: str
             <>
               <div className="pt-4 pb-2 text-[10px] font-black uppercase text-slate-400 tracking-wider">Tanzeem Head Controls</div>
               {navItem("/tanzeem", CalendarCheck, "Tanzeem Command Center")}
-              {navItem("/siyanat-operations", Package, "Stationery Queue")}
+              {navItem("/siyanat-operations", Package, "Stationery Queue", badges.materialDispatch)}
               {navItem("/restock", Warehouse, "Catalog")}
-              {navItem("/rto", ShoppingCart, "RTO Queue")}
+              {navItem("/rto", ShoppingCart, "RTO Queue", badges.pendingPOs)}
             </>
           )}
 
           {isAvitHead && !isSiyanatHead && (
             <>
               <div className="pt-4 pb-2 text-[10px] font-black uppercase text-slate-400 tracking-wider">AVIT Head Controls</div>
-              {navItem("/siyanat-operations", Truck, "AVIT Operations")}
+              {navItem("/siyanat-operations", Truck, "AVIT Operations", badges.materialDispatch)}
               {navItem("/restock", Warehouse, "Catalog")}
-              {navItem("/rto", ShoppingCart, "RTO Queue")}
+              {navItem("/rto", ShoppingCart, "RTO Queue", badges.pendingPOs)}
             </>
           )}
 
           {(userRole === "SUPERVISOR" || isGodMode) && (
             <>
               <div className="pt-4 pb-2 text-[10px] font-black uppercase text-slate-400 tracking-wider">Supervisor Tools</div>
-              {navItem("/supervisor-queue", ClipboardList, "Review Queue")}
+              {navItem("/supervisor-queue", ClipboardList, "Review Queue", badges.supervisorReview)}
             </>
           )}
           
           {(userRole === "TECHNICIAN" || userRole === "EXECUTOR" || isGodMode) && (
             <>
               <div className="pt-4 pb-2 text-[10px] font-black uppercase text-slate-400 tracking-wider">Technician Dashboard</div>
-              {navItem("/technician-portal", Wrench, "My Workload")}
+              {navItem("/technician-portal", Wrench, "My Workload", badges.techTasks)}
             </>
           )}
         </div>
@@ -316,6 +345,7 @@ const MobileDrawerNavigation = ({ userRole, isOpen, setIsOpen }: { userRole: str
 // --- LAYOUT WRAPPER ---
 const PortalLayout = ({ children, userRole, userId }: { children: React.ReactNode; userRole: string; userId: string | null; }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const badges = useWorkloadBadges(userId, userRole);
 
   return (
     <div className="min-h-screen flex flex-col bg-[#f8f6f0] font-sans">
@@ -342,8 +372,8 @@ const PortalLayout = ({ children, userRole, userId }: { children: React.ReactNod
       </header>
 
       <NotificationManager userRole={userRole} userId={userId} />
-      <DesktopNavigation userRole={userRole} />
-      <MobileDrawerNavigation userRole={userRole} isOpen={isMobileMenuOpen} setIsOpen={setIsMobileMenuOpen} />
+      <DesktopNavigation userRole={userRole} badges={badges} />
+      <MobileDrawerNavigation userRole={userRole} isOpen={isMobileMenuOpen} setIsOpen={setIsMobileMenuOpen} badges={badges} />
 
       <main className="max-w-7xl mx-auto px-4 py-6 flex-grow w-full relative">
         {children}
@@ -359,7 +389,6 @@ const PortalLayout = ({ children, userRole, userId }: { children: React.ReactNod
 export default function App() {
   const { session, role, loading } = useAuth();
 
-  // Auto-bind device endpoint to whichever user is actively logged in
   usePushNotificationSync(session?.user?.id || null);
 
   if (loading) return <div className="flex justify-center items-center min-h-screen bg-brand-maroon text-brand-gold font-bold">Loading Portal...</div>;
