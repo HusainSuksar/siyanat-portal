@@ -107,30 +107,42 @@ export default function StandardUserDashboard() {
   };
 
   // Dynamic 3:00 PM SLA Delivery Message Calculation
-  const getDeliverySlaMessage = (req: any) => {
-    if (['REJECTED', 'CLOSED'].includes(req.pipeline_state)) return null;
+  // Dynamic 3:00 PM SLA Delivery Message - ONLY AFTER HEAD APPROVAL
+const getDeliverySlaMessage = (req: any) => {
+  // Only show AFTER Siyanat/AVIT/Tanzeem Head has reviewed and approved the batch
+  // (State must be 'PROCESSING' or 'ACTION_REQUIRED')
+  if (req.pipeline_state !== 'PROCESSING' && req.pipeline_state !== 'ACTION_REQUIRED') {
+    return null;
+  }
 
-    // Use latest system update timestamp or creation date
-    const approvalTimestamp = req.logs && req.logs.length > 0 
-      ? new Date(req.logs[req.logs.length - 1].created_at) 
-      : new Date(req.created_at);
+  // Find the exact timestamp when the Head approved/split the batch from logs
+  const headActionLog = req.logs?.slice().reverse().find((l: any) => 
+    l.message?.includes('processed') || 
+    l.message?.includes('split') || 
+    l.message?.includes('approved') ||
+    l.message?.includes('Stock')
+  );
 
-    const approvalHour = approvalTimestamp.getHours();
+  const approvalTimestamp = headActionLog 
+    ? new Date(headActionLog.created_at) 
+    : (req.logs && req.logs.length > 0 ? new Date(req.logs[req.logs.length - 1].created_at) : new Date(req.created_at));
 
-    if (approvalHour < 15) {
-      return {
-        type: 'same_day',
-        text: 'You will get the requested material today.',
-        badgeClass: 'bg-emerald-50 text-emerald-800 border-emerald-200'
-      };
-    } else {
-      return {
-        type: 'next_day',
-        text: 'We will try to deliver your requested material today or tomorrow as earliest as possible.',
-        badgeClass: 'bg-amber-50 text-amber-800 border-amber-200'
-      };
-    }
-  };
+  const approvalHour = approvalTimestamp.getHours();
+
+  if (approvalHour < 15) {
+    return {
+      type: 'same_day',
+      text: 'You will get the requested material today.',
+      badgeClass: 'bg-emerald-50 text-emerald-800 border-emerald-200'
+    };
+  } else {
+    return {
+      type: 'next_day',
+      text: 'We will try to deliver your requested material today or tomorrow as earliest as possible.',
+      badgeClass: 'bg-amber-50 text-amber-800 border-amber-200'
+    };
+  }
+};
 
   const isStandardUser = userRole === 'REQUESTER';
 
