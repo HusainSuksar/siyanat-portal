@@ -52,13 +52,11 @@ export default function NewRequisition() {
       }
     }
 
-    let query = supabase.from('inventory_items').select('*').order('name');
-    
-    if (role === 'REQUESTER') {
-      query = query.in('category', ['Office & Administrative Supplies', 'IT & Networking Hardware']);
-    }
-
-    const { data, error } = await query;
+    // Fetch all active catalog inventory items
+    const { data, error } = await supabase
+      .from('inventory_items')
+      .select('*')
+      .order('name');
       
     if (data && !error) {
       setCatalog(data);
@@ -70,7 +68,7 @@ export default function NewRequisition() {
   const filteredCatalog = useMemo(() => {
     return catalog.filter(item => {
       const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                            item.category.toLowerCase().includes(searchQuery.toLowerCase());
+                            (item.category && item.category.toLowerCase().includes(searchQuery.toLowerCase()));
       const matchesDept = selectedDeptFilter === 'ALL' || item.fulfillment_dept === selectedDeptFilter;
       return matchesSearch && matchesDept;
     });
@@ -138,7 +136,6 @@ export default function NewRequisition() {
       const { data: userData } = await supabase.auth.getUser();
       if (!userData.user) throw new Error("Not authenticated");
 
-      // Compile the full precise location
       const fullLocation = [selectedZone, selectedVenue, selectedFloor, selectedRoom].filter(Boolean).join(' - ');
 
       const { data: orderData, error: orderError } = await supabase
@@ -215,7 +212,7 @@ export default function NewRequisition() {
         <div>
           <h2 className="text-xl md:text-2xl font-black text-slate-800 tracking-tight">Material Requisition</h2>
           <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mt-1">
-            {isStandardUser ? 'Request Stationery and AVIT supplies.' : 'Request materials, tools, and maintenance supplies.'}
+            {isStandardUser ? 'Request Stationery, AVIT, and campus materials.' : 'Request materials, tools, and maintenance supplies.'}
           </p>
         </div>
       </div>
@@ -284,7 +281,7 @@ export default function NewRequisition() {
             </div>
             <div>
               <label className="block text-[11px] font-black text-slate-500 uppercase mb-2">Reason</label>
-              <input type="text" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Scheduled Repairs" className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-brand-maroon outline-none transition shadow-sm" />
+              <input type="text" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Scheduled Maintenance / Office Setup" className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-brand-maroon outline-none transition shadow-sm" />
             </div>
           </div>
         </div>
@@ -357,7 +354,7 @@ export default function NewRequisition() {
                 <div key={item.id} className={`rounded-2xl p-4 border flex flex-col justify-between transition-all ${currentQty > 0 ? 'border-brand-maroon bg-brand-maroon/5 shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
                   <div>
                     <div className="flex justify-between items-center mb-3">
-                      <span className="text-[10px] font-black text-slate-500 bg-slate-100 px-2 py-0.5 rounded border border-slate-200 uppercase tracking-widest">{item.unit}</span>
+                      <span className="text-[10px] font-black text-slate-500 bg-slate-100 px-2 py-0.5 rounded border border-slate-200 uppercase tracking-widest">{item.unit || 'Pcs'}</span>
                       
                       {canSeeStock ? (
                         <span className={`text-[10px] font-black px-2 py-0.5 rounded uppercase tracking-wider shadow-sm ${isOutOfStock ? 'bg-red-100 text-red-700 border border-red-200' : 'bg-emerald-100 text-emerald-800 border border-emerald-200'}`}>

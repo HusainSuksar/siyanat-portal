@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
-import { CheckSquare, RefreshCw, MessageSquare, Package, Wrench, Calendar, Car } from "lucide-react";
+import { CheckSquare, RefreshCw, MessageSquare, Package, Wrench, Calendar, Car, Clock } from "lucide-react";
 import BatchDetailsModal from "../components/BatchDetailsModal";
 import VisualPipelineStepper from "../components/VisualPipelineStepper";
 import { useNavigate } from "react-router-dom";
@@ -44,7 +44,7 @@ export default function StandardUserDashboard() {
       setUserRole(role);
       const isGodMode = role === "SUPER_ADMIN" || role === "ADMIN";
 
-      let matQuery = supabase.from("work_orders").select("*, logs:work_order_logs(author_id), items:work_order_items(custom_item_name, requested_qty, inventory:inventory_items(name))").order("created_at", { ascending: false }).limit(30);
+      let matQuery = supabase.from("work_orders").select("*, logs:work_order_logs(author_id, created_at, message), items:work_order_items(custom_item_name, requested_qty, inventory:inventory_items(name))").order("created_at", { ascending: false }).limit(30);
       let compQuery = supabase.from("complaints").select("*").order("created_at", { ascending: false }).limit(30);
       let evQuery = supabase.from("events").select("*").order("event_date", { ascending: true }).limit(30);
       let fleetQuery = supabase.from("vehicle_requests").select("*").order("request_date", { ascending: true }).limit(30);
@@ -104,6 +104,32 @@ export default function StandardUserDashboard() {
   const openChat = (batch: any) => {
     setActiveBatch(batch);
     setIsChatOpen(true);
+  };
+
+  // Dynamic 3:00 PM SLA Delivery Message Calculation
+  const getDeliverySlaMessage = (req: any) => {
+    if (['REJECTED', 'CLOSED'].includes(req.pipeline_state)) return null;
+
+    // Use latest system update timestamp or creation date
+    const approvalTimestamp = req.logs && req.logs.length > 0 
+      ? new Date(req.logs[req.logs.length - 1].created_at) 
+      : new Date(req.created_at);
+
+    const approvalHour = approvalTimestamp.getHours();
+
+    if (approvalHour < 15) {
+      return {
+        type: 'same_day',
+        text: 'You will get the requested material today.',
+        badgeClass: 'bg-emerald-50 text-emerald-800 border-emerald-200'
+      };
+    } else {
+      return {
+        type: 'next_day',
+        text: 'We will try to deliver your requested material today or tomorrow as earliest as possible.',
+        badgeClass: 'bg-amber-50 text-amber-800 border-amber-200'
+      };
+    }
   };
 
   const isStandardUser = userRole === 'REQUESTER';
@@ -222,6 +248,7 @@ export default function StandardUserDashboard() {
                   const logs = req.logs || [];
                   const hasUnread = logs.length > 0 && logs[logs.length - 1].author_id !== currentUser?.id;
                   const itemsSummary = (req.items || []).map((i: any) => `${i.inventory?.name || i.custom_item_name} (x${i.requested_qty})`).join(', ');
+                  const sla = getDeliverySlaMessage(req);
 
                   return (
                     <div key={req.id} className="bg-white rounded-3xl p-5 md:p-6 shadow-sm border border-slate-200 flex flex-col justify-between gap-4 transition hover:shadow-md">
@@ -243,6 +270,17 @@ export default function StandardUserDashboard() {
                             </button>
                           </div>
                         </div>
+
+                        {/* 3:00 PM SLA Notification Badge */}
+                        {sla && (
+                          <div className={`mt-3 p-3 rounded-2xl border flex items-start gap-2.5 ${sla.badgeClass}`}>
+                            <Clock className="w-4 h-4 shrink-0 mt-0.5" />
+                            <div className="text-xs font-bold leading-relaxed">
+                              <span className="font-black uppercase tracking-wider text-[10px] block mb-0.5">Estimated Fulfillment:</span>
+                              {sla.text}
+                            </div>
+                          </div>
+                        )}
 
                         {itemsSummary && (
                           <div className="mt-3 bg-slate-50 p-2.5 rounded-xl border border-slate-100 text-[11px] font-bold text-slate-600">
