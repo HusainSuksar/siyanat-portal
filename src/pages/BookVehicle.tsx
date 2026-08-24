@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { Car, Send, MapPin, Clock, Users, ShieldAlert, Route as RouteIcon, Map } from 'lucide-react';
-import { ZONE_COORDINATES } from '../constants/locations';
+import { ZONE_COORDINATES, LOCAL_LANDMARKS } from '../constants/locations';
 
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
 
@@ -75,6 +75,17 @@ export default function BookVehicle() {
 
   const isStandardUser = role === 'REQUESTER';
 
+  // Mobile Past Date Validation Interceptor
+  const handleDateChange = (selectedDate: string) => {
+    const minDate = getMinBookingDate();
+    if (selectedDate && selectedDate < minDate) {
+      alert("Past dates cannot be selected. Setting to earliest available date.");
+      setDate(minDate);
+    } else {
+      setDate(selectedDate);
+    }
+  };
+
   const toggleClass = (className: string) => {
     if (selectedClasses.includes(className)) {
       setSelectedClasses(prev => prev.filter(c => c !== className));
@@ -95,27 +106,55 @@ export default function BookVehicle() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  // Hybrid Search: Local Landmarks + Proximity-Biased Mapbox
   useEffect(() => {
-    if (!destinationQuery || destinationQuery.length < 3 || destinationCoords) {
+    if (!destinationQuery || destinationQuery.length < 2 || destinationCoords) {
       setSuggestions([]);
       return;
     }
+
     const fetchPlaces = async () => {
+      const queryLower = destinationQuery.toLowerCase();
+      
+      // 1. Search Local Landmarks
+      const localMatches = Object.entries(LOCAL_LANDMARKS || {})
+        .filter(([key, val]) => 
+          key.toLowerCase().includes(queryLower) || 
+          val.name.toLowerCase().includes(queryLower)
+        )
+        .map(([key, val]) => ({
+          id: `local-${key}`,
+          text: key,
+          place_name: val.name,
+          geometry: { coordinates: val.coords },
+          isLocal: true
+        }));
+
+      // 2. Fetch Mapbox with Siddhpur Proximity Bias
       try {
-        const res = await fetch(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(destinationQuery)}.json?access_token=${MAPBOX_TOKEN}&country=in&types=poi,address,place`);
+        const res = await fetch(
+          `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(destinationQuery)}.json?access_token=${MAPBOX_TOKEN}&country=in&proximity=72.3789,23.9184&types=poi,address,place`
+        );
         const data = await res.json();
-        setSuggestions(data.features || []);
+        const mapboxResults = data.features || [];
+
+        setSuggestions([...localMatches, ...mapboxResults]);
         setShowSuggestions(true);
       } catch (err) {
         console.error("Mapbox Geocoding Error:", err);
+        if (localMatches.length > 0) {
+          setSuggestions(localMatches);
+          setShowSuggestions(true);
+        }
       }
     };
-    const timeoutId = setTimeout(fetchPlaces, 500);
+
+    const timeoutId = setTimeout(fetchPlaces, 300);
     return () => clearTimeout(timeoutId);
-  }, [destinationQuery]);
+  }, [destinationQuery, destinationCoords]);
 
   const handleDestinationSelect = (feature: any) => {
-    setDestinationQuery(feature.place_name);
+    setDestinationQuery(feature.place_name || feature.text);
     setDestinationCoords(feature.geometry.coordinates as [number, number]);
     setShowSuggestions(false);
   };
@@ -243,7 +282,7 @@ export default function BookVehicle() {
                 type="date" 
                 min={getMinBookingDate()} 
                 value={date} 
-                onChange={e => setDate(e.target.value)} 
+                onChange={e => handleDateChange(e.target.value)} 
                 className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-brand-maroon outline-none transition shadow-sm" 
               />
             </div>
@@ -260,28 +299,38 @@ export default function BookVehicle() {
               </select>
             </div>
 
-            {/* MAPBOX AUTOCOMPLETE */}
+            {/* MAPBOX & LOCAL LANDMARKS AUTOCOMPLETE */}
             <div className="md:col-span-2 relative" ref={searchRef}>
-              <label className="block text-[11px] font-black text-slate-500 uppercase mb-2 flex items-center gap-1"><Map className="w-3.5 h-3.5"/> Drop-off Destination (Powered by Mapbox) *</label>
+              <label className="block text-[11px] font-black text-slate-500 uppercase mb-2 flex items-center gap-1"><Map className="w-3.5 h-3.5"/> Drop-off Destination (Landmark or Mapbox Address) *</label>
               <input 
                 required 
                 type="text" 
                 value={destinationQuery} 
                 onChange={e => { setDestinationQuery(e.target.value); setDestinationCoords(null); }} 
-                placeholder="Search real-world address or location..." 
+                placeholder="Search landmark (e.g. Hasanfeer, Station) or full address..." 
                 className={`w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none transition shadow-sm focus:ring-2 ${destinationCoords ? 'focus:ring-emerald-500 border-emerald-200' : 'focus:ring-brand-maroon'}`} 
               />
               
               {showSuggestions && suggestions.length > 0 && (
-                <div className="absolute z-50 w-full mt-2 bg-white border border-slate-200 rounded-xl shadow-2xl overflow-hidden max-h-60">
+                <div className="absolute z-50 w-full mt-2 bg-white border border-slate-200 rounded-2xl shadow-2xl overflow-hidden max-h-64 overflow-y-auto">
                   {suggestions.map((feature) => (
                     <div 
                       key={feature.id} 
                       onClick={() => handleDestinationSelect(feature)}
-                      className="px-4 py-3 hover:bg-slate-50 border-b border-slate-100 cursor-pointer transition last:border-b-0"
+                      className="px-4 py-3 hover:bg-slate-50 border-b border-slate-100 cursor-pointer transition last:border-b-0 flex justify-between items-center"
                     >
-                      <div className="text-sm font-bold text-slate-800">{feature.text}</div>
-                      <div className="text-[10px] text-slate-500 truncate">{feature.place_name}</div>
+                      <div className="pr-3">
+                        <div className="text-sm font-bold text-slate-800 flex items-center gap-2">
+                          {feature.text}
+                          {feature.isLocal && (
+                            <span className="px-2 py-0.5 bg-brand-maroon/10 text-brand-maroon rounded text-[9px] font-black uppercase tracking-wider">
+                              Preset Landmark
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-slate-500 truncate mt-0.5">{feature.place_name}</div>
+                      </div>
+                      <MapPin className={`w-4 h-4 shrink-0 ${feature.isLocal ? 'text-brand-maroon' : 'text-slate-400'}`} />
                     </div>
                   ))}
                 </div>
@@ -303,7 +352,7 @@ export default function BookVehicle() {
              <div className="mb-6 bg-indigo-50 border border-indigo-100 p-4 rounded-2xl flex items-center gap-4">
                <div className="bg-white p-3 rounded-xl shadow-sm border border-indigo-100"><RouteIcon className="w-6 h-6 text-indigo-600"/></div>
                <div>
-                 <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Mapbox Calculated Travel Time</p>
+                 <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Calculated Travel Time</p>
                  <p className="text-lg font-black text-indigo-900 mt-0.5">
                    {formatMinutesToHours(travelTimeMins)} (One Way)
                  </p>

@@ -172,3 +172,41 @@ export const ZONE_COORDINATES: Record<string, [number, number]> = {
   "Mawaid": [72.372697, 23.918141],
   "Khaimat al-Riyadat": [72.372697, 23.918141]
 };
+// Local & Regional Landmarks around Siddhpur / Gujarat
+export const LOCAL_LANDMARKS: Record<string, { name: string; coords: [number, number]; category: string }> = {
+  "Moula Hasanfeer Dargah (Denmal)": {
+    name: "Moula Hasanfeer Shaheed Dargah, Denmal",
+    coords: [72.3168, 23.9421],
+    category: "Ziyarat"
+  },
+  "Moula Hasanfeer Mazar (Siddhpur)": {
+    name: "Moula Hasanfeer Mazar Sharif, Siddhpur",
+    coords: [72.3789, 23.9184],
+    category: "Ziyarat"
+  },
+  "Moulai Fakhruddin Shaheed (Galiakot)": {
+    name: "Dargah Hazrat Moulai Fakhruddin Shaheed, Galiakot",
+    coords: [73.9877, 23.5356],
+    category: "Ziyarat"
+  },
+  "Siddhpur Railway Station": {
+    name: "Siddhpur Railway Station (SID)",
+    coords: [72.3846, 23.9163],
+    category: "Transit"
+  },
+  "Ahmedabad Airport (AMD)": {
+    name: "Sardar Vallabhbhai Patel International Airport, Ahmedabad",
+    coords: [72.6347, 23.0772],
+    category: "Transit"
+  },
+  "Mehsana Railway Station": {
+    name: "Mehsana Junction Railway Station",
+    coords: [72.3871, 23.5880],
+    category: "Transit"
+  },
+  "Patan (Rani Ki Vav)": {
+    name: "Rani Ki Vav, Patan",
+    coords: [72.1017, 23.8589],
+    category: "Historical"
+  }
+};

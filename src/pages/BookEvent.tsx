@@ -23,16 +23,15 @@ const AFTER_CLASS_SLOTS = [
   '20:31 - 21:00', '21:01 - 21:30', '21:31 - 22:00', '22:01 - 22:30'
 ];
 
-// THE FIX: Expanded Preset Classes mapping
 const PRESET_CLASSES: Record<string, { male: number, female: number }> = {
   "1AM": { male: 25, female: 0 }, "1BM": { male: 25, female: 0 }, "1CM": { male: 23, female: 0 }, "1DM": { male: 24, female: 0 }, "6AM": { male: 26, female: 0 },
   "1AF": { male: 0, female: 20 }, "1BF": { male: 0, female: 19 }, "1CF": { male: 0, female: 19 }, "1DF": { male: 0, female: 19 }, "6AF": { male: 0, female: 23 },
   "Faculty / Staff": { male: 0, female: 0 },
   "Others (Custom)": { male: 0, female: 0 }
 };
+
 const getMinBookingDate = () => {
   const now = new Date();
-  // If after 6:00 PM (18:00), push the minimum selectable date to tomorrow
   if (now.getHours() >= 18) {
     now.setDate(now.getDate() + 1);
   }
@@ -41,6 +40,7 @@ const getMinBookingDate = () => {
   const day = String(now.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 };
+
 export default function BookEvent() {
   const [loading, setLoading] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
@@ -62,7 +62,6 @@ export default function BookEvent() {
   const [location, setLocation] = useState('');
   const [subLocation, setSubLocation] = useState('');
   
-  // THE FIX: Converted to Array for Multi-Select
   const [selectedClasses, setSelectedClasses] = useState<string[]>([]);
   const [maleCount, setMaleCount] = useState(0);
   const [femaleCount, setFemaleCount] = useState(0);
@@ -72,11 +71,21 @@ export default function BookEvent() {
   const [selectedAssetId, setSelectedAssetId] = useState('');
   const [assetQty, setAssetQty] = useState(1);
   
-  // THE FIX: Added ID to requirements tracking to separate identical item names
   const [requirements, setRequirements] = useState<{id?: string, dept: string, item: string, qty?: number}[]>([]);
 
   const totalCount = maleCount + femaleCount + othersCount;
   const isStandardUser = userRole === 'REQUESTER';
+
+  // Mobile Past Date Validation Interceptor
+  const handleDateChange = (selectedDate: string) => {
+    const minDate = getMinBookingDate();
+    if (selectedDate && selectedDate < minDate) {
+      alert("Past dates cannot be selected. Setting to earliest available date.");
+      setDate(minDate);
+    } else {
+      setDate(selectedDate);
+    }
+  };
 
   useEffect(() => {
     fetchInitialData();
@@ -87,7 +96,6 @@ export default function BookEvent() {
     setSubLocation('');
   };
 
-  // THE FIX: Multi-class selection math engine
   const toggleClass = (className: string) => {
     if (selectedClasses.includes(className)) {
       setSelectedClasses(prev => prev.filter(c => c !== className));
@@ -113,7 +121,6 @@ export default function BookEvent() {
       setIsAdmin(adminCheck);
 
       if (adminCheck) fetchAllEvents();
-      
       if (role === 'REQUESTER') setTimingType('Between Classes');
     }
 
@@ -141,7 +148,6 @@ export default function BookEvent() {
     setSelectedAfterClass(prev => prev.includes(slot) ? prev.filter(s => s !== slot) : [...prev, slot]);
   };
 
-  // THE FIX: Uses unique ID to prevent selecting all identically-named assets at once
   const toggleStandardRequirement = (asset: any) => {
     setRequirements(prev => {
       const exists = prev.find(r => r.id === asset.id);
@@ -194,7 +200,7 @@ export default function BookEvent() {
         time_slot: finalTimeSlot,
         location,
         sub_location: subLocation,
-        darajah: selectedClasses.join(', '), // Combined string for DB
+        darajah: selectedClasses.join(', '),
         male_count: maleCount,
         female_count: femaleCount,
         others_count: othersCount,
@@ -250,7 +256,6 @@ export default function BookEvent() {
     setLocation(event.location);
     setSubLocation(event.sub_location || '');
     
-    // Parse DB string back into array
     const parsedClasses = event.darajah ? event.darajah.split(', ') : [];
     setSelectedClasses(parsedClasses);
     
@@ -338,13 +343,13 @@ export default function BookEvent() {
             <div className="md:col-span-2">
               <label className="block text-[11px] font-extrabold text-slate-500 uppercase mb-1">Event Date *</label>
               <input 
-  required 
-  type="date" 
-  min={getMinBookingDate()} 
-  value={date} 
-  onChange={e => setDate(e.target.value)} 
-  className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold focus:ring-2 focus:ring-brand-maroon outline-none" 
-/>
+                required 
+                type="date" 
+                min={getMinBookingDate()} 
+                value={date} 
+                onChange={e => handleDateChange(e.target.value)} 
+                className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold focus:ring-2 focus:ring-brand-maroon outline-none" 
+              />
             </div>
 
             <div>
@@ -424,8 +429,6 @@ export default function BookEvent() {
           </div>
           
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-            
-            {/* THE FIX: Multi-Select Darajah Pills */}
             <div className="md:col-span-4 mb-2">
               <label className="block text-[11px] font-extrabold text-slate-500 uppercase mb-2">Select Darajah / Audience (Select Multiple) *</label>
               <div className="flex flex-wrap gap-2">
@@ -445,7 +448,6 @@ export default function BookEvent() {
               </div>
             </div>
 
-            {/* Inputs remain fully unlocked so the user can manually override auto-calculated numbers */}
             <div>
               <label className="block text-[11px] font-extrabold text-slate-500 uppercase mb-1">Male Count</label>
               <input type="number" min="0" value={maleCount} onChange={e => setMaleCount(parseInt(e.target.value) || 0)} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-center focus:ring-2 focus:ring-brand-maroon outline-none transition" />
@@ -492,7 +494,6 @@ export default function BookEvent() {
               <div className="space-y-2">
                 {avitAssets.map(asset => (
                   <label key={asset.id} className="flex items-center space-x-2 p-2 bg-white rounded-lg cursor-pointer border border-slate-200 hover:border-slate-300 transition shadow-sm">
-                    {/* THE FIX: Checks via unique ID */}
                     <input type="checkbox" checked={requirements.some(r => r.id === asset.id)} onChange={() => toggleStandardRequirement(asset)} className="w-4 h-4 text-brand-maroon rounded focus:ring-brand-maroon" />
                     <span className="text-xs font-bold text-slate-700">{asset.item_name}</span>
                   </label>
@@ -523,7 +524,7 @@ export default function BookEvent() {
                    <option value="">-- Choose Item --</option>
                    {inventory.map(item => {
                      const available = item.physical_stock - item.freezed_stock;
-                     const showQty = isAdmin || userRole === 'SIYANAT_HEAD'; // Role check
+                     const showQty = isAdmin || userRole === 'SIYANAT_HEAD';
                      return (
                        <option key={item.id} value={item.id} disabled={available <= 0}>
                          {item.name} {showQty ? `(Avail: ${available})` : (available <= 0 ? '(Out of Stock)' : '')}
