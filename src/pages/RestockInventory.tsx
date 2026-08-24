@@ -51,12 +51,10 @@ export default function RestockInventory() {
   const [rows, setRows] = useState<RestockRow[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   
-  // Vendor Form State
   const [newVendorName, setNewVendorName] = useState('');
   const [newVendorCategory, setNewVendorCategory] = useState('Electrical');
   const [newVendorContact, setNewVendorContact] = useState('');
 
-  // Modals
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
   const [poConfirmTarget, setPoConfirmTarget] = useState<any>(null);
@@ -87,7 +85,6 @@ export default function RestockInventory() {
     setLoading(false);
   };
 
-  // --- MANUAL UI ROW LOGIC ---
   const addRow = () => {
     const defaultItemId = catalog.length > 0 ? catalog[0].id : '';
     setRows(prev => [...prev, {
@@ -104,7 +101,6 @@ export default function RestockInventory() {
   const removeRow = (id: string) => setRows(prev => prev.filter(row => row.id !== id));
   const updateRow = (id: string, field: keyof RestockRow, value: any) => setRows(prev => prev.map(row => row.id === id ? { ...row, [field]: value } : row));
 
-  // --- CSV IMPORT & EXPORT ENGINE ---
   const downloadCSVTemplate = () => {
     const headers = "Type (NEW or EXISTING),Item ID (Leave blank if NEW),Item Name,Category,Route To (SIYANAT_HEAD or TANZEEM_HEAD or AVIT_HEAD),Qty";
     const sample1 = "EXISTING,uuid-goes-here,Copper Wire,Electrical & Lighting,SIYANAT_HEAD,50";
@@ -130,7 +126,6 @@ export default function RestockInventory() {
       const lines = text.split('\n');
       const newRows: RestockRow[] = [];
       
-      // Skip the header row (index 0)
       for (let i = 1; i < lines.length; i++) {
         const line = lines[i].trim();
         if (!line) continue;
@@ -147,10 +142,7 @@ export default function RestockInventory() {
 
            newRows.push({
              id: crypto.randomUUID(),
-             type,
-             itemId,
-             name,
-             category,
+             type, itemId, name, category,
              fulfillment_dept: fulfillment,
              qty
            });
@@ -214,7 +206,6 @@ export default function RestockInventory() {
     }
   };
 
-  // --- VENDOR ACTIONS ---
   const handleAddVendor = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newVendorName.trim()) return;
@@ -234,27 +225,88 @@ export default function RestockInventory() {
     fetchData();
   };
 
-  // --- PO ACTIONS ---
+  // --- PO Receiving & Auto-Cataloging Engine ---
   const fulfillPO = async () => {
     if (!poConfirmTarget) return;
     setProcessingId(poConfirmTarget.id);
 
     try {
+      // 1. Mark PO as fulfilled
       await supabase.from('purchase_orders').update({ status: 'Fulfilled & Received' }).eq('id', poConfirmTarget.id);
 
+      const affectedWorkOrderIds = new Set<string>();
+
       for (const item of poConfirmTarget.items) {
-        if (item.inventory_id) {
-          const { data: inv } = await supabase.from('inventory_items').select('physical_stock').eq('id', item.inventory_id).single();
-          if (inv) await supabase.from('inventory_items').update({ physical_stock: inv.physical_stock + item.requested_qty }).eq('id', item.inventory_id);
+        let targetInventoryId = item.inventory_id;
+        
+        if (!targetInventoryId && item.custom_item_name) {
+          // 2. AUTO-CATALOG CUSTOM ITEMS
+          const { data: woItems } = await supabase.from('work_order_items')
+            .select('id, work_order_id, requested_qty')
+            .eq('custom_item_name', item.custom_item_name)
+            .in('status', ['Ordered', 'Pending', 'PO Issued']);
+            
+          const totalReq = woItems?.reduce((sum, wi) => sum + wi.requested_qty, 0) || 0;
+          woItems?.forEach(wi => affectedWorkOrderIds.add(wi.work_order_id));
+
+          const { data: newInv } = await supabase.from('inventory_items').insert({
+            item_id: `CAT-${Math.floor(10000 + Math.random() * 90000)}`,
+            name: item.custom_item_name,
+            category: 'General / Miscellaneous',
+            physical_stock: item.requested_qty, // Stock ordered from PO
+            freezed_stock: totalReq, // Reserved for Requester
+            unit: 'Pcs',
+            fulfillment_dept: role?.includes('_HEAD') ? role : 'SIYANAT_HEAD'
+          }).select().single();
+          
+          if (newInv && woItems && woItems.length > 0) {
+            targetInventoryId = newInv.id;
+            await supabase.from('work_order_items')
+              .update({ status: 'Stock Injected', inventory_id: targetInventoryId })
+              .in('id', woItems.map(wi => wi.id));
+          }
+
+        } else if (targetInventoryId) {
+          // 3. EXISTING CATALOG ITEM
+          const { data: inv } = await supabase.from('inventory_items').select('physical_stock, freezed_stock').eq('id', targetInventoryId).single();
+          
+          if (inv) {
+            const { data: woItems } = await supabase.from('work_order_items')
+              .select('id, work_order_id, requested_qty')
+              .eq('inventory_id', targetInventoryId)
+              .in('status', ['Ordered', 'Pending', 'PO Issued']);
+              
+            const newReq = woItems?.reduce((sum, wi) => sum + wi.requested_qty, 0) || 0;
+            woItems?.forEach(wi => affectedWorkOrderIds.add(wi.work_order_id));
+
+            await supabase.from('inventory_items').update({ 
+              physical_stock: inv.physical_stock + item.requested_qty,
+              freezed_stock: inv.freezed_stock + newReq
+            }).eq('id', targetInventoryId);
+
+            if (woItems && woItems.length > 0) {
+              await supabase.from('work_order_items')
+                .update({ status: 'Stock Injected' })
+                .in('id', woItems.map(wi => wi.id));
+            }
+          }
         }
       }
 
+      // 4. Update Technician Task (if linked)
       if (poConfirmTarget.complaint_id) {
         await supabase.from('technician_assignments').update({ status: 'Assigned' }).eq('complaint_id', poConfirmTarget.complaint_id);
         await supabase.from('complaints').update({ pipeline_state: 'PROCESSING' }).eq('id', poConfirmTarget.complaint_id);
       }
 
-      showToast(`PO ${poConfirmTarget.po_number} fulfilled and stock injected!`, "success");
+      // 5. BUMP THE BATCH STATE
+      for (const woId of Array.from(affectedWorkOrderIds)) {
+        await supabase.from('work_orders')
+          .update({ pipeline_state: 'ACTION_REQUIRED', dispatch_status: 'Ready for Collection' })
+          .eq('id', woId);
+      }
+
+      showToast(`PO ${poConfirmTarget.po_number} received & warehouse stock updated!`, "success");
       setPoConfirmTarget(null);
       fetchData();
     } catch (err: any) {

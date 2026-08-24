@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { ShoppingCart, RefreshCw, Clock, AlertTriangle, Edit, Trash2, CheckCircle, X, PackageSearch } from 'lucide-react';
+import { ShoppingCart, RefreshCw, Clock, AlertTriangle, Edit, Trash2, CheckCircle, X, PackageSearch, FileText } from 'lucide-react';
 
 export default function RequestToOrder() {
   const [pendingItems, setPendingItems] = useState<any[]>([]);
@@ -27,7 +27,7 @@ export default function RequestToOrder() {
       setUserRole(currentRole);
     }
     
-    // Fetch items with ROLE-BASED FILTERING
+    // Fetch items with ROLE-BASED FILTERING & complete PO lifecycle
     let query = supabase
       .from('work_order_items')
       .select(`
@@ -35,10 +35,10 @@ export default function RequestToOrder() {
         work_order:work_orders(batch_id, department, location, created_at, requester:profiles(full_name)),
         inventory:inventory_items(name, physical_stock)
       `)
-      .in('status', ['Pending', 'Ordered'])
+      .in('status', ['Pending', 'Ordered', 'PO Issued'])
       .order('id', { ascending: false });
 
-    // Apply strict department segregation for the RTO Queue
+    // Department segregation
     if (currentRole === 'SIYANAT_HEAD') {
       query = query.eq('fulfillment_dept', 'SIYANAT_HEAD');
     } else if (currentRole === 'TANZEEM_HEAD') {
@@ -57,7 +57,7 @@ export default function RequestToOrder() {
     fetchData();
   }, []);
 
-  // --- ACTIONS ---
+  // Actions
   const openEditModal = (item: any) => {
     setEditingItem(item);
     setNewEta(item.eta_days || 0);
@@ -115,27 +115,27 @@ export default function RequestToOrder() {
     setProcessingId(null);
   };
 
-  // 🔴 GOD MODE: Hard Delete Item from Batch
   const deleteItem = async (id: string, batchId: string) => {
-    if (!confirm(`GOD MODE WARNING: Are you sure you want to completely erase this item from Batch ${batchId}? This will alter the requester's original submission.`)) return;
+    if (!confirm(`Are you sure you want to delete this item from Batch ${batchId}?`)) return;
     setProcessingId(id);
 
     await supabase.from('work_order_items').delete().eq('id', id);
     
     await supabase.from('system_logs').insert({
       action_type: 'GOD_MODE_DELETE',
-      description: `Admin hard-deleted an item from material batch ${batchId}.`,
+      description: `Admin deleted an item from material batch ${batchId}.`,
       user_email: currentUser?.email || 'Admin'
     });
 
-    alert('Item permanently erased from the database.');
+    alert('Item deleted.');
     fetchData();
     setProcessingId(null);
   };
 
   // Metrics Calculations
-  const totalPending = pendingItems.length;
-  const totalOrdered = pendingItems.filter(i => i.status === 'Ordered').length;
+  const totalItems = pendingItems.length;
+  const totalPending = pendingItems.filter(i => i.status === 'Pending').length;
+  const totalInFlight = pendingItems.filter(i => i.status === 'Ordered' || i.status === 'PO Issued').length;
   const customItems = pendingItems.filter(i => i.item_type === 'Custom').length;
 
   return (
@@ -159,15 +159,15 @@ export default function RequestToOrder() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex items-center justify-between">
           <div>
-            <span className="text-[10px] font-extrabold uppercase text-amber-600">Pending Procurement</span>
-            <div className="text-2xl font-black text-amber-600 mt-1">{totalPending - totalOrdered}</div>
+            <span className="text-[10px] font-extrabold uppercase text-amber-600">Pending Purchase</span>
+            <div className="text-2xl font-black text-amber-600 mt-1">{totalPending}</div>
           </div>
           <AlertTriangle className="w-8 h-8 text-amber-100" />
         </div>
         <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex items-center justify-between">
           <div>
-            <span className="text-[10px] font-extrabold uppercase text-indigo-600">Officially Ordered</span>
-            <div className="text-2xl font-black text-indigo-600 mt-1">{totalOrdered}</div>
+            <span className="text-[10px] font-extrabold uppercase text-indigo-600">POs Issued / Ordered</span>
+            <div className="text-2xl font-black text-indigo-600 mt-1">{totalInFlight}</div>
           </div>
           <PackageSearch className="w-8 h-8 text-indigo-100" />
         </div>
@@ -192,65 +192,77 @@ export default function RequestToOrder() {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200">
-            {loading ? (<tr><td colSpan={4} className="p-4 text-center">Loading queue...</td></tr>) : pendingItems.length === 0 ? (<tr><td colSpan={4} className="p-4 text-center font-medium italic text-slate-500">No items currently pending procurement.</td></tr>) : pendingItems.map(item => {
-              const itemName = item.item_type === 'Catalog' ? item.inventory?.name : item.custom_item_name;
-              const isCustom = item.item_type === 'Custom';
-              
-              return (
-                <tr key={item.id} className="hover:bg-slate-50">
-                  <td className="p-3">
-                    <div className="font-bold text-slate-800 text-sm">{itemName}</div>
-                    <div className="mt-1">
-                      {isCustom ? (
-                        <span className="px-1.5 py-0.5 bg-slate-200 text-slate-700 rounded text-[9px] font-bold uppercase">Custom Item</span>
-                      ) : (
-                        <span className="px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded text-[9px] font-bold uppercase">Catalog</span>
-                      )}
-                      <span className="ml-2 px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded text-[9px] font-bold uppercase">{item.fulfillment_dept.replace('_HEAD', '')}</span>
-                    </div>
-                  </td>
-                  <td className="p-3">
-                    <div className="font-bold text-brand-maroon">{item.work_order?.batch_id}</div>
-                    <div className="text-[10px] text-slate-500 font-semibold">{item.work_order?.requester?.full_name} • {item.work_order?.department}</div>
-                    <div className="text-[10px] text-slate-400">{new Date(item.work_order?.created_at).toLocaleDateString()}</div>
-                  </td>
-                  <td className="p-3">
-                    <div className="font-black text-slate-800">Qty Needed: {item.requested_qty}</div>
-                    <div className="flex items-center gap-1 mt-1">
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${item.status === 'Ordered' ? 'bg-indigo-100 text-indigo-800' : 'bg-amber-100 text-amber-800'}`}>{item.status}</span>
-                      <span className="text-[10px] text-slate-500 font-bold flex items-center gap-0.5"><Clock className="w-3 h-3"/> {item.eta_days} Days</span>
-                    </div>
-                  </td>
-                  <td className="p-3 text-right">
-                    <div className="flex items-center justify-end gap-1.5">
-                      {item.status === 'Pending' && (
-                        <button onClick={() => markAsOrdered(item.id, item.work_order?.batch_id)} disabled={processingId === item.id} className="p-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg transition" title="Mark as Ordered">
-                          <ShoppingCart className="w-4 h-4" />
+            {loading ? (
+              <tr><td colSpan={4} className="p-4 text-center">Loading queue...</td></tr>
+            ) : totalItems === 0 ? (
+              <tr><td colSpan={4} className="p-4 text-center font-medium italic text-slate-500">No items currently pending procurement.</td></tr>
+            ) : (
+              pendingItems.map(item => {
+                const itemName = item.item_type === 'Catalog' ? item.inventory?.name : item.custom_item_name;
+                const isCustom = item.item_type === 'Custom';
+                
+                return (
+                  <tr key={item.id} className="hover:bg-slate-50">
+                    <td className="p-3">
+                      <div className="font-bold text-slate-800 text-sm">{itemName}</div>
+                      <div className="mt-1">
+                        {isCustom ? (
+                          <span className="px-1.5 py-0.5 bg-slate-200 text-slate-700 rounded text-[9px] font-bold uppercase">Custom Item</span>
+                        ) : (
+                          <span className="px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded text-[9px] font-bold uppercase">Catalog</span>
+                        )}
+                        <span className="ml-2 px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded text-[9px] font-bold uppercase">{item.fulfillment_dept.replace('_HEAD', '')}</span>
+                      </div>
+                    </td>
+                    <td className="p-3">
+                      <div className="font-bold text-brand-maroon">{item.work_order?.batch_id}</div>
+                      <div className="text-[10px] text-slate-500 font-semibold">{item.work_order?.requester?.full_name} • {item.work_order?.department}</div>
+                      <div className="text-[10px] text-slate-400">{new Date(item.work_order?.created_at).toLocaleDateString()}</div>
+                    </td>
+                    <td className="p-3">
+                      <div className="font-black text-slate-800">Qty Needed: {item.requested_qty}</div>
+                      <div className="flex items-center gap-1.5 mt-1">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                          item.status === 'PO Issued' ? 'bg-indigo-100 text-indigo-800 flex items-center gap-1' :
+                          item.status === 'Ordered' ? 'bg-purple-100 text-purple-800' : 
+                          'bg-amber-100 text-amber-800'
+                        }`}>
+                          {item.status === 'PO Issued' && <FileText className="w-3 h-3" />}
+                          {item.status}
+                        </span>
+                        <span className="text-[10px] text-slate-500 font-bold flex items-center gap-0.5"><Clock className="w-3 h-3"/> {item.eta_days} Days</span>
+                      </div>
+                    </td>
+                    <td className="p-3 text-right">
+                      <div className="flex items-center justify-end gap-1.5">
+                        {item.status === 'Pending' && (
+                          <button onClick={() => markAsOrdered(item.id, item.work_order?.batch_id)} disabled={processingId === item.id} className="p-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg transition" title="Mark as Ordered">
+                            <ShoppingCart className="w-4 h-4" />
+                          </button>
+                        )}
+                        <button onClick={() => openEditModal(item)} disabled={processingId === item.id} className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition" title="Edit ETA">
+                          <Edit className="w-4 h-4" />
                         </button>
-                      )}
-                      <button onClick={() => openEditModal(item)} disabled={processingId === item.id} className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition" title="Edit ETA">
-                        <Edit className="w-4 h-4" />
-                      </button>
-                      <button onClick={() => cancelItem(item.id, item.work_order?.batch_id)} disabled={processingId === item.id} className="p-1.5 bg-amber-50 hover:bg-amber-100 text-amber-600 rounded-lg transition" title="Cancel/Not Provided">
-                        <X className="w-4 h-4" />
-                      </button>
-                      
-                      {/* GOD MODE: Hard Delete */}
-                      {userRole === 'SUPER_ADMIN' && (
-                        <button onClick={() => deleteItem(item.id, item.work_order?.batch_id)} disabled={processingId === item.id} className="p-1.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg transition" title="Delete from Database">
-                          <Trash2 className="w-4 h-4" />
+                        <button onClick={() => cancelItem(item.id, item.work_order?.batch_id)} disabled={processingId === item.id} className="p-1.5 bg-amber-50 hover:bg-amber-100 text-amber-600 rounded-lg transition" title="Cancel/Not Provided">
+                          <X className="w-4 h-4" />
                         </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
+                        
+                        {userRole === 'SUPER_ADMIN' && (
+                          <button onClick={() => deleteItem(item.id, item.work_order?.batch_id)} disabled={processingId === item.id} className="p-1.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg transition" title="Delete from Database">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
           </tbody>
         </table>
       </div>
 
-      {/* --- EDIT ETA MODAL --- */}
+      {/* Edit ETA Modal */}
       {editModalOpen && editingItem && (
         <div className="fixed inset-0 bg-black/50 z-50 flex justify-center items-center p-4">
           <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden">

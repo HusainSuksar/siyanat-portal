@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
-import { CheckSquare, RefreshCw, MessageSquare, Package, Wrench, Calendar, Car, Clock } from "lucide-react";
+import { CheckSquare, RefreshCw, MessageSquare, Package, Wrench, Calendar, Car, Clock, XCircle, AlertTriangle, X, CheckCircle } from "lucide-react";
 import BatchDetailsModal from "../components/BatchDetailsModal";
 import VisualPipelineStepper from "../components/VisualPipelineStepper";
 import { useNavigate } from "react-router-dom";
+import { useToast } from "../hooks/useToast";
 
 export default function StandardUserDashboard() {
+  const { showToast, toasts, removeToast } = useToast();
   const [activeTab, setActiveTab] = useState<'materials' | 'maintenance' | 'events' | 'fleet'>('materials');
   const [loading, setLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState<any>(null);
@@ -13,7 +15,10 @@ export default function StandardUserDashboard() {
   const [processingId, setProcessingId] = useState<string | null>(null);
   const navigate = useNavigate();
 
-  // Unified Stats
+  // Cancel Modal State
+  const [cancelModalEvent, setCancelModalEvent] = useState<any | null>(null);
+  const [cancelReason, setCancelReason] = useState<string>('');
+
   const [stats, setStats] = useState({
     materialsActive: 0,
     complaintsActive: 0,
@@ -21,13 +26,11 @@ export default function StandardUserDashboard() {
     fleetActive: 0,
   });
 
-  // Data States
   const [materials, setMaterials] = useState<any[]>([]);
   const [complaints, setComplaints] = useState<any[]>([]);
   const [events, setEvents] = useState<any[]>([]);
   const [fleet, setFleet] = useState<any[]>([]);
 
-  // Chat Modal State
   const [activeBatch, setActiveBatch] = useState<any>(null);
   const [isChatOpen, setIsChatOpen] = useState(false);
 
@@ -39,14 +42,13 @@ export default function StandardUserDashboard() {
       setCurrentUser(authData.user);
 
       const { data: profile } = await supabase.from("profiles").select("role").eq("id", authData.user.id).single();
-        
       const role = profile?.role || 'REQUESTER';
       setUserRole(role);
       const isGodMode = role === "SUPER_ADMIN" || role === "ADMIN";
 
       let matQuery = supabase.from("work_orders").select("*, logs:work_order_logs(author_id, created_at, message), items:work_order_items(custom_item_name, requested_qty, inventory:inventory_items(name))").order("created_at", { ascending: false }).limit(30);
       let compQuery = supabase.from("complaints").select("*").order("created_at", { ascending: false }).limit(30);
-      let evQuery = supabase.from("events").select("*").order("event_date", { ascending: true }).limit(30);
+      let evQuery = supabase.from("events").select("*, requirements:event_requirements(item_name, status)").order("event_date", { ascending: true }).limit(30);
       let fleetQuery = supabase.from("vehicle_requests").select("*").order("request_date", { ascending: true }).limit(30);
 
       if (!isGodMode) {
@@ -78,7 +80,6 @@ export default function StandardUserDashboard() {
   }, []);
 
   const confirmReceipt = async (batch: any) => {
-    if (!confirm("Confirm you have physically received these items? This will finalize the inventory deduction and close the request.")) return;
     setProcessingId(batch.id);
 
     try {
@@ -91,11 +92,38 @@ export default function StandardUserDashboard() {
         user_email: currentUser?.email || "Requester",
       });
 
-      alert("Receipt confirmed! Request completed.");
+      showToast("Receipt confirmed! Request completed.", "success");
       fetchDashboardData();
     } catch (err: any) {
       console.error(err);
-      alert("Error confirming receipt: " + err.message);
+      showToast("Error confirming receipt: " + err.message, "error");
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  // Process Cancellation via RPC
+  const handleCancelSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!cancelModalEvent || !currentUser) return;
+    setProcessingId(cancelModalEvent.id);
+
+    try {
+      const { data, error } = await supabase.rpc('cancel_event_by_requester', {
+        p_event_id: cancelModalEvent.id,
+        p_user_id: currentUser.id,
+        p_reason: cancelReason.trim() || 'Cancelled by requester'
+      });
+
+      if (error) throw error;
+      if (data && data.success === false) throw new Error(data.message);
+
+      showToast("Event cancelled and Tanzeem notified.", "success");
+      setCancelModalEvent(null);
+      setCancelReason('');
+      fetchDashboardData();
+    } catch (err: any) {
+      showToast("Error cancelling event: " + err.message, "error");
     } finally {
       setProcessingId(null);
     }
@@ -106,43 +134,24 @@ export default function StandardUserDashboard() {
     setIsChatOpen(true);
   };
 
-  // Dynamic 3:00 PM SLA Delivery Message Calculation
-  // Dynamic 3:00 PM SLA Delivery Message - ONLY AFTER HEAD APPROVAL
-const getDeliverySlaMessage = (req: any) => {
-  // Only show AFTER Siyanat/AVIT/Tanzeem Head has reviewed and approved the batch
-  // (State must be 'PROCESSING' or 'ACTION_REQUIRED')
-  if (req.pipeline_state !== 'PROCESSING' && req.pipeline_state !== 'ACTION_REQUIRED') {
-    return null;
-  }
+  const getDeliverySlaMessage = (req: any) => {
+    if (req.pipeline_state !== 'PROCESSING' && req.pipeline_state !== 'ACTION_REQUIRED') return null;
 
-  // Find the exact timestamp when the Head approved/split the batch from logs
-  const headActionLog = req.logs?.slice().reverse().find((l: any) => 
-    l.message?.includes('processed') || 
-    l.message?.includes('split') || 
-    l.message?.includes('approved') ||
-    l.message?.includes('Stock')
-  );
+    const headActionLog = req.logs?.slice().reverse().find((l: any) => 
+      l.message?.includes('processed') || l.message?.includes('split') || 
+      l.message?.includes('approved') || l.message?.includes('Stock')
+    );
 
-  const approvalTimestamp = headActionLog 
-    ? new Date(headActionLog.created_at) 
-    : (req.logs && req.logs.length > 0 ? new Date(req.logs[req.logs.length - 1].created_at) : new Date(req.created_at));
+    const approvalTimestamp = headActionLog 
+      ? new Date(headActionLog.created_at) 
+      : (req.logs && req.logs.length > 0 ? new Date(req.logs[req.logs.length - 1].created_at) : new Date(req.created_at));
 
-  const approvalHour = approvalTimestamp.getHours();
-
-  if (approvalHour < 15) {
-    return {
-      type: 'same_day',
-      text: 'You will get the requested material today.',
-      badgeClass: 'bg-emerald-50 text-emerald-800 border-emerald-200'
-    };
-  } else {
-    return {
-      type: 'next_day',
-      text: 'We will try to deliver your requested material today or tomorrow as earliest as possible.',
-      badgeClass: 'bg-amber-50 text-amber-800 border-amber-200'
-    };
-  }
-};
+    if (approvalTimestamp.getHours() < 15) {
+      return { type: 'same_day', text: 'You will get the requested material today.', badgeClass: 'bg-emerald-50 text-emerald-800 border-emerald-200' };
+    } else {
+      return { type: 'next_day', text: 'We will try to deliver your requested material today or tomorrow as earliest as possible.', badgeClass: 'bg-amber-50 text-amber-800 border-amber-200' };
+    }
+  };
 
   const isStandardUser = userRole === 'REQUESTER';
 
@@ -176,7 +185,7 @@ const getDeliverySlaMessage = (req: any) => {
         </div>
       </div>
 
-      {/* Unified KPI Grid */}
+      {/* KPI Grid */}
       <div className={`grid grid-cols-2 ${isStandardUser ? 'md:grid-cols-3' : 'md:grid-cols-4'} gap-4`}>
         <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 hover:border-slate-300 transition cursor-pointer" onClick={() => setActiveTab('materials')}>
           <div className="flex items-center justify-between text-[10px] text-slate-500 font-black uppercase tracking-widest">
@@ -232,7 +241,7 @@ const getDeliverySlaMessage = (req: any) => {
         )}
       </div>
 
-      {/* Main Content Area */}
+      {/* Content Area */}
       <div className="space-y-4">
         <div className="flex justify-between items-center px-1">
           <h3 className="font-black text-xs uppercase tracking-wider text-slate-500">
@@ -250,8 +259,7 @@ const getDeliverySlaMessage = (req: any) => {
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-4">
-            
-            {/* --- MATERIALS CARDS --- */}
+            {/* MATERIALS CARDS */}
             {activeTab === 'materials' && (
               materials.length === 0 ? (
                 <div className="p-12 text-center bg-white rounded-3xl border border-slate-200 text-slate-400 italic font-bold">No material requisitions found.</div>
@@ -283,7 +291,6 @@ const getDeliverySlaMessage = (req: any) => {
                           </div>
                         </div>
 
-                        {/* 3:00 PM SLA Notification Badge */}
                         {sla && (
                           <div className={`mt-3 p-3 rounded-2xl border flex items-start gap-2.5 ${sla.badgeClass}`}>
                             <Clock className="w-4 h-4 shrink-0 mt-0.5" />
@@ -309,7 +316,7 @@ const getDeliverySlaMessage = (req: any) => {
               )
             )}
 
-            {/* --- MAINTENANCE CARDS --- */}
+            {/* MAINTENANCE CARDS */}
             {activeTab === 'maintenance' && (
               complaints.length === 0 ? (
                 <div className="p-12 text-center bg-white rounded-3xl border border-slate-200 text-slate-400 italic font-bold">No maintenance complaints registered.</div>
@@ -327,45 +334,103 @@ const getDeliverySlaMessage = (req: any) => {
                           {new Date(c.created_at).toLocaleDateString()}
                         </span>
                       </div>
-
                       <p className="text-xs text-slate-600 font-medium mt-3 bg-slate-50 p-3 rounded-xl border border-slate-100 line-clamp-2">
                         {c.description}
                       </p>
                     </div>
-
                     <VisualPipelineStepper type="COMPLAINT" pipelineState={c.pipeline_state} />
                   </div>
                 ))
               )
             )}
 
-            {/* --- EVENTS CARDS --- */}
+            {/* EVENTS CARDS */}
             {activeTab === 'events' && (
               events.length === 0 ? (
                 <div className="p-12 text-center bg-white rounded-3xl border border-slate-200 text-slate-400 italic font-bold">No event requests booked.</div>
               ) : (
-                events.map((e) => (
-                  <div key={e.id} className="bg-white rounded-3xl p-5 md:p-6 shadow-sm border border-slate-200 flex flex-col justify-between gap-4 transition hover:shadow-md">
-                    <div>
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <span className="font-black text-brand-maroon text-base">{e.event_title}</span>
-                          <p className="text-xs font-bold text-slate-700 mt-0.5">{e.location} {e.sub_location ? `(${e.sub_location})` : ''}</p>
-                        </div>
-                        <div className="text-right">
-                          <div className="font-bold text-slate-800 text-xs">{new Date(e.event_date).toLocaleDateString()}</div>
-                          <div className="text-[9px] font-black text-brand-maroon uppercase mt-0.5">{e.time_slot}</div>
-                        </div>
-                      </div>
-                    </div>
+                events.map((e) => {
+                  const now = new Date();
+                  const [year, month, day] = e.event_date.split('-').map(Number);
+                  const eventDateObj = new Date(year, month - 1, day, 0, 0, 0);
+                  const todayObj = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+                  
+                  // Can cancel if event is in the future or today and not already concluded/rejected
+                  const canCancel = eventDateObj.getTime() >= todayObj.getTime() && !['CLOSED', 'REJECTED'].includes(e.pipeline_state);
 
-                    <VisualPipelineStepper type="EVENT" pipelineState={e.pipeline_state} />
-                  </div>
-                ))
+                  return (
+                    <div key={e.id} className={`bg-white rounded-3xl p-5 md:p-6 shadow-sm border flex flex-col justify-between gap-4 transition hover:shadow-md ${e.pipeline_state === 'REJECTED' ? 'border-red-200' : 'border-slate-200'}`}>
+                      <div>
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <span className="font-black text-brand-maroon text-base">{e.event_title}</span>
+                            <p className="text-xs font-bold text-slate-700 mt-0.5">{e.location} {e.sub_location ? `(${e.sub_location})` : ''}</p>
+                          </div>
+                          
+                          <div className="flex flex-col items-end gap-2">
+                            <div className="text-right">
+                              <div className="font-bold text-slate-800 text-xs">{new Date(e.event_date).toLocaleDateString()}</div>
+                              <div className="text-[9px] font-black text-brand-maroon uppercase mt-0.5">{e.time_slot}</div>
+                            </div>
+                            
+                            {/* Cancellation Button */}
+                            {canCancel && (
+                              <button 
+                                onClick={() => { setCancelModalEvent(e); setCancelReason(''); }}
+                                disabled={processingId === e.id}
+                                className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-[10px] font-black uppercase tracking-wider rounded-xl flex items-center gap-1.5 transition shadow-sm disabled:opacity-50"
+                              >
+                                <XCircle className="w-3.5 h-3.5" /> Cancel Event
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {e.pipeline_state === 'REJECTED' && e.rejection_reason && (
+                          <div className="mt-3 bg-red-50 p-3 rounded-xl border border-red-100">
+                            <span className="text-[10px] font-black text-red-600 uppercase tracking-widest block mb-1">Reason / Status</span>
+                            <p className="text-xs font-semibold text-red-900">{e.rejection_reason}</p>
+                          </div>
+                        )}
+
+                        {e.requirements && e.requirements.length > 0 && (
+                          <div className="mt-3 bg-slate-50 p-3 rounded-xl border border-slate-100">
+                            <span className="text-[10px] font-black uppercase text-slate-400 mb-2 block tracking-widest">Requested Accessories</span>
+                            <div className="flex flex-wrap gap-2">
+                              {e.requirements.map((req: any, i: number) => {
+                                const isRejected = req.status === 'Rejected';
+                                const isApproved = req.status === 'Approved';
+                                return (
+                                  <span 
+                                    key={i} 
+                                    className={`px-2 py-1 text-[10px] font-bold rounded border ${
+                                      isRejected ? 'bg-red-50 text-red-800 border-red-100 line-through opacity-70' : 
+                                      isApproved ? 'bg-emerald-50 text-emerald-800 border-emerald-100' : 
+                                      'bg-amber-50 text-amber-800 border-amber-100'
+                                    }`}
+                                  >
+                                    {req.item_name} {isRejected && '(Rejected)'}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <VisualPipelineStepper 
+                        type="EVENT" 
+                        pipelineState={e.pipeline_state} 
+                        eventDate={e.event_date} 
+                        timeSlot={e.time_slot} 
+                      />
+                    </div>
+                  );
+                })
               )
             )}
 
-            {/* --- FLEET CARDS --- */}
+            {/* FLEET CARDS */}
             {activeTab === 'fleet' && !isStandardUser && (
               fleet.length === 0 ? (
                 <div className="p-12 text-center bg-white rounded-3xl border border-slate-200 text-slate-400 italic font-bold">No fleet requests booked.</div>
@@ -382,35 +447,91 @@ const getDeliverySlaMessage = (req: any) => {
                         <div className="text-[9px] font-black text-emerald-600 uppercase mt-0.5">Reach: {f.arrival_time}</div>
                       </div>
                     </div>
-
                     {f.assigned_vehicles && (
                       <div className="bg-indigo-50 p-3 rounded-xl border border-indigo-100 flex items-center justify-between text-xs font-bold">
                         <span className="text-indigo-900">Vehicle: {f.assigned_vehicles}</span>
                         <span className="text-indigo-600 uppercase text-[10px] font-black">Departure: {f.departure_time}</span>
                       </div>
                     )}
-
                     <VisualPipelineStepper type="FLEET" pipelineState={f.pipeline_state} />
                   </div>
                 ))
               )
             )}
-
           </div>
         )}
       </div>
 
-      {/* Slide-out Chat Modal for Materials */}
+      {/* Cancellation Reason Modal */}
+      {cancelModalEvent && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl w-full max-w-md overflow-hidden shadow-2xl p-6 animate-in zoom-in-95">
+            <div className="flex justify-between items-center mb-4">
+              <div className="flex items-center gap-2 text-red-600">
+                <AlertTriangle className="w-5 h-5" />
+                <h3 className="text-base font-black uppercase tracking-tight">Cancel Event Booking</h3>
+              </div>
+              <button onClick={() => setCancelModalEvent(null)} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5"/></button>
+            </div>
+
+            <p className="text-xs text-slate-500 mb-4 font-medium">
+              Cancelling <strong>"{cancelModalEvent.event_title}"</strong> on {new Date(cancelModalEvent.event_date).toLocaleDateString()} will release the venue and alert Tanzeem Operations.
+            </p>
+
+            <form onSubmit={handleCancelSubmit} className="space-y-4">
+              <div>
+                <label className="block text-[10px] font-black uppercase text-slate-500 mb-1">Reason for Cancellation</label>
+                <textarea
+                  required
+                  rows={3}
+                  value={cancelReason}
+                  onChange={(e) => setCancelReason(e.target.value)}
+                  placeholder="e.g. Guest speaker rescheduled, class cancelled..."
+                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-red-500"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button 
+                  type="button" 
+                  onClick={() => setCancelModalEvent(null)} 
+                  className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition"
+                >
+                  Keep Event
+                </button>
+                <button 
+                  type="submit" 
+                  disabled={processingId === cancelModalEvent.id}
+                  className="flex-1 py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl text-xs uppercase tracking-wider transition disabled:opacity-50"
+                >
+                  {processingId === cancelModalEvent.id ? 'Cancelling...' : 'Confirm Cancellation'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Fixed Toast Container */}
+      <div className="fixed bottom-5 right-5 z-[100] flex flex-col gap-2 pointer-events-none">
+        {toasts.map(t => (
+          <div 
+            key={t.id} 
+            onClick={() => removeToast(t.id)} 
+            className={`p-4 rounded-2xl shadow-2xl text-white text-sm font-bold flex items-center gap-3 pointer-events-auto cursor-pointer animate-in slide-in-from-bottom-5 duration-300 ${t.type === 'error' ? 'bg-red-600' : 'bg-emerald-600'}`}
+          >
+            {t.type === 'error' ? <XCircle className="w-5 h-5"/> : <CheckCircle className="w-5 h-5"/>}
+            {t.message}
+          </div>
+        ))}
+      </div>
+
       {activeBatch && currentUser && (
         <BatchDetailsModal
           batchId={activeBatch.batch_id}
           workOrderId={activeBatch.id}
           isOpen={isChatOpen}
-          onClose={() => {
-            setIsChatOpen(false);
-            setActiveBatch(null);
-            fetchDashboardData();
-          }}
+          onClose={() => { setIsChatOpen(false); setActiveBatch(null); fetchDashboardData(); }}
           currentUser={currentUser}
         />
       )}
