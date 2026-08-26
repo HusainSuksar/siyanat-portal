@@ -28,9 +28,20 @@ import RequestToOrder from "./pages/RequestToOrder";
 import NotificationBell from './components/NotificationBell';
 import InstallAppButton from './components/InstallAppButton';
 
-// Global Clean Logout Handler
+// Clean Logout: Remove push subscription from database before signing out
 const performCleanLogout = async () => {
   try {
+    if ('serviceWorker' in navigator && 'PushManager' in window) {
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.getSubscription();
+      if (subscription) {
+        // Delete this device endpoint from the database so no background push leaks occur
+        await supabase
+          .from('user_push_subscriptions')
+          .delete()
+          .eq('endpoint', subscription.endpoint);
+      }
+    }
     supabase.removeAllChannels();
     await supabase.auth.signOut();
   } catch (err) {
@@ -40,7 +51,7 @@ const performCleanLogout = async () => {
   }
 };
 
-// --- AUTO-SYNC PUSH SUBSCRIPTIONS ON AUTH ---
+// Auto-Sync Push Subscription on Login
 const usePushNotificationSync = (userId: string | null) => {
   useEffect(() => {
     if (!userId) return;
@@ -59,12 +70,13 @@ const usePushNotificationSync = (userId: string | null) => {
           const auth = rawSub.keys?.auth || '';
 
           if (endpoint && p256dh && auth) {
+            // Unlink any previous user attached to this endpoint and assign to current userId
             await supabase.from('user_push_subscriptions').upsert(
               {
                 user_id: userId,
-                endpoint,
-                p256dh,
-                auth,
+                endpoint: endpoint,
+                p256dh: p256dh,
+                auth: auth,
                 user_agent: navigator.userAgent,
                 updated_at: new Date().toISOString()
               },
