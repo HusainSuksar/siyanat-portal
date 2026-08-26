@@ -65,7 +65,8 @@ const usePushNotificationSync = (userId: string | null) => {
                 endpoint,
                 p256dh,
                 auth,
-                user_agent: navigator.userAgent
+                user_agent: navigator.userAgent,
+                updated_at: new Date().toISOString()
               },
               { onConflict: 'endpoint' }
             );
