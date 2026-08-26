@@ -28,11 +28,9 @@ import RequestToOrder from "./pages/RequestToOrder";
 import NotificationBell from './components/NotificationBell';
 import InstallAppButton from './components/InstallAppButton';
 
-// Clean Logout: Remove push subscription from database before signing out
 // Clean Logout: Non-blocking push detachment + guaranteed signout
 const performCleanLogout = async () => {
   try {
-    // 1. Detach push subscription with a 500ms timeout guard so it never hangs
     if ('serviceWorker' in navigator && 'PushManager' in window) {
       await Promise.race([
         (async () => {
@@ -47,20 +45,15 @@ const performCleanLogout = async () => {
             }
           }
         })(),
-        new Promise((resolve) => setTimeout(resolve, 500)) // Max wait 500ms
+        new Promise((resolve) => setTimeout(resolve, 500)) 
       ]);
     }
-
-    // 2. Tear down real-time channels
     supabase.removeAllChannels();
-
-    // 3. Clear auth session
     await supabase.auth.signOut();
   } catch (err) {
     console.error("SignOut error:", err);
   } finally {
-    // 4. Force clean redirect to login page
-    window.location.replace("/login");
+    window.location.href = "/login";
   }
 };
 
@@ -83,7 +76,6 @@ const usePushNotificationSync = (userId: string | null) => {
           const auth = rawSub.keys?.auth || '';
 
           if (endpoint && p256dh && auth) {
-            // Unlink any previous user attached to this endpoint and assign to current userId
             await supabase.from('user_push_subscriptions').upsert(
               {
                 user_id: userId,
@@ -112,33 +104,24 @@ const NotificationManager = ({ userRole, userId }: { userRole: string | null; us
 
   useEffect(() => {
     if (!userId) return;
-
-    let orderSub: any;
-    if (userRole === "SUPER_ADMIN" || userRole === "SIYANAT_HEAD" || userRole === "TANZEEM_HEAD" || userRole === "AVIT_HEAD" || userRole === "ADMIN") {
-      const channelId = `admin_orders_${Math.random().toString(36).substring(7)}`;
-      orderSub = supabase.channel(channelId).on('postgres_changes', { event: "INSERT", schema: "public", table: "work_orders" },
-        (payload) => {
-          setToast({ id: payload.new.id, title: "Incoming Requisition!", message: `Batch ${payload.new.batch_id} submitted.` });
-          setTimeout(() => setToast(null), 6000);
-        }
-      ).subscribe();
-    }
-
-    const chatChannelId = `chat_notifs_${Math.random().toString(36).substring(7)}`;
-    const chatSub = supabase.channel(chatChannelId).on('postgres_changes', { event: "INSERT", schema: "public", table: "work_order_logs" },
-      (payload) => {
-        if (payload.new.author_id !== userId) {
-          setToast({ id: payload.new.id, title: "New Message", message: "You have a new message in a batch thread." });
-          setTimeout(() => setToast(null), 6000);
-        }
-      }
-    ).subscribe();
+    
+    // Single robust listener filtered to this user's notifications
+    const notifChannel = supabase.channel(`user_alerts_${userId}`)
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'in_app_notifications',
+        filter: `user_id=eq.${userId}`
+      }, (payload) => {
+        setToast({ id: payload.new.id, title: payload.new.title, message: payload.new.message });
+        setTimeout(() => setToast(null), 6000);
+      })
+      .subscribe();
 
     return () => {
-      if (orderSub) supabase.removeChannel(orderSub);
-      supabase.removeChannel(chatSub);
+      supabase.removeChannel(notifChannel);
     };
-  }, [userRole, userId]);
+  }, [userId]);
 
   if (!toast) return null;
 
@@ -172,18 +155,26 @@ const DesktopNavigation = ({ userRole, badges }: { userRole: string; badges: any
   const isAvitHead = userRole === 'AVIT_HEAD' || isGodMode;
   const isReceptionist = userRole === 'RECEPTIONIST' || isGodMode;
   
-  // Standard Users exclude DEPT_HEAD. DEPT_HEADs will see the "Book Vehicle" tab.
-  const isStandardUser = userRole === 'STANDARD_USER' || userRole === 'REQUESTER' || userRole === 'RECEPTIONIST';
+  // NEW LOGIC: Only allow request creation for strict base roles
+  const canCreateRequests = ['REQUESTER', 'DEPT_HEAD', 'STANDARD_USER', 'RECEPTIONIST'].includes(userRole);
+  const canBookVehicle = userRole === 'DEPT_HEAD';
 
   return (
     <div className="hidden md:block bg-white border-b border-slate-200 shadow-sm sticky top-[57px] z-40">
       <div className="max-w-7xl mx-auto px-4 flex space-x-2 py-2 overflow-x-auto">
         <Link to="/" className={getTabClass("/")}><LayoutDashboard className="w-4 h-4" /><span>Dashboard</span></Link>
-        <Link to="/new-requisition" className={getTabClass("/new-requisition")}><PlusCircle className="w-4 h-4" /><span>New Requisition</span></Link>
-        <Link to="/new-complaint" className={getTabClass("/new-complaint")}><Wrench className="w-4 h-4" /><span>File Complaint</span></Link>
-        <Link to="/book-event" className={getTabClass("/book-event")}><Calendar className="w-4 h-4" /><span>Book Event</span></Link>
         
-        {!isStandardUser && (
+        {/* Only show these if the user is a standard requester */}
+        {canCreateRequests && (
+          <>
+            <Link to="/new-requisition" className={getTabClass("/new-requisition")}><PlusCircle className="w-4 h-4" /><span>New Requisition</span></Link>
+            <Link to="/new-complaint" className={getTabClass("/new-complaint")}><Wrench className="w-4 h-4" /><span>File Complaint</span></Link>
+            <Link to="/book-event" className={getTabClass("/book-event")}><Calendar className="w-4 h-4" /><span>Book Event</span></Link>
+          </>
+        )}
+
+        {/* Only Department Heads can book vehicles */}
+        {canBookVehicle && (
           <Link to="/book-vehicle" className={getTabClass("/book-vehicle")}><Car className="w-4 h-4" /><span>Book Vehicle</span></Link>
         )}
 
@@ -285,7 +276,9 @@ const MobileDrawerNavigation = ({ userRole, isOpen, setIsOpen, badges }: { userR
   const isTanzeemHead = userRole === 'TANZEEM_HEAD' || isGodMode;
   const isAvitHead = userRole === 'AVIT_HEAD' || isGodMode;
   const isReceptionist = userRole === 'RECEPTIONIST' || isGodMode;
-  const isStandardUser = userRole === 'STANDARD_USER' || userRole === 'REQUESTER' || userRole === 'RECEPTIONIST';
+  
+  const canCreateRequests = ['REQUESTER', 'DEPT_HEAD', 'STANDARD_USER', 'RECEPTIONIST'].includes(userRole);
+  const canBookVehicle = userRole === 'DEPT_HEAD';
 
   return (
     <div className="md:hidden fixed inset-0 z-50 bg-black/50 flex justify-end">
@@ -297,11 +290,16 @@ const MobileDrawerNavigation = ({ userRole, isOpen, setIsOpen, badges }: { userR
 
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
           {navItem("/", LayoutDashboard, "Dashboard")}
-          {navItem("/new-requisition", PlusCircle, "New Requisition")}
-          {navItem("/new-complaint", Wrench, "File Complaint")}
-          {navItem("/book-event", Calendar, "Book Event")}
           
-          {!isStandardUser && navItem("/book-vehicle", Car, "Book Vehicle")}
+          {canCreateRequests && (
+            <>
+              {navItem("/new-requisition", PlusCircle, "New Requisition")}
+              {navItem("/new-complaint", Wrench, "File Complaint")}
+              {navItem("/book-event", Calendar, "Book Event")}
+            </>
+          )}
+          
+          {canBookVehicle && navItem("/book-vehicle", Car, "Book Vehicle")}
 
           {isReceptionist && (
              <>
@@ -425,7 +423,6 @@ export default function App() {
   const isSiyanatHead = role === 'SIYANAT_HEAD' || isGodMode;
   const isTanzeemHead = role === 'TANZEEM_HEAD' || isGodMode;
   const isAvitHead = role === 'AVIT_HEAD' || isGodMode;
-  const isStandardUser = role === 'STANDARD_USER' || role === 'REQUESTER' || role === 'RECEPTIONIST';
   
   const isReceptionist = role === 'RECEPTIONIST' || isGodMode;
   const isOpsHead = isSiyanatHead || isTanzeemHead || isAvitHead;
@@ -444,12 +441,10 @@ export default function App() {
           <Route path="/new-complaint" element={session ? <PortalLayout userRole={role} userId={session.user.id}><NewComplaint /></PortalLayout> : <Navigate to="/login" />} />
           <Route path="/book-event" element={session ? <PortalLayout userRole={role} userId={session.user.id}><BookEvent /></PortalLayout> : <Navigate to="/login" />} />
           <Route path="/profile" element={session ? <PortalLayout userRole={role} userId={session.user.id}><UserProfile /></PortalLayout> : <Navigate to="/login" />} />
+          <Route path="/book-vehicle" element={session ? <PortalLayout userRole={role} userId={session.user.id}><BookVehicle /></PortalLayout> : <Navigate to="/" />} />
 
           {/* Receptionist Read-Only View */}
           <Route path="/watchtower" element={session && isReceptionist ? <PortalLayout userRole={role} userId={session.user.id}><ReceptionWatchtower /></PortalLayout> : <Navigate to="/" />} />
-
-          {/* Restrict Vehicle Booking (DEPT_HEAD accesses this because they are not a standard user) */}
-          <Route path="/book-vehicle" element={session && !isStandardUser ? <PortalLayout userRole={role} userId={session.user.id}><BookVehicle /></PortalLayout> : <Navigate to="/" />} />
 
           {/* Head Routes */}
           <Route path="/siyanat-operations" element={session && isOpsHead ? <PortalLayout userRole={role} userId={session.user.id}><SiyanatOperations /></PortalLayout> : <Navigate to="/" />} />
