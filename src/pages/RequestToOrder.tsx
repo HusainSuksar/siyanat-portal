@@ -27,29 +27,54 @@ export default function RequestToOrder() {
       setUserRole(currentRole);
     }
     
-    // Fetch items with ROLE-BASED FILTERING & complete PO lifecycle
+    // Fetch items with complete PO lifecycle
     let query = supabase
       .from('work_order_items')
       .select(`
         *,
-        work_order:work_orders(batch_id, department, location, created_at, requester:profiles(full_name)),
+        work_order:work_orders(batch_id, department, location, created_at, requester_id),
         inventory:inventory_items(name, physical_stock)
       `)
       .in('status', ['Pending', 'Ordered', 'PO Issued'])
       .order('id', { ascending: false });
 
-    // Department segregation
+    // Resilient Department Filtering (Handles both 'SIYANAT' and 'SIYANAT_HEAD')
     if (currentRole === 'SIYANAT_HEAD') {
-      query = query.eq('fulfillment_dept', 'SIYANAT_HEAD');
+      query = query.in('fulfillment_dept', ['SIYANAT_HEAD', 'SIYANAT']);
     } else if (currentRole === 'TANZEEM_HEAD') {
-      query = query.eq('fulfillment_dept', 'TANZEEM_HEAD');
+      query = query.in('fulfillment_dept', ['TANZEEM_HEAD', 'TANZEEM']);
     } else if (currentRole === 'AVIT_HEAD') {
-      query = query.eq('fulfillment_dept', 'AVIT_HEAD');
+      query = query.in('fulfillment_dept', ['AVIT_HEAD', 'AVIT']);
     }
 
     const { data, error } = await query;
 
-    if (data && !error) setPendingItems(data);
+    if (!error && data) {
+      // Fetch requester names for batches
+      const requesterIds = Array.from(new Set(data.map((i: any) => i.work_order?.requester_id).filter(Boolean)));
+      let profileMap: Record<string, string> = {};
+      
+      if (requesterIds.length > 0) {
+        const { data: profiles } = await supabase
+          .from('profiles')
+          .select('id, full_name')
+          .in('id', requesterIds);
+        
+        if (profiles) {
+          profiles.forEach((p: any) => { profileMap[p.id] = p.full_name; });
+        }
+      }
+
+      const formatted = data.map((item: any) => ({
+        ...item,
+        work_order: {
+          ...item.work_order,
+          requester_name: item.work_order?.requester_id ? (profileMap[item.work_order.requester_id] || 'Requester') : 'N/A'
+        }
+      }));
+
+      setPendingItems(formatted);
+    }
     setLoading(false);
   };
 
@@ -211,13 +236,13 @@ export default function RequestToOrder() {
                         ) : (
                           <span className="px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded text-[9px] font-bold uppercase">Catalog</span>
                         )}
-                        <span className="ml-2 px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded text-[9px] font-bold uppercase">{item.fulfillment_dept.replace('_HEAD', '')}</span>
+                        <span className="ml-2 px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded text-[9px] font-bold uppercase">{item.fulfillment_dept ? item.fulfillment_dept.replace('_HEAD', '') : 'GENERAL'}</span>
                       </div>
                     </td>
                     <td className="p-3">
-                      <div className="font-bold text-brand-maroon">{item.work_order?.batch_id}</div>
-                      <div className="text-[10px] text-slate-500 font-semibold">{item.work_order?.requester?.full_name} • {item.work_order?.department}</div>
-                      <div className="text-[10px] text-slate-400">{new Date(item.work_order?.created_at).toLocaleDateString()}</div>
+                      <div className="font-bold text-brand-maroon">{item.work_order?.batch_id || 'N/A'}</div>
+                      <div className="text-[10px] text-slate-500 font-semibold">{item.work_order?.requester_name} • {item.work_order?.department || 'General'}</div>
+                      <div className="text-[10px] text-slate-400">{item.work_order?.created_at ? new Date(item.work_order.created_at).toLocaleDateString() : ''}</div>
                     </td>
                     <td className="p-3">
                       <div className="font-black text-slate-800">Qty Needed: {item.requested_qty}</div>
@@ -230,7 +255,7 @@ export default function RequestToOrder() {
                           {item.status === 'PO Issued' && <FileText className="w-3 h-3" />}
                           {item.status}
                         </span>
-                        <span className="text-[10px] text-slate-500 font-bold flex items-center gap-0.5"><Clock className="w-3 h-3"/> {item.eta_days} Days</span>
+                        <span className="text-[10px] text-slate-500 font-bold flex items-center gap-0.5"><Clock className="w-3 h-3"/> {item.eta_days || 0} Days</span>
                       </div>
                     </td>
                     <td className="p-3 text-right">
@@ -247,7 +272,7 @@ export default function RequestToOrder() {
                           <X className="w-4 h-4" />
                         </button>
                         
-                        {userRole === 'SUPER_ADMIN' && (
+                        {(userRole === 'SUPER_ADMIN' || userRole === 'ADMIN') && (
                           <button onClick={() => deleteItem(item.id, item.work_order?.batch_id)} disabled={processingId === item.id} className="p-1.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg transition" title="Delete from Database">
                             <Trash2 className="w-4 h-4" />
                           </button>

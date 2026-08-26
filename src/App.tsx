@@ -29,25 +29,38 @@ import NotificationBell from './components/NotificationBell';
 import InstallAppButton from './components/InstallAppButton';
 
 // Clean Logout: Remove push subscription from database before signing out
+// Clean Logout: Non-blocking push detachment + guaranteed signout
 const performCleanLogout = async () => {
   try {
+    // 1. Detach push subscription with a 500ms timeout guard so it never hangs
     if ('serviceWorker' in navigator && 'PushManager' in window) {
-      const registration = await navigator.serviceWorker.ready;
-      const subscription = await registration.pushManager.getSubscription();
-      if (subscription) {
-        // Delete this device endpoint from the database so no background push leaks occur
-        await supabase
-          .from('user_push_subscriptions')
-          .delete()
-          .eq('endpoint', subscription.endpoint);
-      }
+      await Promise.race([
+        (async () => {
+          const registration = await navigator.serviceWorker.getRegistration();
+          if (registration) {
+            const subscription = await registration.pushManager.getSubscription();
+            if (subscription?.endpoint) {
+              await supabase
+                .from('user_push_subscriptions')
+                .delete()
+                .eq('endpoint', subscription.endpoint);
+            }
+          }
+        })(),
+        new Promise((resolve) => setTimeout(resolve, 500)) // Max wait 500ms
+      ]);
     }
+
+    // 2. Tear down real-time channels
     supabase.removeAllChannels();
+
+    // 3. Clear auth session
     await supabase.auth.signOut();
   } catch (err) {
     console.error("SignOut error:", err);
   } finally {
-    window.location.href = "/login";
+    // 4. Force clean redirect to login page
+    window.location.replace("/login");
   }
 };
 
