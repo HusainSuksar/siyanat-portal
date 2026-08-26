@@ -145,6 +145,8 @@ const DesktopNavigation = ({ userRole, badges }: { userRole: string; badges: any
   const isTanzeemHead = userRole === 'TANZEEM_HEAD' || isGodMode;
   const isAvitHead = userRole === 'AVIT_HEAD' || isGodMode;
   const isReceptionist = userRole === 'RECEPTIONIST' || isGodMode;
+  
+  // Standard Users exclude DEPT_HEAD. DEPT_HEADs will see the "Book Vehicle" tab.
   const isStandardUser = userRole === 'STANDARD_USER' || userRole === 'REQUESTER' || userRole === 'RECEPTIONIST';
 
   return (
@@ -420,7 +422,7 @@ export default function App() {
           {/* Receptionist Read-Only View */}
           <Route path="/watchtower" element={session && isReceptionist ? <PortalLayout userRole={role} userId={session.user.id}><ReceptionWatchtower /></PortalLayout> : <Navigate to="/" />} />
 
-          {/* Restrict Vehicle Booking */}
+          {/* Restrict Vehicle Booking (DEPT_HEAD accesses this because they are not a standard user) */}
           <Route path="/book-vehicle" element={session && !isStandardUser ? <PortalLayout userRole={role} userId={session.user.id}><BookVehicle /></PortalLayout> : <Navigate to="/" />} />
 
           {/* Head Routes */}

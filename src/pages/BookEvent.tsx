@@ -133,29 +133,11 @@ export default function BookEvent() {
       </div>
 
       <form onSubmit={attemptSubmit} className="space-y-6">
-        <BookingForm 
-          formData={formData} 
-          setFormData={setFormData} 
-          isStandardUser={userRole === 'REQUESTER'} 
-          minBookingDate={getMinBookingDate()} 
-        />
-        <HeadcountEngine 
-          formData={formData} 
-          setFormData={setFormData} 
-        />
-        <AssetRequester 
-          formData={formData} 
-          setFormData={setFormData} 
-          inventory={inventory} 
-          standardAssets={standardAssets} 
-          showStockCount={userRole === 'SUPER_ADMIN' || userRole === 'SIYANAT_HEAD'} 
-        />
+        <BookingForm formData={formData} setFormData={setFormData} isStandardUser={userRole === 'REQUESTER'} minBookingDate={getMinBookingDate()} />
+        <HeadcountEngine formData={formData} setFormData={setFormData} />
+        <AssetRequester formData={formData} setFormData={setFormData} inventory={inventory} standardAssets={standardAssets} showStockCount={userRole === 'SUPER_ADMIN' || userRole === 'SIYANAT_HEAD'} />
 
-        <button 
-          type="submit" 
-          disabled={loading} 
-          className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-sm uppercase tracking-widest rounded-2xl shadow-xl transition flex justify-center items-center space-x-2 disabled:opacity-70"
-        >
+        <button type="submit" disabled={loading} className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-sm uppercase tracking-widest rounded-2xl shadow-xl transition flex justify-center items-center space-x-2 disabled:opacity-70">
           {loading ? <span>Verifying Schedule...</span> : <><Send className="w-5 h-5" /><span>Submit Event Booking</span></>}
         </button>
       </form>
@@ -168,20 +150,8 @@ export default function BookEvent() {
             <h3 className="text-lg font-black text-slate-800 uppercase">{confirmModalData.title}</h3>
             <p className="text-xs text-slate-500 mt-2 mb-6">Confirm venue scheduling request details are correct.</p>
             <div className="flex gap-3">
-              <button 
-                type="button" 
-                onClick={() => setConfirmModalData(null)} 
-                className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition"
-              >
-                Cancel
-              </button>
-              <button 
-                type="button" 
-                onClick={confirmModalData.action} 
-                className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition"
-              >
-                Confirm
-              </button>
+              <button type="button" onClick={() => setConfirmModalData(null)} className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition">Cancel</button>
+              <button type="button" onClick={confirmModalData.action} className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition">Confirm</button>
             </div>
           </div>
         </div>
@@ -190,11 +160,7 @@ export default function BookEvent() {
       {/* Fixed Toast Container */}
       <div className="fixed bottom-5 right-5 z-[100] flex flex-col gap-2 pointer-events-none">
         {toasts.map(t => (
-          <div 
-            key={t.id} 
-            onClick={() => removeToast(t.id)} 
-            className={`p-4 rounded-2xl shadow-2xl text-white text-sm font-bold flex items-center gap-3 pointer-events-auto cursor-pointer animate-in slide-in-from-bottom-5 duration-300 ${t.type === 'error' ? 'bg-red-600' : 'bg-emerald-600'}`}
-          >
+          <div key={t.id} onClick={() => removeToast(t.id)} className={`p-4 rounded-2xl shadow-2xl text-white text-sm font-bold flex items-center gap-3 pointer-events-auto cursor-pointer animate-in slide-in-from-bottom-5 duration-300 ${t.type === 'error' ? 'bg-red-600' : 'bg-emerald-600'}`}>
             {t.type === 'error' ? <XCircle className="w-5 h-5"/> : <CheckCircle className="w-5 h-5"/>}
             {t.message}
           </div>
