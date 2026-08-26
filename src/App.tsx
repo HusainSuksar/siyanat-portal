@@ -99,7 +99,8 @@ const usePushNotificationSync = (userId: string | null) => {
 };
 
 // --- NOTIFICATION MANAGER ---
-const NotificationManager = ({ userRole, userId }: { userRole: string | null; userId: string | null; }) => {
+// --- NOTIFICATION MANAGER ---
+const NotificationManager = ({ userId }: { userId: string | null; }) => {
   const [toast, setToast] = useState<{ id: string; message: string; title: string; } | null>(null);
 
   useEffect(() => {
@@ -397,7 +398,7 @@ const PortalLayout = ({ children, userRole, userId }: { children: React.ReactNod
         </div>
       </header>
 
-      <NotificationManager userRole={userRole} userId={userId} />
+      <NotificationManager userId={userId} />
       <DesktopNavigation userRole={userRole} badges={badges} />
       <MobileDrawerNavigation userRole={userRole} isOpen={isMobileMenuOpen} setIsOpen={setIsMobileMenuOpen} badges={badges} />
 
