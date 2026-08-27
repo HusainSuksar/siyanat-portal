@@ -2,7 +2,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate, Link, useLocation } f
 import { useState, useEffect } from "react";
 import { supabase } from "./lib/supabase";
 import { useAuth } from "./contexts/AuthContext"; 
-import { PackageCheck, LogOut, LayoutDashboard, PlusCircle, Truck, Warehouse, Bell, X, Server, PieChart, ShieldAlert, Users, Menu, Wrench, ClipboardList, Calendar, Car, CalendarCheck, ShoppingCart, Package, UserCircle, Eye } from "lucide-react";
+import { PackageCheck, LogOut, LayoutDashboard, PlusCircle, Truck, Warehouse, Bell, X, Server, PieChart, ShieldAlert, Users, Menu, Wrench, ClipboardList, Calendar, Car, CalendarCheck, ShoppingCart, Package, UserCircle, Eye, Clock } from "lucide-react";
 import { useWorkloadBadges } from "./hooks/useWorkloadBadges";
 
 import ForcePasswordChange from "./components/ForcePasswordChange";
@@ -27,6 +27,7 @@ import TanzeemCommandCenter from "./pages/TanzeemCommandCenter";
 import RequestToOrder from "./pages/RequestToOrder";
 import NotificationBell from './components/NotificationBell';
 import InstallAppButton from './components/InstallAppButton';
+import MyRequests from "./pages/MyRequests";
 
 // Clean Logout: Non-blocking push detachment + guaranteed signout
 const performCleanLogout = async () => {
@@ -99,7 +100,6 @@ const usePushNotificationSync = (userId: string | null) => {
 };
 
 // --- NOTIFICATION MANAGER ---
-// --- NOTIFICATION MANAGER ---
 const NotificationManager = ({ userId }: { userId: string | null; }) => {
   const [toast, setToast] = useState<{ id: string; message: string; title: string; } | null>(null);
 
@@ -156,16 +156,14 @@ const DesktopNavigation = ({ userRole, badges }: { userRole: string; badges: any
   const isAvitHead = userRole === 'AVIT_HEAD' || isGodMode;
   const isReceptionist = userRole === 'RECEPTIONIST' || isGodMode;
   
-  // NEW LOGIC: Only allow request creation for strict base roles
-  const canCreateRequests = ['REQUESTER', 'DEPT_HEAD', 'STANDARD_USER', 'RECEPTIONIST'].includes(userRole);
-  const canBookVehicle = userRole === 'DEPT_HEAD';
+  const canCreateRequests = true;
+  const canBookVehicle = !['STANDARD_USER', 'REQUESTER'].includes(userRole);
 
   return (
     <div className="hidden md:block bg-white border-b border-slate-200 shadow-sm sticky top-[57px] z-40">
       <div className="max-w-7xl mx-auto px-4 flex space-x-2 py-2 overflow-x-auto">
         <Link to="/" className={getTabClass("/")}><LayoutDashboard className="w-4 h-4" /><span>Dashboard</span></Link>
         
-        {/* Only show these if the user is a standard requester */}
         {canCreateRequests && (
           <>
             <Link to="/new-requisition" className={getTabClass("/new-requisition")}><PlusCircle className="w-4 h-4" /><span>New Requisition</span></Link>
@@ -174,10 +172,11 @@ const DesktopNavigation = ({ userRole, badges }: { userRole: string; badges: any
           </>
         )}
 
-        {/* Only Department Heads can book vehicles */}
         {canBookVehicle && (
           <Link to="/book-vehicle" className={getTabClass("/book-vehicle")}><Car className="w-4 h-4" /><span>Book Vehicle</span></Link>
         )}
+
+        <Link to="/my-requests" className={getTabClass("/my-requests")}><Clock className="w-4 h-4" /><span>My Requests</span></Link>
 
         {isReceptionist && (
           <Link to="/watchtower" className={getTabClass("/watchtower")}><Eye className="w-4 h-4" /><span>Omni-Tracker</span></Link>
@@ -278,8 +277,8 @@ const MobileDrawerNavigation = ({ userRole, isOpen, setIsOpen, badges }: { userR
   const isAvitHead = userRole === 'AVIT_HEAD' || isGodMode;
   const isReceptionist = userRole === 'RECEPTIONIST' || isGodMode;
   
-  const canCreateRequests = ['REQUESTER', 'DEPT_HEAD', 'STANDARD_USER', 'RECEPTIONIST'].includes(userRole);
-  const canBookVehicle = userRole === 'DEPT_HEAD';
+  const canCreateRequests = true;
+  const canBookVehicle = !['STANDARD_USER', 'REQUESTER'].includes(userRole);
 
   return (
     <div className="md:hidden fixed inset-0 z-50 bg-black/50 flex justify-end">
@@ -301,6 +300,8 @@ const MobileDrawerNavigation = ({ userRole, isOpen, setIsOpen, badges }: { userR
           )}
           
           {canBookVehicle && navItem("/book-vehicle", Car, "Book Vehicle")}
+          
+          {navItem("/my-requests", Clock, "My Personal Tracker")}
 
           {isReceptionist && (
              <>
@@ -443,6 +444,7 @@ export default function App() {
           <Route path="/book-event" element={session ? <PortalLayout userRole={role} userId={session.user.id}><BookEvent /></PortalLayout> : <Navigate to="/login" />} />
           <Route path="/profile" element={session ? <PortalLayout userRole={role} userId={session.user.id}><UserProfile /></PortalLayout> : <Navigate to="/login" />} />
           <Route path="/book-vehicle" element={session ? <PortalLayout userRole={role} userId={session.user.id}><BookVehicle /></PortalLayout> : <Navigate to="/" />} />
+          <Route path="/my-requests" element={session ? <PortalLayout userRole={role} userId={session.user.id}><MyRequests /></PortalLayout> : <Navigate to="/login" />} />
 
           {/* Receptionist Read-Only View */}
           <Route path="/watchtower" element={session && isReceptionist ? <PortalLayout userRole={role} userId={session.user.id}><ReceptionWatchtower /></PortalLayout> : <Navigate to="/" />} />
