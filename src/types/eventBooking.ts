@@ -1,31 +1,38 @@
+// --- ASSET & INVENTORY TYPES ---
+
 export interface InventoryAsset {
   id: string;
   name: string;
+  category?: string;
+  fulfillment_dept?: string;
   physical_stock: number;
   freezed_stock: number;
-  unit: string;
-  fulfillment_dept: string;
+  unit?: string;
 }
 
 export interface StandardAsset {
   id: string;
-  department: string;
-  item_name: string;
-  is_active: boolean;
+  name: string;
+  category?: string;
+  is_returnable?: boolean;
+  is_active?: boolean;
 }
 
-export interface RequirementItem {
-  id?: string;
-  dept: string;
-  item: string;
-  qty: number;
+// --- FORM DATA TYPES ---
+
+export interface EventRequirement {
+  item_name: string;
+  quantity: number;
+  asset_type: 'STANDARD' | 'CATALOG';
+  is_returnable?: boolean;
+  inventory_id?: string;
 }
 
 export interface EventFormData {
   id: string | null;
   title: string;
   date: string;
-  timingType: 'Between Classes' | 'After Classes';
+  timingType: 'Between Classes' | 'After Class' | string;
   selectedPeriods: string[];
   selectedAfterClass: string[];
   location: string;
@@ -34,19 +41,23 @@ export interface EventFormData {
   maleCount: number;
   femaleCount: number;
   othersCount: number;
-  requirements: RequirementItem[];
+  requirements: EventRequirement[];
 }
 
-export interface TanzeemEventRequirement {
+// --- DATABASE FETCH TYPES ---
+
+export interface EventRequirementDB {
   id: string;
   item_name: string;
-  department?: string;
-  status?: string;
   quantity: number;
-  is_returnable: boolean;
   approved_qty: number;
-  returned_qty: number;
+  status: string;
+  is_returnable: boolean;
   return_status: string;
+  returned_qty: number;
+  asset_type: string;
+  inventory_id?: string;
+  department?: string;
 }
 
 export interface BaseEventData {
@@ -54,17 +65,18 @@ export interface BaseEventData {
   event_title: string;
   event_date: string;
   time_slot: string;
-  timing_type: string;
+  timing_type?: string;
   location: string;
-  sub_location: string | null;
-  darajah: string;
-  male_count: number;
-  female_count: number;
-  others_count: number;
-  total_count: number;
+  sub_location?: string;
+  darajah?: string;
   pipeline_state: string;
-  rejection_reason?: string;
   requester_id: string;
-  requester?: { full_name: string; department?: string };
-  requirements?: TanzeemEventRequirement[];
+  created_at: string;
+  total_count: number;
+  rejection_reason?: string;
+  requirements?: EventRequirementDB[];
+  requester?: {
+    full_name: string;
+    department?: string;
+  };
 }
