@@ -11,13 +11,13 @@ export interface InventoryAsset {
 }
 
 export interface StandardAsset {
-  id: string;
-  name: string;
-  category?: string;
-  is_returnable?: boolean;
-  is_active?: boolean;
+  id?: string;
+  item_name?: string;
+  name?: string;
+  category: 'AVIT' | 'SIYANAT';
+  is_returnable: boolean;
+  is_active: boolean;
 }
-
 // --- FORM DATA TYPES ---
 
 export interface EventRequirement {
