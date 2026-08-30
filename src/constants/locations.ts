@@ -15,7 +15,7 @@ export const EVENT_VENUES: Record<string, string[]> = {
 export const EVENT_ZONES = Object.keys(EVENT_VENUES);
 
 // ==========================================
-// 2. MICRO HIERARCHY (For Complaints)
+// 2. MICRO HIERARCHY (For Complaints & Requisitions)
 // ==========================================
 export type SubLocationType = 'SELECT_ROOM' | 'SELECT_BATHROOM' | 'SELECT_FLOOR_ROOM';
 
@@ -153,11 +153,10 @@ export const ZONE_FLOW_MAP: Record<string, VenueConfig[]> = {
 };
 
 // ==========================================
-// 3. FLAT ZONES & FLAT VENUES (For Backwards Compatibility)
+// 3. FLAT ZONES & FLAT VENUES
 // ==========================================
 export const MASTER_ZONES = Object.keys(ZONE_FLOW_MAP);
 
-// Re-export MAINTENANCE_ZONES as a flat list of venue names per zone
 export const MAINTENANCE_ZONES: Record<string, string[]> = Object.fromEntries(
   Object.entries(ZONE_FLOW_MAP).map(([zone, venues]) => [zone, venues.map(v => v.name)])
 );
@@ -172,41 +171,228 @@ export const ZONE_COORDINATES: Record<string, [number, number]> = {
   "Mawaid": [72.372697, 23.918141],
   "Khaimat al-Riyadat": [72.372697, 23.918141]
 };
-// Local & Regional Landmarks around Siddhpur / Gujarat
-export const LOCAL_LANDMARKS: Record<string, { name: string; coords: [number, number]; category: string }> = {
-  "Moula Hasanfeer Dargah (Denmal)": {
-    name: "Moula Hasanfeer Shaheed Dargah, Denmal",
-    coords: [72.3168, 23.9421],
-    category: "Ziyarat"
+
+// ==========================================
+// 5. REGIONAL MAZAR & ZIYARAT LOCATIONS (35 Direct Points)
+// ==========================================
+export const MAZAR_LOCATIONS: Record<string, { city: string; mazar: string; coords: [number, number] }> = {
+  "Ahmedabad": {
+    city: "Ahmedabad",
+    mazar: "Mazar-e-Qutbi",
+    coords: [72.6053688, 23.0361836]
   },
-  "Moula Hasanfeer Mazar (Siddhpur)": {
-    name: "Moula Hasanfeer Mazar Sharif, Siddhpur",
-    coords: [72.3789, 23.9184],
-    category: "Ziyarat"
+  "Ahmednagar": {
+    city: "Ahmednagar",
+    mazar: "Ganje Shohada Nagar Ziyarat",
+    coords: [74.7659787, 19.0961381]
   },
-  "Moulai Fakhruddin Shaheed (Galiakot)": {
-    name: "Dargah Hazrat Moulai Fakhruddin Shaheed, Galiakot",
-    coords: [73.9877, 23.5356],
-    category: "Ziyarat"
+  "Amreli": {
+    city: "Amreli",
+    mazar: "Maulai Jaferji Saheb Mazaar",
+    coords: [71.2044114, 21.5951051]
   },
-  "Siddhpur Railway Station": {
-    name: "Siddhpur Railway Station (SID)",
-    coords: [72.3846, 23.9163],
-    category: "Transit"
+  "Aurangabad": {
+    city: "Aurangabad",
+    mazar: "Qubba Mubarakah Syedi Najam Khan Saheb",
+    coords: [75.3352025, 19.8750954]
   },
-  "Ahmedabad Airport (AMD)": {
-    name: "Sardar Vallabhbhai Patel International Airport, Ahmedabad",
-    coords: [72.6347, 23.0772],
-    category: "Transit"
+  "Banswara": {
+    city: "Banswara",
+    mazar: "Abdullah Peer Dargah",
+    coords: [74.4380296, 23.5351238]
   },
-  "Mehsana Railway Station": {
-    name: "Mehsana Junction Railway Station",
-    coords: [72.3871, 23.5880],
-    category: "Transit"
+  "Baroda": {
+    city: "Baroda",
+    mazar: "Syedi Musanji Taj Dargah",
+    coords: [73.2155315, 22.3005260]
   },
-  "Patan (Rani Ki Vav)": {
-    name: "Rani Ki Vav, Patan",
-    coords: [72.1017, 23.8589],
-    category: "Historical"
+  "Burhanpur": {
+    city: "Burhanpur",
+    mazar: "Dargah-E-Hakimi",
+    coords: [76.2237752, 21.3338594]
+  },
+  "Chechat": {
+    city: "Chechat",
+    mazar: "Chechat mazaar",
+    coords: [75.8869701, 24.7887638]
+  },
+  "Dongaon": {
+    city: "Dongaon",
+    mazar: "Mazaar-E-Maulai Noorudin Saheb",
+    coords: [75.6591283, 19.5157279]
+  },
+  "Godhra": {
+    city: "Godhra",
+    mazar: "Syedi Ismailji Shaheed Godhra",
+    coords: [73.6132281, 22.7728314]
+  },
+  "Halwad": {
+    city: "Halwad",
+    mazar: "Mazar Syedi QadiKhan Saheb",
+    coords: [71.1677388, 23.0082664]
+  },
+  "Hasanfeer Saab (Denmal)": {
+    city: "Hasanfeer Saab (Denmal)",
+    mazar: "Hasanfeer Saheb Dargah",
+    coords: [72.0111325, 23.6300315]
+  },
+  "Jamnagar": {
+    city: "Jamnagar",
+    mazar: "Mazar E Badri",
+    coords: [70.0804500, 22.4763195]
+  },
+  "Kalawad": {
+    city: "Kalawad",
+    mazar: "Mazar E Ganipir - Dawoodi Bohra Dargah",
+    coords: [70.3910179, 22.1321950]
+  },
+  "Kamlapur": {
+    city: "Kamlapur",
+    mazar: "Kamlapur Syedi Aliji Shaheed Dargah",
+    coords: [76.4263788, 22.7488139]
+  },
+  "Kapadwanj": {
+    city: "Kapadwanj",
+    mazar: "Dawoodi Bohra Dargah, Kapadvanj",
+    coords: [73.0627466, 23.0382435]
+  },
+  "Khambat": {
+    city: "Khambat",
+    mazar: "Dawoodi bohra Musafirkhana",
+    coords: [72.6257319, 22.3213797]
+  },
+  "Maisaheba": {
+    city: "Maisaheba",
+    mazar: "Mazar E Maisaheba",
+    coords: [72.8029294, 20.8919674]
+  },
+  "Mandvi": {
+    city: "Mandvi",
+    mazar: "Mazaar-E-Noorani",
+    coords: [69.3520335, 22.8402830]
+  },
+  "Morbi": {
+    city: "Morbi",
+    mazar: "Maulai Raja Saheb Dargah",
+    coords: [70.8369515, 22.8245302]
+  },
+  "Mumbai": {
+    city: "Mumbai",
+    mazar: "Raudat Tahera",
+    coords: [72.8289224, 18.9588889]
+  },
+  "Mundra": {
+    city: "Mundra",
+    mazar: "Mazar Rani BaiSaheba",
+    coords: [69.7125086, 22.8376695]
+  },
+  "Pisawada": {
+    city: "Pisawada",
+    mazar: "Maulaya Burhanuddin Bin Khoj Mazar",
+    coords: [72.4815524, 22.6402677]
+  },
+  "Pratapgarh": {
+    city: "Pratapgarh",
+    mazar: "Kakaji saheb Dargah",
+    coords: [74.7830518, 24.0305541]
+  },
+  "Rampura": {
+    city: "Rampura",
+    mazar: "Mazar Syedi Bawa Mulla Khan Saheb",
+    coords: [75.4382703, 24.4636938]
+  },
+  "Ranpur": {
+    city: "Ranpur",
+    mazar: "Molaya Sheikh phir sahab dargah",
+    coords: [71.7198687, 22.3476360]
+  },
+  "Selavi": {
+    city: "Selavi",
+    mazar: "Dawoodi Bohra Dargah, Selavi",
+    coords: [72.2659025, 23.7118167]
+  },
+  "Shajapur": {
+    city: "Shajapur",
+    mazar: "Shajapur - Mazar e Yusufi",
+    coords: [76.2669571, 23.4248233]
+  },
+  "Sidhpur": {
+    city: "Sidhpur",
+    mazar: "Mazar-E-Sayedi Qazi Khan",
+    coords: [72.3698783, 23.9164187]
+  },
+  "Surat": {
+    city: "Surat",
+    mazar: "Mazar-E-Saifee SURAT",
+    coords: [72.8301112, 21.1946239]
+  },
+  "Taherabad": {
+    city: "Taherabad",
+    mazar: "Mazar-e-Fakhri (Galiyakot)",
+    coords: [74.0182496, 23.5319869]
+  },
+  "Udaipur": {
+    city: "Udaipur",
+    mazar: "Syedi Luqmanji Saheb Mazar Mubarak",
+    coords: [73.6890199, 24.5837995]
+  },
+  "Ujjain": {
+    city: "Ujjain",
+    mazar: "Mazar-E-Najmi - Ujjain",
+    coords: [75.7690304, 23.1902212]
+  },
+  "Umreth": {
+    city: "Umreth",
+    mazar: "Syedi Miyaji Bin Taj Saheb Dawoodi Bohra Mazar Dargah",
+    coords: [73.1183054, 22.7038128]
+  },
+  "Wakaner": {
+    city: "Wakaner",
+    mazar: "Syedi Lukmanji Dargah Wakaner",
+    coords: [70.9377202, 22.6105989]
   }
+};
+
+// ==========================================
+// 6. LOCAL & REGIONAL LANDMARKS & TRANSIT
+// ==========================================
+export const LOCAL_LANDMARKS: Record<string, { name: string; coords: [number, number]; category: string }> = {
+  // --- ZIYARAT DESTINATIONS (from Payload) ---
+  "Ahmedabad - Mazar-e-Qutbi": { name: "Mazar-e-Qutbi, Ahmedabad", coords: [72.6053688, 23.0361836], category: "Ziyarat" },
+  "Ahmednagar - Ganje Shohada": { name: "Ganje Shohada Nagar Ziyarat, Ahmednagar", coords: [74.7659787, 19.0961381], category: "Ziyarat" },
+  "Amreli - Maulai Jaferji Saheb": { name: "Maulai Jaferji Saheb Mazaar, Amreli", coords: [71.2044114, 21.5951051], category: "Ziyarat" },
+  "Aurangabad - Syedi Najam Khan Saheb": { name: "Qubba Mubarakah Syedi Najam Khan Saheb, Aurangabad", coords: [75.3352025, 19.8750954], category: "Ziyarat" },
+  "Banswara - Abdullah Peer": { name: "Abdullah Peer Dargah, Banswara", coords: [74.4380296, 23.5351238], category: "Ziyarat" },
+  "Baroda - Syedi Musanji Taj": { name: "Syedi Musanji Taj Dargah, Baroda", coords: [73.2155315, 22.3005260], category: "Ziyarat" },
+  "Burhanpur - Dargah-E-Hakimi": { name: "Dargah-E-Hakimi, Burhanpur", coords: [76.2237752, 21.3338594], category: "Ziyarat" },
+  "Chechat - Chechat Mazaar": { name: "Chechat mazaar, Chechat", coords: [75.8869701, 24.7887638], category: "Ziyarat" },
+  "Dongaon - Maulai Noorudin Saheb": { name: "Mazaar-E-Maulai Noorudin Saheb, Dongaon", coords: [75.6591283, 19.5157279], category: "Ziyarat" },
+  "Godhra - Syedi Ismailji Shaheed": { name: "Syedi Ismailji Shaheed Godhra", coords: [73.6132281, 22.7728314], category: "Ziyarat" },
+  "Halwad - Syedi QadiKhan Saheb": { name: "Mazar Syedi QadiKhan Saheb, Halwad", coords: [71.1677388, 23.0082664], category: "Ziyarat" },
+  "Denmal - Hasanfeer Saheb Dargah": { name: "Hasanfeer Saheb Dargah, Denmal", coords: [72.0111325, 23.6300315], category: "Ziyarat" },
+  "Jamnagar - Mazar E Badri": { name: "Mazar E Badri, Jamnagar", coords: [70.0804500, 22.4763195], category: "Ziyarat" },
+  "Kalawad - Mazar E Ganipir": { name: "Mazar E Ganipir - Dawoodi Bohra Dargah, Kalawad", coords: [70.3910179, 22.1321950], category: "Ziyarat" },
+  "Kamlapur - Syedi Aliji Shaheed": { name: "Kamlapur Syedi Aliji Shaheed Dargah", coords: [76.4263788, 22.7488139], category: "Ziyarat" },
+  "Kapadwanj - Dawoodi Bohra Dargah": { name: "Dawoodi Bohra Dargah, Kapadvanj", coords: [73.0627466, 23.0382435], category: "Ziyarat" },
+  "Khambat - Dawoodi Bohra Musafirkhana": { name: "Dawoodi bohra Musafirkhana, Khambat", coords: [72.6257319, 22.3213797], category: "Ziyarat" },
+  "Maisaheba - Mazar E Maisaheba": { name: "Mazar E Maisaheba, Maisaheba", coords: [72.8029294, 20.8919674], category: "Ziyarat" },
+  "Mandvi - Mazaar-E-Noorani": { name: "Mazaar-E-Noorani, Mandvi", coords: [69.3520335, 22.8402830], category: "Ziyarat" },
+  "Morbi - Maulai Raja Saheb Dargah": { name: "Maulai Raja Saheb Dargah, Morbi", coords: [70.8369515, 22.8245302], category: "Ziyarat" },
+  "Mumbai - Raudat Tahera": { name: "Raudat Tahera, Mumbai", coords: [72.8289224, 18.9588889], category: "Ziyarat" },
+  "Mundra - Mazar Rani BaiSaheba": { name: "Mazar Rani BaiSaheba, Mundra", coords: [69.7125086, 22.8376695], category: "Ziyarat" },
+  "Pisawada - Maulaya Burhanuddin Bin Khoj": { name: "Maulaya Burhanuddin Bin Khoj Mazar, Pisawada", coords: [72.4815524, 22.6402677], category: "Ziyarat" },
+  "Pratapgarh - Kakaji Saheb Dargah": { name: "Kakaji saheb Dargah, Pratapgarh", coords: [74.7830518, 24.0305541], category: "Ziyarat" },
+  "Rampura - Syedi Bawa Mulla Khan": { name: "Mazar Syedi Bawa Mulla Khan Saheb, Rampura", coords: [75.4382703, 24.4636938], category: "Ziyarat" },
+  "Ranpur - Molaya Sheikh Phir Sahab": { name: "Molaya Sheikh phir sahab dargah, Ranpur", coords: [71.7198687, 22.3476360], category: "Ziyarat" },
+  "Selavi - Dawoodi Bohra Dargah": { name: "Dawoodi Bohra Dargah, Selavi", coords: [72.2659025, 23.7118167], category: "Ziyarat" },
+  "Shajapur - Mazar e Yusufi": { name: "Shajapur - Mazar e Yusufi", coords: [76.2669571, 23.4248233], category: "Ziyarat" },
+  "Sidhpur - Mazar-E-Sayedi Qazi Khan": { name: "Mazar-E-Sayedi Qazi Khan, Sidhpur", coords: [72.3698783, 23.9164187], category: "Ziyarat" },
+  "Surat - Mazar-E-Saifee": { name: "Mazar-E-Saifee SURAT", coords: [72.8301112, 21.1946239], category: "Ziyarat" },
+  "Taherabad - Mazar-e-Fakhri (Galiyakot)": { name: "Mazar-e-Fakhri (Galiyakot), Taherabad", coords: [74.0182496, 23.5319869], category: "Ziyarat" },
+  "Udaipur - Syedi Luqmanji Saheb": { name: "Syedi Luqmanji Saheb Mazar Mubarak, Udaipur", coords: [73.6890199, 24.5837995], category: "Ziyarat" },
+  "Ujjain - Mazar-E-Najmi": { name: "Mazar-E-Najmi - Ujjain", coords: [75.7690304, 23.1902212], category: "Ziyarat" },
+  "Umreth - Syedi Miyaji Bin Taj Saheb": { name: "Syedi Miyaji Bin Taj Saheb Dawoodi Bohra Mazar Dargah, Umreth", coords: [73.1183054, 22.7038128], category: "Ziyarat" },
+  "Wakaner - Syedi Lukmanji Dargah": { name: "Syedi Lukmanji Dargah Wakaner", coords: [70.9377202, 22.6105989], category: "Ziyarat" },
+
+  
 };
