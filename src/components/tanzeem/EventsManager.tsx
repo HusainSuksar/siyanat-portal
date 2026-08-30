@@ -48,7 +48,8 @@ export default function EventsManager() {
 
   const fetchEvents = async () => {
     setLoading(true);
-    const targetStates = viewMode === 'active' ? ['AUTHORIZED', 'PROCESSING'] : ['CLOSED', 'REJECTED'];
+    // Include SUBMITTED in the active queue
+    const targetStates = viewMode === 'active' ? ['SUBMITTED', 'AUTHORIZED', 'PROCESSING'] : ['CLOSED', 'REJECTED'];
 
     const { data, error } = await supabase
       .from('events')
@@ -108,13 +109,12 @@ export default function EventsManager() {
     
     if (event.requirements && event.requirements.length > 0) {
       event.requirements.forEach(req => {
-        // Auto-default electronics/hardware to Returnable
         const defaultReturnable = req.department === 'AVIT_HEAD' || req.department === 'SIYANAT_HEAD';
         initialDecisions[req.id] = {
           id: req.id,
           item_name: req.item_name,
           status: 'Approved',
-          is_returnable: defaultReturnable,
+          is_returnable: req.is_returnable ?? defaultReturnable,
           approved_qty: req.quantity || 1
         };
       });
@@ -138,7 +138,7 @@ export default function EventsManager() {
       showToast('Event & accessories processed successfully!', 'success');
       setApproveModalOpen(false);
       fetchEvents();
-      fetchInitialData(); // Refresh stock counts
+      fetchInitialData();
     } catch (err: any) {
       showToast(err.message, 'error');
     } finally {
@@ -152,7 +152,7 @@ export default function EventsManager() {
     const initialCounts: Record<string, number> = {};
     
     event.requirements?.filter(r => r.return_status === 'PENDING_RETURN' || r.return_status === 'PARTIALLY_RETURNED').forEach(req => {
-      initialCounts[req.id] = req.approved_qty; // Default input to full return
+      initialCounts[req.id] = req.approved_qty;
     });
     
     setReturnCounts(initialCounts);
@@ -249,13 +249,21 @@ export default function EventsManager() {
           {events.map(e => {
             const hasPendingReturns = e.requirements?.some(r => r.return_status === 'PENDING_RETURN' || r.return_status === 'PARTIALLY_RETURNED');
             const isPassed = isEventPassed(e.event_date, e.time_slot);
+            const isPendingReview = e.pipeline_state === 'SUBMITTED' || e.pipeline_state === 'AUTHORIZED';
             
             return (
             <div key={e.id} className={`bg-white rounded-3xl p-5 shadow-sm border flex flex-col lg:flex-row justify-between gap-5 transition hover:shadow-md ${e.pipeline_state === 'REJECTED' ? 'border-red-200' : 'border-slate-200'}`}>
                <div className="space-y-4 flex-1 w-full">
                   <div>
                     <div className="flex justify-between items-start">
-                      <h3 className="font-black text-brand-maroon text-lg leading-tight">{e.event_title}</h3>
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-black text-brand-maroon text-lg leading-tight">{e.event_title}</h3>
+                        {e.pipeline_state === 'SUBMITTED' && (
+                          <span className="px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest bg-amber-100 text-amber-800">
+                            New Submission
+                          </span>
+                        )}
+                      </div>
                       {viewMode === 'history' && (
                         <span className={`px-2.5 py-0.5 rounded text-[10px] font-black uppercase tracking-widest ${e.pipeline_state === 'CLOSED' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
                           {e.pipeline_state === 'CLOSED' ? 'Concluded' : 'Rejected'}
@@ -263,7 +271,7 @@ export default function EventsManager() {
                       )}
                     </div>
                     <p className="text-xs text-slate-500 mt-1 font-bold flex items-center gap-1 uppercase">
-                      <Users className="w-3 h-3"/> {e.requester?.full_name} • {e.requester?.department}
+                      <Users className="w-3 h-3"/> {e.requester?.full_name || 'Requester'} • {e.requester?.department || 'Campus'}
                     </p>
                   </div>
                   
@@ -278,7 +286,7 @@ export default function EventsManager() {
                        {e.sub_location && <div className="text-[10px] font-bold text-slate-500 mt-0.5 truncate">{e.sub_location}</div>}
                      </div>
                      <div>
-                       <div className="font-black text-slate-700 text-xs tracking-wider">{e.darajah}</div>
+                       <div className="font-black text-slate-700 text-xs tracking-wider">{e.darajah || 'All Darajah'}</div>
                        <div className="text-[10px] text-slate-500 font-black uppercase tracking-widest mt-0.5">Total Pax: <span className="text-brand-maroon">{e.total_count}</span></div>
                      </div>
                   </div>
@@ -310,7 +318,7 @@ export default function EventsManager() {
 
                {/* Actions Sidebar */}
                <div className="flex flex-row lg:flex-col gap-2 w-full lg:w-48 pt-4 lg:pt-0 border-t lg:border-t-0 lg:border-l border-slate-100 lg:pl-5 justify-center">
-                  {viewMode === 'active' && e.pipeline_state === 'AUTHORIZED' && (
+                  {viewMode === 'active' && isPendingReview && (
                     <>
                       <button onClick={() => openApproveModal(e)} disabled={processingId === e.id} className="flex-1 lg:flex-none py-3 px-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black uppercase tracking-wider text-[10px] rounded-xl shadow-sm flex items-center justify-center gap-1.5 transition">
                         <ClipboardCheck className="w-4 h-4"/> Review & Approve
@@ -326,7 +334,6 @@ export default function EventsManager() {
                     </button>
                   )}
                   
-                  {/* Reconcile Button appears if event is concluded or active but has pending items to be returned */}
                   {viewMode === 'active' && e.pipeline_state === 'PROCESSING' && hasPendingReturns && (
                     <button onClick={() => openReconcileModal(e)} disabled={!isPassed || processingId === e.id} className={`flex-1 lg:flex-none py-4 px-2 bg-brand-maroon hover:bg-red-900 text-white font-black uppercase tracking-wider text-[10px] rounded-xl shadow-sm flex items-center justify-center gap-1.5 transition disabled:opacity-50 ${isPassed ? 'animate-pulse' : 'disabled:animate-none'}`}>
                       {isPassed ? <><PackageCheck className="w-4 h-4"/> Reconcile Returns</> : <><Clock className="w-4 h-4"/> Pending Event</>}
