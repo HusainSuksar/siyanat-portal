@@ -26,9 +26,11 @@ export default function NewRequisition() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDeptFilter, setSelectedDeptFilter] = useState('ALL');
 
-  const [customItems, setCustomItems] = useState<{ name: string, category: string, qty: number }[]>([]);
+  // Custom Item State
+  const [customItems, setCustomItems] = useState<{ name: string, category: string, qty: number, fulfillment_dept: string }[]>([]);
   const [customName, setCustomName] = useState('');
   const [customQty, setCustomQty] = useState(1);
+  const [customDept, setCustomDept] = useState('SIYANAT_HEAD'); // NEW: Department Routing State
 
   useEffect(() => {
     fetchCatalog();
@@ -52,19 +54,11 @@ export default function NewRequisition() {
       }
     }
 
-    // Fetch all active catalog inventory items
-    const { data, error } = await supabase
-      .from('inventory_items')
-      .select('*')
-      .order('name');
-      
-    if (data && !error) {
-      setCatalog(data);
-    }
+    const { data, error } = await supabase.from('inventory_items').select('*').order('name');
+    if (data && !error) setCatalog(data);
     setLoading(false);
   };
 
-  // Filtered Catalog based on search text and department filter
   const filteredCatalog = useMemo(() => {
     return catalog.filter(item => {
       const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -74,7 +68,6 @@ export default function NewRequisition() {
     });
   }, [catalog, searchQuery, selectedDeptFilter]);
 
-  // --- DYNAMIC LOGIC ENGINE ---
   const activeVenues = selectedZone ? ZONE_FLOW_MAP[selectedZone] : [];
   const activeVenueObj = activeVenues?.find(v => v.name === selectedVenue);
   const subConfig = activeVenueObj?.subConfig;
@@ -86,7 +79,6 @@ export default function NewRequisition() {
   const requiresRoomDropdown = (subConfig?.type === 'SELECT_ROOM' || subConfig?.type === 'SELECT_BATHROOM') || 
                                (subConfig?.type === 'SELECT_FLOOR_ROOM' && availableRoomsForFloor.length > 0);
 
-  // Cascading Resets
   const handleZoneChange = (zone: string) => {
     setSelectedZone(zone);
     setSelectedVenue(''); setSelectedFloor(''); setSelectedRoom('');
@@ -110,9 +102,15 @@ export default function NewRequisition() {
 
   const addCustomItem = () => {
     if (!customName.trim()) return;
-    setCustomItems([...customItems, { name: customName, category: 'General / Miscellaneous', qty: customQty }]);
+    setCustomItems([...customItems, { 
+      name: customName, 
+      category: 'General / Miscellaneous', 
+      qty: customQty, 
+      fulfillment_dept: customDept // Save the selected routing
+    }]);
     setCustomName('');
     setCustomQty(1);
+    // Keep customDept as is for quick multi-adds
   };
 
   const removeCustomItem = (index: number) => {
@@ -160,21 +158,19 @@ export default function NewRequisition() {
         fulfillment_dept: c.item.fulfillment_dept || 'SIYANAT_HEAD' 
       }));
 
+      // Map dynamic department for custom items
       const customOrderItems = customItems.map(c => ({
         work_order_id: orderData.id,
         custom_item_name: c.name,
         requested_qty: c.qty,
         item_type: 'Custom',
-        fulfillment_dept: 'SIYANAT_HEAD' 
+        fulfillment_dept: c.fulfillment_dept 
       }));
 
       const allItemsToInsert = [...orderItems, ...customOrderItems];
 
       if (allItemsToInsert.length > 0) {
-        const { error: itemsError } = await supabase
-          .from('work_order_items')
-          .insert(allItemsToInsert);
-          
+        const { error: itemsError } = await supabase.from('work_order_items').insert(allItemsToInsert);
         if (itemsError) throw itemsError;
       }
       
@@ -398,8 +394,17 @@ export default function NewRequisition() {
             placeholder="Describe custom item clearly..." 
             value={customName}
             onChange={(e) => setCustomName(e.target.value)}
-            className="sm:col-span-7 md:col-span-8 px-4 py-3 bg-white border border-slate-300 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-brand-maroon transition shadow-sm"
+            className="sm:col-span-5 px-4 py-3 bg-white border border-slate-300 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-brand-maroon transition shadow-sm"
           />
+          <select 
+            value={customDept}
+            onChange={(e) => setCustomDept(e.target.value)}
+            className="sm:col-span-3 px-4 py-3 bg-white border border-slate-300 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-brand-maroon transition shadow-sm"
+          >
+            <option value="SIYANAT_HEAD">Route to Siyanat</option>
+            <option value="TANZEEM_HEAD">Route to Stationery</option>
+            <option value="AVIT_HEAD">Route to AVIT</option>
+          </select>
           <input 
             type="number" 
             min="1" 
@@ -410,7 +415,7 @@ export default function NewRequisition() {
           <button 
             type="button"
             onClick={addCustomItem}
-            className="sm:col-span-3 md:col-span-2 flex items-center justify-center space-x-1.5 bg-slate-800 hover:bg-slate-900 text-white font-black text-xs uppercase tracking-wide rounded-xl py-3 transition shadow-sm"
+            className="sm:col-span-2 flex items-center justify-center space-x-1.5 bg-slate-800 hover:bg-slate-900 text-white font-black text-xs uppercase tracking-wide rounded-xl py-3 transition shadow-sm"
           >
             <PlusCircle className="w-4 h-4" />
             <span>Add</span>
@@ -423,7 +428,9 @@ export default function NewRequisition() {
               <div key={idx} className="flex justify-between items-center bg-white p-3 rounded-xl border border-slate-200 text-sm shadow-sm">
                 <div>
                   <span className="font-bold text-slate-800">{item.name}</span>
-                  <span className="text-[10px] font-black text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded ml-2 uppercase tracking-wide">Custom</span>
+                  <span className="text-[10px] font-black text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded ml-2 uppercase tracking-wide">
+                    Custom ({item.fulfillment_dept.replace('_HEAD', '')})
+                  </span>
                 </div>
                 <div className="flex items-center space-x-4">
                   <span className="font-black text-slate-700 bg-slate-100 px-2 py-1 rounded">Qty: {item.qty}</span>

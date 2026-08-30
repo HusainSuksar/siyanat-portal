@@ -17,9 +17,10 @@ export default function TechnicianPortal() {
   const [searchTerm, setSearchTerm] = useState('');
   
   // Request Carts
-  const [selectedItems, setSelectedItems] = useState<{ id: string, name: string, qty: number, type: 'Catalog' | 'Custom' }[]>([]);
+  const [selectedItems, setSelectedItems] = useState<{ id: string, name: string, qty: number, type: 'Catalog' | 'Custom', fulfillment_dept?: string }[]>([]);
   const [customName, setCustomName] = useState('');
   const [customQty, setCustomQty] = useState(1);
+  const [customDept, setCustomDept] = useState('SIYANAT_HEAD'); // NEW: Department Routing State
   const [submittingMaterial, setSubmittingMaterial] = useState(false);
 
   const fetchAssignments = async () => {
@@ -54,7 +55,14 @@ export default function TechnicianPortal() {
       }
       
       if (data) {
-        setAssignments(data.filter(a => a.complaint !== null));
+        const validAssignments = data.filter(a => a.complaint !== null);
+
+        // Deduplicate assignments by complaint ID to prevent double cards
+        const uniqueAssignments = Array.from(
+          new Map(validAssignments.map(a => [a.complaint.id || a.complaint.complaint_id, a])).values()
+        );
+
+        setAssignments(uniqueAssignments);
       }
     }
     setLoading(false);
@@ -119,7 +127,13 @@ export default function TechnicianPortal() {
   const addCustomItem = () => {
     if (!customName.trim()) return;
     const tempId = `custom-${Math.random().toString(36).substring(2, 9)}`;
-    setSelectedItems(prev => [...prev, { id: tempId, name: customName, qty: customQty, type: 'Custom' }]);
+    setSelectedItems(prev => [...prev, { 
+      id: tempId, 
+      name: customName, 
+      qty: customQty, 
+      type: 'Custom',
+      fulfillment_dept: customDept // Save routing
+    }]);
     setCustomName('');
     setCustomQty(1);
   };
@@ -157,7 +171,7 @@ export default function TechnicianPortal() {
           custom_item_name: item.type === 'Custom' ? item.name : null,
           requested_qty: item.qty,
           item_type: item.type,
-          fulfillment_dept: catalogItem?.fulfillment_dept || 'SIYANAT_HEAD'
+          fulfillment_dept: item.type === 'Custom' ? item.fulfillment_dept : (catalogItem?.fulfillment_dept || 'SIYANAT_HEAD') // Dynamic dept mapping
         };
       });
 
@@ -172,7 +186,7 @@ export default function TechnicianPortal() {
         user_email: userProfile?.email || user?.email || 'Technician'
       });
 
-      alert("Material request sent to Siyanat Operations for Purchase Order generation!");
+      alert("Material request sent to Operations for fulfillment!");
       setMaterialModalOpen(false);
       fetchAssignments();
 
@@ -390,7 +404,9 @@ export default function TechnicianPortal() {
                       <div key={item.id} className="flex justify-between items-center bg-white p-2.5 rounded-xl border border-slate-100 shadow-sm">
                         <div>
                           <p className="text-xs font-bold text-slate-800">{item.name}</p>
-                          <p className="text-[9px] font-black text-brand-maroon uppercase">{item.type}</p>
+                          <p className="text-[9px] font-black text-brand-maroon uppercase">
+                            {item.type} {item.type === 'Custom' && `(${item.fulfillment_dept?.replace('_HEAD', '')})`}
+                          </p>
                         </div>
                         <div className="flex items-center gap-3">
                           <div className="flex items-center border border-slate-200 rounded-lg overflow-hidden">
@@ -409,9 +425,30 @@ export default function TechnicianPortal() {
               <div className="bg-amber-50 p-4 rounded-2xl border border-amber-200">
                 <h4 className="text-[10px] font-black uppercase text-amber-800 tracking-widest mb-3">Can't find it? Request Custom Part</h4>
                 <div className="flex flex-col sm:flex-row gap-2">
-                  <input type="text" placeholder="e.g. 50mm Brass Valve" value={customName} onChange={(e) => setCustomName(e.target.value)} className="flex-1 px-3 py-2.5 bg-white border border-amber-300 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-brand-maroon" />
+                  <input 
+                    type="text" 
+                    placeholder="e.g. 50mm Brass Valve" 
+                    value={customName} 
+                    onChange={(e) => setCustomName(e.target.value)} 
+                    className="flex-1 px-3 py-2.5 bg-white border border-amber-300 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-brand-maroon" 
+                  />
+                  <select
+                    value={customDept}
+                    onChange={(e) => setCustomDept(e.target.value)}
+                    className="w-full sm:w-32 px-3 py-2.5 bg-white border border-amber-300 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-brand-maroon"
+                  >
+                    <option value="SIYANAT_HEAD">Siyanat</option>
+                    <option value="TANZEEM_HEAD">Stationery</option>
+                    <option value="AVIT_HEAD">AVIT</option>
+                  </select>
                   <div className="flex gap-2">
-                    <input type="number" min="1" value={customQty} onChange={(e) => setCustomQty(parseInt(e.target.value) || 1)} className="w-20 px-3 py-2.5 bg-white border border-amber-300 rounded-xl text-xs font-bold text-center outline-none focus:ring-2 focus:ring-brand-maroon" />
+                    <input 
+                      type="number" 
+                      min="1" 
+                      value={customQty} 
+                      onChange={(e) => setCustomQty(parseInt(e.target.value) || 1)} 
+                      className="w-20 px-3 py-2.5 bg-white border border-amber-300 rounded-xl text-xs font-bold text-center outline-none focus:ring-2 focus:ring-brand-maroon" 
+                    />
                     <button onClick={addCustomItem} className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl shadow-sm transition"><PlusCircle className="w-4 h-4"/></button>
                   </div>
                 </div>
