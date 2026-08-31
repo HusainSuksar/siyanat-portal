@@ -13,7 +13,8 @@ const authProvisionClient = createClient(
     auth: {
       persistSession: false,
       autoRefreshToken: false,
-      detectSessionInUrl: false
+      detectSessionInUrl: false,
+      storageKey: 'sb-provision-auth-token'
     }
   }
 );
@@ -181,20 +182,22 @@ export default function TeamManagement() {
         let successCount = 0;
         let failCount = 0;
         const errMessages: string[] = [];
-
-        // Helper delay to avoid Supabase auth rate limits
         const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
 
         for (let i = 0; i < rows.length; i++) {
           const row = rows[i];
           const cleanEmail = (row.email || '').trim().toLowerCase();
           const cleanName = (row.full_name || '').trim();
-          const cleanRole = (row.role || 'REQUESTER').trim().toUpperCase();
+          let cleanRole = (row.role || 'REQUESTER').trim().toUpperCase();
           const cleanPhone = (row.phone_number || '').trim();
           const cleanDept = (row.department || 'General').trim();
           const cleanIts = (row.its_number || '').trim();
           const zoneFormatted = row.zone ? row.zone.replace(/;/g, ',').trim() : null;
           const tradeFormatted = row.trade ? row.trade.replace(/;/g, ',').trim() : null;
+
+          // Normalize role name mapping
+          if (cleanRole === 'TECHNICIAN') cleanRole = 'EXECUTOR';
+          if (cleanRole === 'STANDARD_USER') cleanRole = 'REQUESTER';
 
           if (!cleanEmail || !cleanName) {
             failCount++;
@@ -203,51 +206,63 @@ export default function TeamManagement() {
             continue;
           }
 
-          try {
-            // Pass complete profile metadata directly to auth.signUp
-            const { data: authData, error: authError } = await authProvisionClient.auth.signUp({
-              email: cleanEmail,
-              password: '786110',
-              options: {
-                data: {
-                  full_name: cleanName,
-                  department: cleanDept,
-                  role: cleanRole,
-                  phone_number: cleanPhone || null,
-                  its_number: cleanIts || null,
-                  zone: cleanRole === 'SUPERVISOR' ? zoneFormatted : null,
-                  trade: cleanRole === 'EXECUTOR' ? tradeFormatted : null
+          let registered = false;
+          let attempts = 0;
+
+          while (!registered && attempts < 2) {
+            attempts++;
+            try {
+              const { data: authData, error: authError } = await authProvisionClient.auth.signUp({
+                email: cleanEmail,
+                password: '786110',
+                options: {
+                  data: {
+                    full_name: cleanName,
+                    department: cleanDept,
+                    role: cleanRole,
+                    phone_number: cleanPhone || null,
+                    its_number: cleanIts || null,
+                    zone: cleanRole === 'SUPERVISOR' ? zoneFormatted : null,
+                    trade: cleanRole === 'EXECUTOR' ? tradeFormatted : null
+                  }
                 }
+              });
+
+              if (authError) {
+                if (authError.message.includes('rate limit')) {
+                  // Rate limit encountered: wait 3 seconds and retry once
+                  await delay(3000);
+                  continue;
+                }
+                throw authError;
               }
-            });
 
-            if (authError) throw authError;
+              if (authData.user) {
+                const payload = {
+                  id: authData.user.id,
+                  full_name: cleanName,
+                  phone_number: cleanPhone || null,
+                  department: cleanDept,
+                  its_number: cleanIts || null,
+                  role: cleanRole,
+                  zone: cleanRole === 'SUPERVISOR' ? zoneFormatted : null,
+                  trade: cleanRole === 'EXECUTOR' ? tradeFormatted : null,
+                };
 
-            if (authData.user) {
-              const payload = {
-                id: authData.user.id,
-                full_name: cleanName,
-                phone_number: cleanPhone || null,
-                department: cleanDept,
-                its_number: cleanIts || null,
-                role: cleanRole,
-                zone: cleanRole === 'SUPERVISOR' ? zoneFormatted : null,
-                trade: cleanRole === 'EXECUTOR' ? tradeFormatted : null,
-              };
-
-              // Ensure explicit profile upsert
-              await supabase.from('profiles').upsert(payload);
-              successCount++;
+                await supabase.from('profiles').upsert(payload);
+                successCount++;
+                registered = true;
+              }
+            } catch (err: any) {
+              failCount++;
+              errMessages.push(`Row ${i + 1} (${cleanEmail}): ${err.message}`);
+              break;
             }
-          } catch (err: any) {
-            failCount++;
-            errMessages.push(`Row ${i + 1} (${cleanEmail}): ${err.message}`);
           }
 
           setBulkProgress({ total: rows.length, current: i + 1, failed: failCount });
-
-          // Throttle requests slightly to respect auth endpoint rate limits
-          await delay(400);
+          // Throttles calls to stay below auth rate limits
+          await delay(600);
         }
 
         setIsBulkProcessing(false);
