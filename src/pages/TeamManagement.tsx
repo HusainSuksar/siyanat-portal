@@ -1,7 +1,22 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
+import { createClient } from '@supabase/supabase-js';
 import { Users, Shield, UserCog, Edit, Trash2, X, Save, UserPlus, Phone, Upload, Download, FileSpreadsheet, AlertCircle, CheckCircle } from 'lucide-react';
 import Papa from 'papaparse';
+
+// 1. Initialize a secondary client explicitly for provisioning users
+// This prevents Supabase from destroying the Admin's active session upon user creation.
+const authProvisionClient = createClient(
+  import.meta.env.VITE_SUPABASE_URL,
+  import.meta.env.VITE_SUPABASE_ANON_KEY,
+  {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false
+    }
+  }
+);
 
 const AVAILABLE_ZONES = [
   "Main Jamea Complex",
@@ -80,7 +95,8 @@ export default function TeamManagement() {
     const cleanPassword = '786110'; 
 
     try {
-      const { data: authData, error: authError } = await supabase.auth.signUp({
+      // FIX: Use the isolated provision client to prevent session hijacking
+      const { data: authData, error: authError } = await authProvisionClient.auth.signUp({
         email: cleanEmail,
         password: cleanPassword,
         options: { data: { full_name: newUser.full_name } }
@@ -103,6 +119,7 @@ export default function TeamManagement() {
           trade: tradeString,
         };
 
+        // Use the main client (Admin Session) to execute the DB insert
         const { error: profileError } = await supabase.from('profiles').upsert(payload);
         if (profileError) throw profileError;
 
@@ -179,8 +196,8 @@ export default function TeamManagement() {
           }
 
           try {
-            // Register Auth Account
-            const { data: authData, error: authError } = await supabase.auth.signUp({
+            // FIX: Use the isolated provision client inside the loop
+            const { data: authData, error: authError } = await authProvisionClient.auth.signUp({
               email: cleanEmail,
               password: '786110',
               options: { data: { full_name: cleanName } }
@@ -203,6 +220,7 @@ export default function TeamManagement() {
                 trade: cleanRole === 'EXECUTOR' ? tradeFormatted : null,
               };
 
+              // Main client processes the upsert using Admin privileges
               const { error: profileError } = await supabase.from('profiles').upsert(payload);
               if (profileError) throw profileError;
               successCount++;
@@ -534,7 +552,7 @@ export default function TeamManagement() {
             <form onSubmit={addModalOpen ? handleAddUser : handleUpdateUser} className="p-5 space-y-4 max-h-[80vh] overflow-y-auto">
               {addModalOpen && (
                 <div className="bg-amber-50 border border-amber-200 p-3 rounded-lg text-[10px] text-amber-800 font-bold mb-4">
-                  Note: The user will be created with the default password <span className="bg-amber-200 px-1 rounded">786110</span>[cite: 11].
+                  Note: The user will be created with the default password <span className="bg-amber-200 px-1 rounded">786110</span>.
                 </div>
               )}
 
