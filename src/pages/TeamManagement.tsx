@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import { Users, Shield, UserCog, Edit, Trash2, X, Save, UserPlus, Phone } from 'lucide-react';
+import { Users, Shield, UserCog, Edit, Trash2, X, Save, UserPlus, Phone, Upload, Download, FileSpreadsheet, AlertCircle, CheckCircle } from 'lucide-react';
+import Papa from 'papaparse';
 
 const AVAILABLE_ZONES = [
   "Main Jamea Complex",
@@ -19,7 +20,7 @@ export default function TeamManagement() {
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState<string | null>(null);
   
-  // Modal States
+  // Single Add / Edit Modal States
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<any>(null);
   
@@ -34,6 +35,13 @@ export default function TeamManagement() {
     zone: '', 
     trade: ''
   });
+
+  // Bulk Upload Modal States
+  const [bulkModalOpen, setBulkModalOpen] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState<{ total: number; current: number; failed: number }>({ total: 0, current: 0, failed: 0 });
+  const [bulkErrors, setBulkErrors] = useState<string[]>([]);
+  const [isBulkProcessing, setIsBulkProcessing] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Multi-Select States
   const [selectedZones, setSelectedZones] = useState<string[]>([]);
@@ -55,7 +63,6 @@ export default function TeamManagement() {
     setLoading(false);
   };
 
-  // --- MULTI-SELECT HELPERS ---
   const toggleZone = (zone: string) => {
     setSelectedZones(prev => prev.includes(zone) ? prev.filter(z => z !== zone) : [...prev, zone]);
   };
@@ -64,7 +71,7 @@ export default function TeamManagement() {
     setSelectedTrades(prev => prev.includes(trade) ? prev.filter(t => t !== trade) : [...prev, trade]);
   };
 
-  // --- ADD NEW MEMBER LOGIC ---
+  // --- SINGLE USER REGISTRATION ---
   const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
     setProcessingId('new-user');
@@ -119,10 +126,112 @@ export default function TeamManagement() {
     }
   };
 
-  // --- EDIT LOGIC ---
+  // --- BULK CSV DOWNLOAD & UPLOAD ---
+  const downloadSampleCSV = () => {
+    const csvContent = "data:text/csv;charset=utf-8," + 
+      "full_name,email,phone_number,department,its_number,role,zone,trade\n" +
+      "Murtaza Ali,murtaza@jamea.edu,+919876543210,IT Support,12345678,REQUESTER,,\n" +
+      "Husain Electric,husain.elec@jamea.edu,+919876543211,Maintenance,87654321,EXECUTOR,,Electrical; Plumbing\n" +
+      "Taher Supervisor,taher.sup@jamea.edu,+919876543212,Facilities,11223344,SUPERVISOR,Main Jamea Complex; Mawaid,";
+
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", "bulk_users_template.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: async (results) => {
+        const rows: any[] = results.data;
+        if (rows.length === 0) {
+          alert("The uploaded CSV file is empty.");
+          return;
+        }
+
+        setIsBulkProcessing(true);
+        setBulkErrors([]);
+        setBulkProgress({ total: rows.length, current: 0, failed: 0 });
+
+        let successCount = 0;
+        let failCount = 0;
+        const errMessages: string[] = [];
+
+        for (let i = 0; i < rows.length; i++) {
+          const row = rows[i];
+          const cleanEmail = (row.email || '').trim().toLowerCase();
+          const cleanName = (row.full_name || '').trim();
+          const cleanRole = (row.role || 'REQUESTER').trim().toUpperCase();
+
+          if (!cleanEmail || !cleanName) {
+            failCount++;
+            errMessages.push(`Row ${i + 1}: Missing name or email.`);
+            setBulkProgress(prev => ({ ...prev, current: i + 1, failed: failCount }));
+            continue;
+          }
+
+          try {
+            // Register Auth Account
+            const { data: authData, error: authError } = await supabase.auth.signUp({
+              email: cleanEmail,
+              password: '786110',
+              options: { data: { full_name: cleanName } }
+            });
+
+            if (authError) throw authError;
+
+            if (authData.user) {
+              const zoneFormatted = row.zone ? row.zone.replace(/;/g, ',').trim() : null;
+              const tradeFormatted = row.trade ? row.trade.replace(/;/g, ',').trim() : null;
+
+              const payload = {
+                id: authData.user.id,
+                full_name: cleanName,
+                phone_number: row.phone_number ? row.phone_number.trim() : null,
+                department: row.department ? row.department.trim() : 'General',
+                its_number: row.its_number ? row.its_number.trim() : null,
+                role: cleanRole,
+                zone: cleanRole === 'SUPERVISOR' ? zoneFormatted : null,
+                trade: cleanRole === 'EXECUTOR' ? tradeFormatted : null,
+              };
+
+              const { error: profileError } = await supabase.from('profiles').upsert(payload);
+              if (profileError) throw profileError;
+              successCount++;
+            }
+          } catch (err: any) {
+            failCount++;
+            errMessages.push(`Row ${i + 1} (${cleanEmail}): ${err.message}`);
+          }
+
+          setBulkProgress({ total: rows.length, current: i + 1, failed: failCount });
+        }
+
+        setIsBulkProcessing(false);
+        setBulkErrors(errMessages);
+        fetchTeam();
+
+        const { data: adminData } = await supabase.auth.getUser();
+        await supabase.from('system_logs').insert({
+          action_type: 'BULK_USERS_UPLOADED',
+          description: `Admin processed bulk upload: ${successCount} created, ${failCount} failed.`,
+          user_email: adminData?.user?.email || 'System Admin'
+        });
+      }
+    });
+  };
+
+  // --- EDIT & DELETE LOGIC ---
   const openEditModal = (user: any) => {
     setEditingUser({ ...user });
-    
     if (user.role === 'SUPERVISOR' && user.zone) {
       setSelectedZones(user.zone.split(',').map((s: string) => s.trim()));
     } else {
@@ -134,7 +243,6 @@ export default function TeamManagement() {
     } else {
       setSelectedTrades([]);
     }
-
     setEditModalOpen(true);
   };
 
@@ -165,7 +273,6 @@ export default function TeamManagement() {
         description: `Admin updated profile for ${editingUser.full_name}. Role set to ${editingUser.role}.`,
         user_email: authData.user?.email || 'System Admin'
       });
-      
       alert('User profile updated successfully!');
       setEditModalOpen(false);
       fetchTeam();
@@ -177,7 +284,6 @@ export default function TeamManagement() {
 
   const handleDeleteUser = async (id: string, name: string) => {
     if (!confirm(`CRITICAL WARNING: Are you sure you want to completely delete ${name} from the portal? This cannot be undone.`)) return;
-    
     setProcessingId(id);
     const { error } = await supabase.from('profiles').delete().eq('id', id);
 
@@ -188,7 +294,6 @@ export default function TeamManagement() {
         description: `Admin deleted the profile of ${name}.`,
         user_email: authData.user?.email || 'System Admin'
       });
-      
       alert('User deleted successfully.');
       fetchTeam();
     } else {
@@ -205,21 +310,31 @@ export default function TeamManagement() {
             <Users className="w-6 h-6" />
             Team & Access Management
           </h2>
-          <p className="text-xs text-slate-500 mt-1">Manage personnel, WhatsApp contact numbers, and access levels.</p>
+          <p className="text-xs text-slate-500 mt-1">Manage personnel, roles, and automated batch onboarding.</p>
         </div>
-        <button 
-          onClick={() => {
-            setNewUser({ full_name: '', email: '', phone_number: '', department: '', its_number: '', role: 'REQUESTER', zone: '', trade: '' });
-            setSelectedZones([]); setSelectedTrades([]);
-            setAddModalOpen(true);
-          }}
-          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs uppercase tracking-wider rounded-lg shadow-sm transition flex items-center space-x-2"
-        >
-          <UserPlus className="w-4 h-4" />
-          <span>Add New Member</span>
-        </button>
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <button 
+            onClick={() => { setBulkErrors([]); setBulkProgress({ total: 0, current: 0, failed: 0 }); setBulkModalOpen(true); }}
+            className="flex-1 sm:flex-initial px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs uppercase tracking-wider rounded-lg shadow-sm transition flex items-center justify-center space-x-2"
+          >
+            <Upload className="w-4 h-4" />
+            <span>Bulk Upload</span>
+          </button>
+          <button 
+            onClick={() => {
+              setNewUser({ full_name: '', email: '', phone_number: '', department: '', its_number: '', role: 'REQUESTER', zone: '', trade: '' });
+              setSelectedZones([]); setSelectedTrades([]);
+              setAddModalOpen(true);
+            }}
+            className="flex-1 sm:flex-initial px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs uppercase tracking-wider rounded-lg shadow-sm transition flex items-center justify-center space-x-2"
+          >
+            <UserPlus className="w-4 h-4" />
+            <span>Add Member</span>
+          </button>
+        </div>
       </div>
 
+      {/* --- Active Personnel Roster Table --- */}
       <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 space-y-4">
         <div className="flex items-center space-x-2 border-b pb-3">
           <UserCog className="w-4 h-4 text-brand-maroon" />
@@ -317,6 +432,96 @@ export default function TeamManagement() {
         </div>
       </div>
 
+      {/* --- BULK UPLOAD MODAL --- */}
+      {bulkModalOpen && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex justify-center items-center p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden animate-in zoom-in-95">
+            <div className="bg-slate-900 p-5 flex justify-between items-center text-white">
+              <div className="flex items-center gap-2.5">
+                <FileSpreadsheet className="w-5 h-5 text-brand-gold" />
+                <h3 className="font-extrabold text-sm uppercase tracking-wide">Bulk Upload Personnel</h3>
+              </div>
+              {!isBulkProcessing && (
+                <button onClick={() => setBulkModalOpen(false)}>
+                  <X className="w-5 h-5 hover:text-red-300" />
+                </button>
+              )}
+            </div>
+
+            <div className="p-6 space-y-5">
+              <div className="bg-slate-50 border border-slate-200 p-4 rounded-2xl flex items-center justify-between">
+                <div>
+                  <h4 className="text-xs font-black text-slate-800 uppercase">Download Sample CSV</h4>
+                  <p className="text-[10px] text-slate-500 font-semibold mt-0.5">Use this template format for your spreadsheet.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={downloadSampleCSV}
+                  className="px-3 py-2 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 font-bold text-xs rounded-xl shadow-sm transition flex items-center gap-1.5"
+                >
+                  <Download className="w-3.5 h-3.5 text-brand-maroon" />
+                  <span>Template</span>
+                </button>
+              </div>
+
+              {/* Upload Dropzone */}
+              <div 
+                onClick={() => !isBulkProcessing && fileInputRef.current?.click()}
+                className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition ${
+                  isBulkProcessing ? 'opacity-50 cursor-not-allowed border-slate-200 bg-slate-50' : 'border-slate-300 hover:border-brand-maroon hover:bg-brand-maroon/5'
+                }`}
+              >
+                <Upload className="w-8 h-8 text-brand-maroon mx-auto mb-2" />
+                <p className="text-xs font-black text-slate-700 uppercase">Click to Select CSV File</p>
+                <p className="text-[10px] text-slate-400 font-semibold mt-1">Default password for all users will be 786110</p>
+                <input 
+                  ref={fileInputRef}
+                  type="file" 
+                  accept=".csv" 
+                  onChange={handleFileUpload} 
+                  className="hidden" 
+                  disabled={isBulkProcessing}
+                />
+              </div>
+
+              {/* Progress Bar */}
+              {bulkProgress.total > 0 && (
+                <div className="space-y-2">
+                  <div className="flex justify-between text-xs font-bold text-slate-600">
+                    <span>Processing: {bulkProgress.current} / {bulkProgress.total}</span>
+                    <span>{Math.round((bulkProgress.current / bulkProgress.total) * 100)}%</span>
+                  </div>
+                  <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-emerald-500 transition-all duration-300"
+                      style={{ width: `${(bulkProgress.current / bulkProgress.total) * 100}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Error Log Container */}
+              {bulkErrors.length > 0 && (
+                <div className="bg-red-50 border border-red-200 p-3.5 rounded-2xl max-h-32 overflow-y-auto space-y-1 text-[11px] text-red-700">
+                  <div className="font-black uppercase flex items-center gap-1 mb-1">
+                    <AlertCircle className="w-3.5 h-3.5" /> Upload Failures ({bulkErrors.length})
+                  </div>
+                  {bulkErrors.map((err, i) => (
+                    <div key={i} className="font-semibold">• {err}</div>
+                  ))}
+                </div>
+              )}
+
+              {bulkProgress.total > 0 && bulkProgress.current === bulkProgress.total && bulkProgress.failed === 0 && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 font-bold text-xs flex items-center gap-2">
+                  <CheckCircle className="w-4 h-4 text-emerald-600" /> All {bulkProgress.total} users registered and configured successfully!
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* --- ADD / EDIT USER MODAL --- */}
       {(addModalOpen || editModalOpen) && (
         <div className="fixed inset-0 bg-black/50 z-50 flex justify-center items-center p-4">
@@ -329,7 +534,7 @@ export default function TeamManagement() {
             <form onSubmit={addModalOpen ? handleAddUser : handleUpdateUser} className="p-5 space-y-4 max-h-[80vh] overflow-y-auto">
               {addModalOpen && (
                 <div className="bg-amber-50 border border-amber-200 p-3 rounded-lg text-[10px] text-amber-800 font-bold mb-4">
-                  Note: The user will be created with the default password <span className="bg-amber-200 px-1 rounded">786110</span>.
+                  Note: The user will be created with the default password <span className="bg-amber-200 px-1 rounded">786110</span>[cite: 11].
                 </div>
               )}
 
