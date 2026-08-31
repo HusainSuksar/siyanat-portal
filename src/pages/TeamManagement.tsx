@@ -182,11 +182,19 @@ export default function TeamManagement() {
         let failCount = 0;
         const errMessages: string[] = [];
 
+        // Helper delay to avoid Supabase auth rate limits
+        const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
+
         for (let i = 0; i < rows.length; i++) {
           const row = rows[i];
           const cleanEmail = (row.email || '').trim().toLowerCase();
           const cleanName = (row.full_name || '').trim();
           const cleanRole = (row.role || 'REQUESTER').trim().toUpperCase();
+          const cleanPhone = (row.phone_number || '').trim();
+          const cleanDept = (row.department || 'General').trim();
+          const cleanIts = (row.its_number || '').trim();
+          const zoneFormatted = row.zone ? row.zone.replace(/;/g, ',').trim() : null;
+          const tradeFormatted = row.trade ? row.trade.replace(/;/g, ',').trim() : null;
 
           if (!cleanEmail || !cleanName) {
             failCount++;
@@ -196,33 +204,39 @@ export default function TeamManagement() {
           }
 
           try {
-            // FIX: Use the isolated provision client inside the loop
+            // Pass complete profile metadata directly to auth.signUp
             const { data: authData, error: authError } = await authProvisionClient.auth.signUp({
               email: cleanEmail,
               password: '786110',
-              options: { data: { full_name: cleanName } }
+              options: {
+                data: {
+                  full_name: cleanName,
+                  department: cleanDept,
+                  role: cleanRole,
+                  phone_number: cleanPhone || null,
+                  its_number: cleanIts || null,
+                  zone: cleanRole === 'SUPERVISOR' ? zoneFormatted : null,
+                  trade: cleanRole === 'EXECUTOR' ? tradeFormatted : null
+                }
+              }
             });
 
             if (authError) throw authError;
 
             if (authData.user) {
-              const zoneFormatted = row.zone ? row.zone.replace(/;/g, ',').trim() : null;
-              const tradeFormatted = row.trade ? row.trade.replace(/;/g, ',').trim() : null;
-
               const payload = {
                 id: authData.user.id,
                 full_name: cleanName,
-                phone_number: row.phone_number ? row.phone_number.trim() : null,
-                department: row.department ? row.department.trim() : 'General',
-                its_number: row.its_number ? row.its_number.trim() : null,
+                phone_number: cleanPhone || null,
+                department: cleanDept,
+                its_number: cleanIts || null,
                 role: cleanRole,
                 zone: cleanRole === 'SUPERVISOR' ? zoneFormatted : null,
                 trade: cleanRole === 'EXECUTOR' ? tradeFormatted : null,
               };
 
-              // Main client processes the upsert using Admin privileges
-              const { error: profileError } = await supabase.from('profiles').upsert(payload);
-              if (profileError) throw profileError;
+              // Ensure explicit profile upsert
+              await supabase.from('profiles').upsert(payload);
               successCount++;
             }
           } catch (err: any) {
@@ -231,6 +245,9 @@ export default function TeamManagement() {
           }
 
           setBulkProgress({ total: rows.length, current: i + 1, failed: failCount });
+
+          // Throttle requests slightly to respect auth endpoint rate limits
+          await delay(400);
         }
 
         setIsBulkProcessing(false);
