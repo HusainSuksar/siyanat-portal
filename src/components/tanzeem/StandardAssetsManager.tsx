@@ -8,6 +8,7 @@ interface StandardAssetItem {
   name?: string;
   item_name?: string;
   category: string;
+  department?: string;
   is_returnable: boolean;
   is_active: boolean;
 }
@@ -37,7 +38,7 @@ export default function StandardAssetsManager() {
     if (error) {
       showToast(error.message, 'error');
     } else if (data) {
-      setAssets(data);
+      setAssets(data as StandardAssetItem[]);
     }
     setLoading(false);
   };
@@ -58,7 +59,7 @@ export default function StandardAssetsManager() {
   const openEditModal = (asset: StandardAssetItem) => {
     setEditingId(asset.id);
     setItemName(asset.name || asset.item_name || '');
-    setCategory((asset.category as 'AVIT' | 'SIYANAT') || 'AVIT');
+    setCategory((asset.category as 'AVIT' | 'SIYANAT') || (asset.department?.includes('SIYANAT') ? 'SIYANAT' : 'AVIT'));
     setIsReturnable(asset.is_returnable ?? true);
     setIsActive(asset.is_active ?? true);
     setIsModalOpen(true);
@@ -70,10 +71,14 @@ export default function StandardAssetsManager() {
 
     setSaving(true);
     try {
-      const payload: any = {
-        name: itemName.trim(),
-        item_name: itemName.trim(),
+      const cleanName = itemName.trim();
+      const mappedDept = category === 'SIYANAT' ? 'SIYANAT_HEAD' : 'AVIT_HEAD';
+
+      const payload = {
+        name: cleanName,
+        item_name: cleanName,
         category,
+        department: mappedDept,
         is_returnable: isReturnable,
         is_active: isActive
       };
@@ -96,7 +101,7 @@ export default function StandardAssetsManager() {
       setIsModalOpen(false);
       fetchAssets();
     } catch (err: any) {
-      showToast(err.message, 'error');
+      showToast(err.message || 'Error saving asset', 'error');
     } finally {
       setSaving(false);
     }
@@ -137,7 +142,8 @@ export default function StandardAssetsManager() {
 
   const filteredAssets = assets.filter(a => {
     if (activeTab === 'ALL') return true;
-    return (a.category || 'AVIT').toUpperCase() === activeTab;
+    const itemCategory = (a.category || (a.department?.includes('SIYANAT') ? 'SIYANAT' : 'AVIT')).toUpperCase();
+    return itemCategory === activeTab;
   });
 
   return (
@@ -195,6 +201,7 @@ export default function StandardAssetsManager() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredAssets.map(asset => {
             const displayName = asset.name || asset.item_name || 'Unnamed Item';
+            const displayCategory = asset.category || (asset.department?.includes('SIYANAT') ? 'SIYANAT' : 'AVIT');
             return (
               <div
                 key={asset.id}
@@ -205,9 +212,9 @@ export default function StandardAssetsManager() {
                 <div>
                   <div className="flex justify-between items-start mb-2">
                     <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${
-                      asset.category === 'SIYANAT' ? 'bg-amber-100 text-amber-800' : 'bg-indigo-100 text-indigo-800'
+                      displayCategory === 'SIYANAT' ? 'bg-amber-100 text-amber-800' : 'bg-indigo-100 text-indigo-800'
                     }`}>
-                      {asset.category || 'AVIT'}
+                      {displayCategory}
                     </span>
                     <button
                       onClick={() => toggleActiveStatus(asset)}
