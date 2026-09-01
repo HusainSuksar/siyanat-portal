@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
-import { CheckSquare, RefreshCw, MessageSquare, Package, Wrench, Calendar, Car, Clock, XCircle, AlertTriangle, X, CheckCircle } from "lucide-react";
+import { 
+  CheckSquare, RefreshCw, MessageSquare, Package, Wrench, Calendar, 
+  Car, Clock, XCircle, AlertTriangle, X, CheckCircle, Ban 
+} from "lucide-react";
 import BatchDetailsModal from "../components/BatchDetailsModal";
 import VisualPipelineStepper from "../components/VisualPipelineStepper";
 import { useNavigate } from "react-router-dom";
@@ -42,7 +45,8 @@ export default function StandardUserDashboard() {
       setUserRole(role);
       const isGodMode = role === "SUPER_ADMIN" || role === "ADMIN";
 
-      let matQuery = supabase.from("work_orders").select("*, logs:work_order_logs(author_id, created_at, message), items:work_order_items(custom_item_name, requested_qty, inventory:inventory_items(name))").order("created_at", { ascending: false }).limit(30);
+      // THE FIX: Added `status` to work_order_items select to catch rejected items
+      let matQuery = supabase.from("work_orders").select("*, logs:work_order_logs(author_id, created_at, message), items:work_order_items(id, status, custom_item_name, requested_qty, inventory:inventory_items(name))").order("created_at", { ascending: false }).limit(30);
       let compQuery = supabase.from("complaints").select("*").order("created_at", { ascending: false }).limit(30);
       let evQuery = supabase.from("events").select("*, requirements:event_requirements(*)").order("event_date", { ascending: true }).limit(30);
       let fleetQuery = supabase.from("vehicle_requests").select("*").order("request_date", { ascending: true }).limit(30);
@@ -204,29 +208,73 @@ export default function StandardUserDashboard() {
         ) : (
           <div className="grid grid-cols-1 gap-4">
             
-            {activeTab === 'materials' && (materials.length === 0 ? <div className="p-12 text-center bg-white rounded-3xl border border-slate-200 text-slate-400 italic font-bold">No material requisitions found.</div> : materials.map((req) => { /* Render Materials */ 
+            {/* 1. MATERIALS TAB */}
+            {activeTab === 'materials' && (materials.length === 0 ? <div className="p-12 text-center bg-white rounded-3xl border border-slate-200 text-slate-400 italic font-bold">No material requisitions found.</div> : materials.map((req) => { 
               const logs = req.logs || [];
               const hasUnread = logs.length > 0 && logs[logs.length - 1].author_id !== currentUser?.id;
-              const itemsSummary = (req.items || []).map((i: any) => `${i.inventory?.name || i.custom_item_name} (x${i.requested_qty})`).join(', ');
+              
+              // Segregate Approved/Pending Items vs Rejected Items
+              const allItems = req.items || [];
+              const providedItems = allItems.filter((i: any) => i.status !== 'Not Provided' && i.status !== 'Rejected');
+              const rejectedItems = allItems.filter((i: any) => i.status === 'Not Provided' || i.status === 'Rejected');
+              
               const sla = getDeliverySlaMessage(req);
+
               return (
                 <div key={req.id} className="bg-white rounded-3xl p-5 md:p-6 shadow-sm border border-slate-200 flex flex-col justify-between gap-4 transition hover:shadow-md">
                    <div>
                      <div className="flex justify-between items-start">
-                       <div><span className="font-black text-brand-maroon text-base">{req.batch_id}</span><p className="text-xs font-bold text-slate-700 mt-0.5">{req.location}</p></div>
+                       <div>
+                         <span className="font-black text-brand-maroon text-base">{req.batch_id}</span>
+                         <p className="text-xs font-bold text-slate-700 mt-0.5">{req.location}</p>
+                       </div>
                        <div className="flex items-center gap-2">
                          {req.pipeline_state === "ACTION_REQUIRED" && <button onClick={() => confirmReceipt(req)} disabled={processingId === req.id} className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center gap-1.5 shadow-sm transition disabled:opacity-50"><CheckSquare className="w-3.5 h-3.5" /> Confirm Receipt</button>}
                          <button onClick={() => openChat(req)} className="relative px-3 py-2 bg-slate-800 hover:bg-black text-white font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center gap-1.5 shadow-sm transition">{hasUnread && <span className="absolute -top-1 -right-1 flex h-3.5 w-3.5"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span><span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-red-500 border-2 border-white"></span></span>}<MessageSquare className="w-3.5 h-3.5" /> Thread</button>
                        </div>
                      </div>
+
                      {sla && <div className={`mt-3 p-3 rounded-2xl border flex items-start gap-2.5 ${sla.badgeClass}`}><Clock className="w-4 h-4 shrink-0 mt-0.5" /><div className="text-xs font-bold leading-relaxed"><span className="font-black uppercase tracking-wider text-[10px] block mb-0.5">Estimated Fulfillment:</span>{sla.text}</div></div>}
-                     {itemsSummary && <div className="mt-3 bg-slate-50 p-2.5 rounded-xl border border-slate-100 text-[11px] font-bold text-slate-600"><span className="text-[9px] font-black uppercase tracking-widest text-slate-400 block mb-0.5">Items:</span>{itemsSummary}</div>}
+                     
+                     {/* Provided Items */}
+                     {providedItems.length > 0 && (
+                       <div className="mt-3 bg-slate-50 p-2.5 rounded-xl border border-slate-100 text-[11px] font-bold text-slate-600">
+                         <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 block mb-1">Items in Requisition:</span>
+                         <div className="flex flex-wrap gap-1.5">
+                           {providedItems.map((i: any, idx: number) => (
+                             <span key={idx} className="bg-white px-2 py-1 rounded-lg border border-slate-200 text-slate-700 text-[11px]">
+                               {i.inventory?.name || i.custom_item_name} <span className="text-brand-maroon font-black">(x{i.requested_qty})</span>
+                             </span>
+                           ))}
+                         </div>
+                       </div>
+                     )}
+
+                     {/* REJECTED / NOT PROVIDED ITEMS SECTION */}
+                     {rejectedItems.length > 0 && (
+                       <div className="mt-2.5 bg-red-50 p-3 rounded-xl border border-red-200">
+                         <div className="flex items-center gap-1.5 text-red-700 mb-1.5">
+                           <Ban className="w-3.5 h-3.5 text-red-600 shrink-0" />
+                           <span className="text-[10px] font-black uppercase tracking-wider">Items Not Provided / Rejected:</span>
+                         </div>
+                         <div className="flex flex-wrap gap-1.5">
+                           {rejectedItems.map((item: any, idx: number) => (
+                             <span key={idx} className="bg-white px-2.5 py-1 rounded-lg border border-red-200 text-red-600 text-[11px] font-bold flex items-center gap-1.5 shadow-sm">
+                               <span className="line-through">{item.inventory?.name || item.custom_item_name} (x{item.requested_qty})</span>
+                               <span className="text-[9px] bg-red-100 text-red-700 px-1 py-0.5 rounded font-black uppercase tracking-tight">Rejected</span>
+                             </span>
+                           ))}
+                         </div>
+                       </div>
+                     )}
+
                    </div>
                    <VisualPipelineStepper type="REQUISITION" pipelineState={req.pipeline_state} />
                 </div>
               );
             }))}
 
+            {/* 2. MAINTENANCE TAB */}
             {activeTab === 'maintenance' && (complaints.length === 0 ? <div className="p-12 text-center bg-white rounded-3xl border border-slate-200 text-slate-400 italic font-bold">No maintenance complaints registered.</div> : complaints.map((c) => (
               <div key={c.id} className="bg-white rounded-3xl p-5 md:p-6 shadow-sm border border-slate-200 flex flex-col justify-between gap-4 transition hover:shadow-md">
                  <div>
@@ -240,7 +288,7 @@ export default function StandardUserDashboard() {
               </div>
             )))}
 
-            {/* UPGRADED EVENTS CARDS */}
+            {/* 3. EVENTS TAB */}
             {activeTab === 'events' && (events.length === 0 ? <div className="p-12 text-center bg-white rounded-3xl border border-slate-200 text-slate-400 italic font-bold">No event requests booked.</div> : events.map((e) => {
               const now = new Date();
               const [year, month, day] = e.event_date.split('-').map(Number);
@@ -333,6 +381,7 @@ export default function StandardUserDashboard() {
               );
             }))}
 
+            {/* 4. FLEET TAB */}
             {activeTab === 'fleet' && !isStandardUser && (fleet.length === 0 ? <div className="p-12 text-center bg-white rounded-3xl border border-slate-200 text-slate-400 italic font-bold">No fleet requests booked.</div> : fleet.map((f) => (
               <div key={f.id} className="bg-white rounded-3xl p-5 md:p-6 shadow-sm border border-slate-200 flex flex-col justify-between gap-4 transition hover:shadow-md">
                  <div className="flex justify-between items-start">
