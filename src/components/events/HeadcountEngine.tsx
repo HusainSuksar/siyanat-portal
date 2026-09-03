@@ -3,9 +3,10 @@ import { Users } from 'lucide-react';
 import type { EventFormData } from '../../types/eventBooking';
 
 const PRESET_CLASSES: Record<string, { male: number, female: number }> = {
-  "1AM": { male: 25, female: 0 }, "1BM": { male: 25, female: 0 }, "1CM": { male: 23, female: 0 },
-  "1AF": { male: 0, female: 20 }, "1BF": { male: 0, female: 19 }, "1CF": { male: 0, female: 19 },
-  "Faculty / Staff": { male: 0, female: 0 }, "Others (Custom)": { male: 0, female: 0 }
+  "1AM": { male: 25, female: 0 }, "1BM": { male: 25, female: 0 }, "1CM": { male: 23, female: 0 }, "1DM": { male: 24, female: 0 }, "6AM": { male: 26, female: 0 },
+  "1AF": { male: 0, female: 20 }, "1BF": { male: 0, female: 19 }, "1CF": { male: 0, female: 19 }, "1DF": { male: 0, female: 19 }, "6AF": { male: 0, female: 23 },
+  "Faculty / Staff": { male: 0, female: 0 },
+  "Others (Custom)": { male: 0, female: 0 }
 };
 
 export default function HeadcountEngine({
