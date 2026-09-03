@@ -6,6 +6,7 @@ import {
    AlertTriangle, CheckCircle, XCircle, Loader2, Sparkles
 } from 'lucide-react';
 import { useToast } from '../../hooks/useToast';
+import { useSystemConfig } from '../../hooks/useSystemConfig'; // <-- ADD THIS IMPORT
 
 interface RestockRow {
   id: string;
@@ -25,21 +26,12 @@ interface Props {
   onRefresh: () => void;
 }
 
-const SIYANAT_CATEGORIES = [
-  "Electrical & Lighting", "Plumbing & Sanitary", "HVAC & AC Maintenance", 
-  "Civil & Masonry", "Carpentry & Hardware", "Painting & Finishes", 
-  "Safety & PPE Equipment", "Cleaning & Janitorial Supplies", 
-  "Tools & Machinery", "General / Miscellaneous"
-];
 
-const TANZEEM_CATEGORIES = [
-  "Office & Administrative Supplies", 
-  "IT & Networking Hardware"
-];
 
 export default function BulkRestockTab({ catalog, locations, isTanzeemOnly, onRefresh }: Props) {
   const { user } = useAuth();
   const { showToast, toasts, removeToast } = useToast();
+  const { categories: dynamicCategories } = useSystemConfig();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [rows, setRows] = useState<RestockRow[]>([]);
@@ -60,9 +52,10 @@ export default function BulkRestockTab({ catalog, locations, isTanzeemOnly, onRe
     existingUpdated: number;
   } | null>(null);
 
-  const availableCategories = isTanzeemOnly 
-    ? TANZEEM_CATEGORIES 
-    : [...SIYANAT_CATEGORIES, ...TANZEEM_CATEGORIES];
+  const availableCategories = dynamicCategories
+    .filter(c => isTanzeemOnly ? c.department === 'TANZEEM_HEAD' : true)
+    .map(c => c.name)
+    .filter((v, i, a) => a.indexOf(v) === i); // Unique categories
 
   const defaultLocationName = locations.length > 0 ? locations[0].name : 'Main Store';
 

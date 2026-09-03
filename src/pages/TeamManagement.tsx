@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { createClient } from '@supabase/supabase-js';
 import { Users, Shield, UserCog, Edit, Trash2, X, Save, UserPlus, Phone, Upload, Download, FileSpreadsheet, AlertCircle, CheckCircle } from 'lucide-react';
 import Papa from 'papaparse';
+import { useSystemConfig } from '../hooks/useSystemConfig';
 
 // 1. Initialize a secondary client explicitly for provisioning users
 // This prevents Supabase from destroying the Admin's active session upon user creation.
@@ -19,19 +20,9 @@ const authProvisionClient = createClient(
   }
 );
 
-const AVAILABLE_ZONES = [
-  "Main Jamea Complex",
-  "Rabwat (Girls Hostel)",
-  "Masakin (Boys Hostel)",
-  "Mawaid",
-  "Khaimat al-Riyadat"
-];
-
-const AVAILABLE_TRADES = [
-  "Plumbing", "Electrical", "Carpentry", "Civil", "HVAC", "Housekeeping", "Cleaning", "General"
-];
 
 export default function TeamManagement() {
+  const { trades: AVAILABLE_TRADES, zones: AVAILABLE_ZONES, defaultPassword } = useSystemConfig();
   const [team, setTeam] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState<string | null>(null);
@@ -93,7 +84,7 @@ export default function TeamManagement() {
     setProcessingId('new-user');
 
     const cleanEmail = newUser.email.trim().toLowerCase();
-    const cleanPassword = '786110'; 
+    const cleanPassword = defaultPassword || '786110';
 
     try {
       // FIX: Use the isolated provision client to prevent session hijacking
@@ -214,7 +205,7 @@ export default function TeamManagement() {
             try {
               const { data: authData, error: authError } = await authProvisionClient.auth.signUp({
                 email: cleanEmail,
-                password: '786110',
+                password: defaultPassword || '786110',
                 options: {
                   data: {
                     full_name: cleanName,
@@ -584,7 +575,7 @@ export default function TeamManagement() {
             <form onSubmit={addModalOpen ? handleAddUser : handleUpdateUser} className="p-5 space-y-4 max-h-[80vh] overflow-y-auto">
               {addModalOpen && (
                 <div className="bg-amber-50 border border-amber-200 p-3 rounded-lg text-[10px] text-amber-800 font-bold mb-4">
-                  Note: The user will be created with the default password <span className="bg-amber-200 px-1 rounded">786110</span>.
+                  Note: The user will be created with the default password <span className="bg-amber-200 px-1 rounded">{defaultPassword}</span>.
                 </div>
               )}
 

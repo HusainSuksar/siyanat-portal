@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { Car, Send, MapPin, Clock, Users, ShieldAlert, Route as RouteIcon, Map } from 'lucide-react';
 import { ZONE_COORDINATES, LOCAL_LANDMARKS } from '../constants/locations';
+import { useSystemConfig } from '../hooks/useSystemConfig';
 
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
 
@@ -25,12 +26,7 @@ const formatMinutesToHours = (totalMins: number) => {
 };
 
 // Preset Class Headcount Configuration
-const PRESET_CLASSES: Record<string, { male: number, female: number }> = {
-  "1AM": { male: 25, female: 0 }, "1BM": { male: 25, female: 0 }, "1CM": { male: 23, female: 0 }, "1DM": { male: 24, female: 0 }, "6AM": { male: 26, female: 0 },
-  "1AF": { male: 0, female: 20 }, "1BF": { male: 0, female: 19 }, "1CF": { male: 0, female: 19 }, "1DF": { male: 0, female: 19 }, "6AF": { male: 0, female: 23 },
-  "Faculty / Staff": { male: 0, female: 0 },
-  "Others (Custom)": { male: 0, female: 0 }
-};
+
 
 const getMinBookingDate = () => {
   const now = new Date();
@@ -45,6 +41,7 @@ const getMinBookingDate = () => {
 
 export default function BookVehicle() {
   const { user, role } = useAuth();
+  const { classes: PRESET_CLASSES } = useSystemConfig();
   const [loading, setLoading] = useState(false);
   
   // Base Form State
@@ -87,14 +84,15 @@ export default function BookVehicle() {
   };
 
   const toggleClass = (className: string) => {
+    const classData = PRESET_CLASSES[className] || { male: 0, female: 0 };
     if (selectedClasses.includes(className)) {
       setSelectedClasses(prev => prev.filter(c => c !== className));
-      setMaleCount(prev => Math.max(0, prev - (PRESET_CLASSES[className]?.male || 0)));
-      setFemaleCount(prev => Math.max(0, prev - (PRESET_CLASSES[className]?.female || 0)));
+      setMaleCount(prev => Math.max(0, prev - classData.male));
+      setFemaleCount(prev => Math.max(0, prev - classData.female));
     } else {
       setSelectedClasses(prev => [...prev, className]);
-      setMaleCount(prev => prev + (PRESET_CLASSES[className]?.male || 0));
-      setFemaleCount(prev => prev + (PRESET_CLASSES[className]?.female || 0));
+      setMaleCount(prev => prev + classData.male);
+      setFemaleCount(prev => prev + classData.female);
     }
   };
 

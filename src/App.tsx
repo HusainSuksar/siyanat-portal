@@ -2,7 +2,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate, Link, useLocation } f
 import { useState, useEffect } from "react";
 import { supabase } from "./lib/supabase";
 import { useAuth } from "./contexts/AuthContext"; 
-import { PackageCheck, LogOut, LayoutDashboard, PlusCircle, Truck, Warehouse, Bell, X, Server, PieChart, ShieldAlert, Users, Menu, Wrench, ClipboardList, Calendar, Car, CalendarCheck, ShoppingCart, Package, UserCircle, Eye, Clock } from "lucide-react";
+import { PackageCheck, LogOut, LayoutDashboard, PlusCircle, Truck, Warehouse, Bell, X, Server, PieChart, ShieldAlert, Users, Menu, Wrench, ClipboardList, Calendar, Car, CalendarCheck, ShoppingCart, Package, UserCircle, Eye, Clock, Settings } from "lucide-react";
 import { useWorkloadBadges } from "./hooks/useWorkloadBadges";
 
 import ForcePasswordChange from "./components/ForcePasswordChange";
@@ -28,6 +28,7 @@ import RequestToOrder from "./pages/RequestToOrder";
 import NotificationBell from './components/NotificationBell';
 import InstallAppButton from './components/InstallAppButton';
 import MyRequests from "./pages/MyRequests";
+import SystemConfigManager from "./components/admin/SystemConfigManager";
 
 // Clean Logout: Non-blocking push detachment + guaranteed signout
 const performCleanLogout = async () => {
@@ -106,7 +107,6 @@ const NotificationManager = ({ userId }: { userId: string | null; }) => {
   useEffect(() => {
     if (!userId) return;
     
-    // Single robust listener filtered to this user's notifications
     const notifChannel = supabase.channel(`user_alerts_${userId}`)
       .on('postgres_changes', {
         event: 'INSERT',
@@ -242,6 +242,14 @@ const DesktopNavigation = ({ userRole, badges }: { userRole: string; badges: any
             {badges.techTasks > 0 && <span className="bg-indigo-600 text-white px-1.5 py-0.2 rounded-full text-[10px] font-black">{badges.techTasks}</span>}
           </Link>
         )}
+
+        {/* Dedicated Admin Settings Tab */}
+        {isGodMode && (
+          <Link to="/settings" className={getTabClass("/settings")}>
+            <Settings className="w-4 h-4 text-brand-gold" />
+            <span>Settings</span>
+          </Link>
+        )}
       </div>
     </div>
   );
@@ -355,6 +363,13 @@ const MobileDrawerNavigation = ({ userRole, isOpen, setIsOpen, badges }: { userR
               {navItem("/technician-portal", Wrench, "My Workload", badges.techTasks)}
             </>
           )}
+
+          {isGodMode && (
+            <>
+              <div className="pt-4 pb-2 text-[10px] font-black uppercase text-slate-400 tracking-wider">System Administration</div>
+              {navItem("/settings", Settings, "System Settings")}
+            </>
+          )}
         </div>
 
         <div className="p-4 border-t border-slate-200 pb-safe space-y-2">
@@ -460,6 +475,9 @@ export default function App() {
           <Route path="/audit" element={session && isSiyanatHead ? <PortalLayout userRole={role} userId={session.user.id}><AuditLogs /></PortalLayout> : <Navigate to="/" />} />
           <Route path="/team" element={session && isSiyanatHead ? <PortalLayout userRole={role} userId={session.user.id}><TeamManagement /></PortalLayout> : <Navigate to="/" />} />
           
+          {/* Admin System Settings Route */}
+          <Route path="/settings" element={session && isGodMode ? <PortalLayout userRole={role} userId={session.user.id}><SystemConfigManager /></PortalLayout> : <Navigate to="/" />} />
+
           {/* Tanzeem Command Center */}
           <Route path="/tanzeem" element={session && isTanzeemHead ? <PortalLayout userRole={role} userId={session.user.id}><TanzeemCommandCenter /></PortalLayout> : <Navigate to="/" />} />
 

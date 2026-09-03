@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Search, MapPin, Edit, X } from 'lucide-react';
+import { Search, MapPin, Edit, X, FolderTree } from 'lucide-react';
 import { useToast } from '../../hooks/useToast';
+import { useSystemConfig } from '../../hooks/useSystemConfig';
 
 interface Props {
   catalog: any[];
@@ -12,7 +13,10 @@ interface Props {
 
 export default function CatalogTab({ catalog, locations, loading, onRefresh }: Props) {
   const { showToast } = useToast();
+  const { categories: dynamicCategories } = useSystemConfig();
+  
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedCategoryFilter, setSelectedCategoryFilter] = useState('ALL');
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
   const [processingId, setProcessingId] = useState<string | null>(null);
@@ -42,10 +46,26 @@ export default function CatalogTab({ catalog, locations, loading, onRefresh }: P
     setProcessingId(null);
   };
 
-  const filteredCatalog = catalog.filter(item =>
-    item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    item.category.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (item.warehouse_location && item.warehouse_location.toLowerCase().includes(searchTerm.toLowerCase()))
+  // Get distinct list of category names for filtering
+  const distinctCategories = Array.from(
+    new Set(dynamicCategories.map(c => c.name))
+  );
+
+  const filteredCatalog = catalog.filter(item => {
+    const matchesSearch =
+      item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      item.category.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (item.warehouse_location && item.warehouse_location.toLowerCase().includes(searchTerm.toLowerCase()));
+    
+    const matchesCategory =
+      selectedCategoryFilter === 'ALL' || item.category === selectedCategoryFilter;
+
+    return matchesSearch && matchesCategory;
+  });
+
+  // Filter categories shown in Edit Modal based on item's selected department
+  const modalAvailableCategories = dynamicCategories.filter(
+    c => !editingItem?.fulfillment_dept || c.department === editingItem.fulfillment_dept
   );
 
   return (
@@ -64,6 +84,37 @@ export default function CatalogTab({ catalog, locations, loading, onRefresh }: P
         </div>
       </div>
 
+      {/* Dynamic Category Filter Bar */}
+      <div className="flex items-center gap-2 overflow-x-auto pb-1">
+        <button
+          onClick={() => setSelectedCategoryFilter('ALL')}
+          className={`px-3 py-1.5 rounded-xl text-[11px] font-black uppercase tracking-wider whitespace-nowrap transition border ${
+            selectedCategoryFilter === 'ALL'
+              ? 'bg-brand-maroon text-white border-brand-maroon shadow-sm'
+              : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+          }`}
+        >
+          All Categories ({catalog.length})
+        </button>
+        {distinctCategories.map(catName => {
+          const count = catalog.filter(i => i.category === catName).length;
+          return (
+            <button
+              key={catName}
+              onClick={() => setSelectedCategoryFilter(catName)}
+              className={`px-3 py-1.5 rounded-xl text-[11px] font-black uppercase tracking-wider whitespace-nowrap transition border ${
+                selectedCategoryFilter === catName
+                  ? 'bg-brand-maroon text-white border-brand-maroon shadow-sm'
+                  : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+              }`}
+            >
+              {catName} ({count})
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Catalog Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
         {loading ? (
           <div className="col-span-full p-8 text-center text-slate-400 font-bold animate-pulse">Loading catalog...</div>
@@ -109,18 +160,43 @@ export default function CatalogTab({ catalog, locations, loading, onRefresh }: P
         )}
       </div>
 
+      {/* Edit Item Modal */}
       {editModalOpen && editingItem && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex justify-center items-center p-4">
-          <div className="bg-white rounded-3xl w-full max-w-sm shadow-2xl overflow-hidden">
+          <div className="bg-white rounded-3xl w-full max-w-sm shadow-2xl overflow-hidden animate-in zoom-in-95">
             <div className="bg-slate-800 p-5 flex justify-between items-center text-white">
               <h3 className="font-extrabold text-sm uppercase">Edit Item</h3>
-              <button onClick={() => setEditModalOpen(false)}><X className="w-5 h-5" /></button>
+              <button onClick={() => setEditModalOpen(false)}><X className="w-5 h-5 hover:text-red-300" /></button>
             </div>
             <form onSubmit={handleUpdateItem} className="p-6 space-y-4">
               <div>
                 <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Name</label>
-                <input type="text" value={editingItem.name} onChange={e => setEditingItem({...editingItem, name: e.target.value})} className="w-full p-3 border border-slate-300 rounded-xl text-xs font-bold outline-none" />
+                <input 
+                  type="text" 
+                  value={editingItem.name} 
+                  onChange={e => setEditingItem({...editingItem, name: e.target.value})} 
+                  className="w-full p-3 border border-slate-300 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-brand-maroon" 
+                />
               </div>
+
+              {/* Dynamic Category Selector */}
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1 flex items-center gap-1">
+                  <FolderTree className="w-3 h-3 text-brand-maroon" /> Category
+                </label>
+                <select
+                  value={editingItem.category}
+                  onChange={e => setEditingItem({...editingItem, category: e.target.value})}
+                  className="w-full p-3 bg-white border border-slate-300 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-brand-maroon"
+                >
+                  {(modalAvailableCategories.length > 0 ? modalAvailableCategories : dynamicCategories).map(cat => (
+                    <option key={cat.id} value={cat.name}>
+                      {cat.name} ({cat.department.replace('_HEAD', '')})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <div>
                 <label className="block text-[10px] font-bold text-brand-maroon uppercase mb-1 flex items-center gap-1">
                   <MapPin className="w-3 h-3" /> Warehouse Location
@@ -135,25 +211,48 @@ export default function CatalogTab({ catalog, locations, loading, onRefresh }: P
                   ))}
                 </select>
               </div>
+
               <div>
                 <label className="block text-[10px] font-bold text-indigo-600 uppercase mb-1">Department Route</label>
-                <select value={editingItem.fulfillment_dept || 'SIYANAT_HEAD'} onChange={e => setEditingItem({...editingItem, fulfillment_dept: e.target.value})} className="w-full p-3 bg-indigo-50 border border-indigo-200 rounded-xl text-xs font-bold text-indigo-900 outline-none">
+                <select 
+                  value={editingItem.fulfillment_dept || 'SIYANAT_HEAD'} 
+                  onChange={e => setEditingItem({...editingItem, fulfillment_dept: e.target.value})} 
+                  className="w-full p-3 bg-indigo-50 border border-indigo-200 rounded-xl text-xs font-bold text-indigo-900 outline-none"
+                >
                   <option value="SIYANAT_HEAD">Siyanat Operations</option>
                   <option value="TANZEEM_HEAD">Tanzeem Operations</option>
                   <option value="AVIT_HEAD">AVIT Operations</option>
                 </select>
               </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Physical</label>
-                  <input type="number" min="0" value={editingItem.physical_stock} onChange={e => setEditingItem({...editingItem, physical_stock: parseInt(e.target.value) || 0})} className="w-full p-3 border border-slate-300 rounded-xl text-xs font-black text-center outline-none" />
+                  <input 
+                    type="number" 
+                    min="0" 
+                    value={editingItem.physical_stock} 
+                    onChange={e => setEditingItem({...editingItem, physical_stock: parseInt(e.target.value) || 0})} 
+                    className="w-full p-3 border border-slate-300 rounded-xl text-xs font-black text-center outline-none" 
+                  />
                 </div>
                 <div>
                   <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Frozen</label>
-                  <input type="number" min="0" value={editingItem.freezed_stock} onChange={e => setEditingItem({...editingItem, freezed_stock: parseInt(e.target.value) || 0})} className="w-full p-3 border border-slate-300 rounded-xl text-xs font-black text-center outline-none" />
+                  <input 
+                    type="number" 
+                    min="0" 
+                    value={editingItem.freezed_stock} 
+                    onChange={e => setEditingItem({...editingItem, freezed_stock: parseInt(e.target.value) || 0})} 
+                    className="w-full p-3 border border-slate-300 rounded-xl text-xs font-black text-center outline-none" 
+                  />
                 </div>
               </div>
-              <button type="submit" disabled={!!processingId} className="w-full py-3 bg-slate-900 text-white font-bold text-xs uppercase tracking-wide rounded-xl shadow-lg">
+
+              <button 
+                type="submit" 
+                disabled={!!processingId} 
+                className="w-full py-3 bg-slate-900 hover:bg-black text-white font-bold text-xs uppercase tracking-wide rounded-xl shadow-lg transition disabled:opacity-50"
+              >
                 Save Changes
               </button>
             </form>
