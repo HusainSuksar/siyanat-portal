@@ -75,15 +75,25 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
     setProcessingId(reviewBatch.id);
 
     try {
-      const payload = Object.entries(itemDecisions).map(([id, dec]) => ({ item_id: id, status: dec.status, eta: dec.eta }));
-      const { error } = await supabase.rpc('process_material_batch_json', {
+      const payload = Object.entries(itemDecisions).map(([id, dec]) => ({ 
+        item_id: id, 
+        status: dec.status, 
+        eta: dec.eta 
+      }));
+
+      const { data, error } = await supabase.rpc('process_material_batch_json', {
         p_batch_id: reviewBatch.id,
         p_decisions: payload,
         p_user_email: user?.email || 'Admin'
       });
       if (error) throw error;
 
-      showToast("Batch items processed securely!", "success");
+      if (data?.split_occurred) {
+        showToast("In-stock items dispatched! Out-of-stock items split to a procurement branch.", "success");
+      } else {
+        showToast("Batch items processed securely!", "success");
+      }
+
       setReviewBatch(null);
       fetchMaterials();
     } catch (err: any) {

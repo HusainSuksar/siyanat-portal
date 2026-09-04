@@ -75,7 +75,7 @@ export default function StationeryDispatcher() {
         eta: dec.eta
       }));
 
-      const { error } = await supabase.rpc('process_material_batch_json', {
+      const { data, error } = await supabase.rpc('process_material_batch_json', {
         p_batch_id: reviewBatch.id,
         p_decisions: decisionsPayload,
         p_user_email: user?.email || 'Admin'
@@ -83,7 +83,12 @@ export default function StationeryDispatcher() {
 
       if (error) throw error;
 
-      showToast('Stationery batch processed and stock updated!', 'success');
+      if (data?.split_occurred) {
+        showToast("In-stock stationery dispatched! Out-of-stock items split to a procurement branch.", "success");
+      } else {
+        showToast("Stationery batch processed and stock updated!", "success");
+      }
+
       setReviewBatch(null);
       fetchStationery();
     } catch (err: any) {
