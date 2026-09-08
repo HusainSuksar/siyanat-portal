@@ -1,32 +1,36 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../../hooks/useToast';
-import { Plus, Trash2, Users, Wrench, FolderTree, KeyRound } from 'lucide-react';
+import { Plus, Trash2, Users, Wrench, FolderTree, KeyRound, Store } from 'lucide-react';
 
 export default function SystemConfigManager() {
   const { showToast } = useToast();
-  const [activeTab, setActiveTab] = useState<'classes' | 'trades' | 'categories' | 'password'>('classes');
+  const [activeTab, setActiveTab] = useState<'classes' | 'trades' | 'categories' | 'vendor_categories' | 'password'>('classes');
   const [classes, setClasses] = useState<any[]>([]);
   const [trades, setTrades] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
+  const [vendorCategories, setVendorCategories] = useState<any[]>([]);
   const [defaultPassword, setDefaultPassword] = useState('786110');
   const [loading, setLoading] = useState(true);
 
   const [newClass, setNewClass] = useState({ name: '', male: 0, female: 0 });
   const [newTrade, setNewTrade] = useState('');
   const [newCat, setNewCat] = useState({ name: '', dept: 'SIYANAT_HEAD' });
+  const [newVendorCat, setNewVendorCat] = useState('');
 
   const fetchData = async () => {
     setLoading(true);
-    const [c, t, cat, s] = await Promise.all([
+    const [c, t, cat, vCat, s] = await Promise.all([
       supabase.from('academic_classes').select('*').order('class_name'),
       supabase.from('technician_trades').select('*').order('trade_name'),
       supabase.from('inventory_categories').select('*').order('name'),
+      supabase.from('vendor_categories').select('*').order('name'),
       supabase.from('system_settings').select('*').eq('key', 'default_user_password').maybeSingle()
     ]);
     if (c.data) setClasses(c.data);
     if (t.data) setTrades(t.data);
     if (cat.data) setCategories(cat.data);
+    if (vCat.data) setVendorCategories(vCat.data);
     if (s.data && s.data.value) {
       setDefaultPassword(typeof s.data.value === 'string' ? s.data.value : String(s.data.value));
     }
@@ -34,6 +38,31 @@ export default function SystemConfigManager() {
   };
 
   useEffect(() => { fetchData(); }, []);
+
+  // Vendor Category Handlers
+  const addVendorCategory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newVendorCat.trim()) return;
+    const { error } = await supabase.from('vendor_categories').insert({ name: newVendorCat.trim() });
+    if (!error) {
+      showToast('Vendor category added', 'success');
+      setNewVendorCat('');
+      fetchData();
+    } else {
+      showToast(error.message, 'error');
+    }
+  };
+
+  const deleteVendorCategory = async (id: string) => {
+    if (!confirm('Delete this vendor category?')) return;
+    const { error } = await supabase.from('vendor_categories').delete().eq('id', id);
+    if (!error) {
+      showToast('Vendor category removed', 'success');
+      fetchData();
+    } else {
+      showToast(error.message, 'error');
+    }
+  };
 
   const addClass = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -118,7 +147,7 @@ export default function SystemConfigManager() {
     <div className="bg-white rounded-3xl p-5 md:p-8 shadow-sm border border-slate-200 space-y-6">
       <div className="border-b border-slate-100 pb-4">
         <h3 className="font-black text-sm uppercase tracking-wide text-slate-800">Dynamic System Configuration</h3>
-        <p className="text-xs font-bold text-slate-400 mt-1">Manage classes, trades, inventory categories, and default credentials in real time.</p>
+        <p className="text-xs font-bold text-slate-400 mt-1">Manage classes, trades, inventory, vendor categories, and credentials in real time.</p>
       </div>
 
       <div className="flex space-x-2 border-b border-slate-200 pb-2 overflow-x-auto">
@@ -130,6 +159,9 @@ export default function SystemConfigManager() {
         </button>
         <button onClick={() => setActiveTab('categories')} className={`px-4 py-2 text-xs font-black uppercase rounded-xl transition whitespace-nowrap ${activeTab === 'categories' ? 'bg-brand-maroon text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100'}`}>
           <FolderTree className="w-3.5 h-3.5 inline mr-1.5" /> Inventory Categories ({categories.length})
+        </button>
+        <button onClick={() => setActiveTab('vendor_categories')} className={`px-4 py-2 text-xs font-black uppercase rounded-xl transition whitespace-nowrap ${activeTab === 'vendor_categories' ? 'bg-brand-maroon text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100'}`}>
+          <Store className="w-3.5 h-3.5 inline mr-1.5" /> Vendor Categories ({vendorCategories.length})
         </button>
         <button onClick={() => setActiveTab('password')} className={`px-4 py-2 text-xs font-black uppercase rounded-xl transition whitespace-nowrap ${activeTab === 'password' ? 'bg-brand-maroon text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100'}`}>
           <KeyRound className="w-3.5 h-3.5 inline mr-1.5" /> Default Password
@@ -220,6 +252,36 @@ export default function SystemConfigManager() {
                       <span className="text-[9px] font-black uppercase text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100 mt-1 inline-block">{cat.department.replace('_HEAD', '')}</span>
                     </div>
                     <button onClick={() => deleteCategory(cat.id)} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition" title="Delete category">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* VENDOR CATEGORIES TAB */}
+          {activeTab === 'vendor_categories' && (
+            <div className="space-y-4">
+              <form onSubmit={addVendorCategory} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 flex gap-3">
+                <input 
+                  required 
+                  type="text" 
+                  placeholder="e.g. Hardware & Fasteners, Paint & Chemicals..." 
+                  value={newVendorCat} 
+                  onChange={e => setNewVendorCat(e.target.value)} 
+                  className="flex-1 p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-brand-maroon" 
+                />
+                <button type="submit" className="px-5 py-2.5 bg-brand-maroon hover:bg-brand-dark text-brand-gold text-xs font-black uppercase rounded-xl shadow transition">
+                  <Plus className="w-4 h-4 inline mr-1" /> Add Vendor Category
+                </button>
+              </form>
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {vendorCategories.map(v => (
+                  <div key={v.id} className="p-3 bg-slate-50 border border-slate-200 rounded-xl shadow-sm flex justify-between items-center">
+                    <span className="font-bold text-slate-800 text-xs">{v.name}</span>
+                    <button onClick={() => deleteVendorCategory(v.id)} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition" title="Delete vendor category">
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>

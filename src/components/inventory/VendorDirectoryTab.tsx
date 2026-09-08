@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useState, useEffect, type FormEvent } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../../hooks/useToast';
 
@@ -7,11 +7,40 @@ interface Props {
   onRefresh: () => void;
 }
 
+const DEFAULT_CATEGORIES = [
+  'Electrical',
+  'Plumbing',
+  'Carpentry',
+  'Civil',
+  'General / Stationary'
+];
+
 export default function VendorDirectoryTab({ vendors, onRefresh }: Props) {
   const { showToast } = useToast();
   const [newVendorName, setNewVendorName] = useState('');
   const [newVendorCategory, setNewVendorCategory] = useState('Electrical');
   const [newVendorContact, setNewVendorContact] = useState('');
+  const [categories, setCategories] = useState<string[]>(DEFAULT_CATEGORIES);
+
+  // Fetch dynamic categories from vendor_categories table
+  useEffect(() => {
+    const fetchCategories = async () => {
+      const { data, error } = await supabase
+        .from('vendor_categories')
+        .select('name')
+        .order('name');
+
+      if (!error && data && data.length > 0) {
+        const catNames = data.map((c: any) => c.name);
+        setCategories(catNames);
+        if (!catNames.includes(newVendorCategory)) {
+          setNewVendorCategory(catNames[0]);
+        }
+      }
+    };
+
+    fetchCategories();
+  }, []);
 
   const handleAddVendor = async (e: FormEvent) => {
     e.preventDefault();
@@ -64,13 +93,13 @@ export default function VendorDirectoryTab({ vendors, onRefresh }: Props) {
             <select 
               value={newVendorCategory} 
               onChange={e => setNewVendorCategory(e.target.value)} 
-              className="w-full p-3 bg-white border border-slate-300 rounded-xl text-xs font-bold outline-none"
+              className="w-full p-3 bg-white border border-slate-300 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-brand-maroon"
             >
-              <option value="Electrical">Electrical</option>
-              <option value="Plumbing">Plumbing</option>
-              <option value="Carpentry">Carpentry</option>
-              <option value="Civil">Civil</option>
-              <option value="General">General / Stationery</option>
+              {categories.map((cat) => (
+                <option key={cat} value={cat}>
+                  {cat}
+                </option>
+              ))}
             </select>
           </div>
           <div>
