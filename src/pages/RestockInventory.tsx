@@ -30,10 +30,22 @@ export default function RestockInventory() {
       locQuery = locQuery.eq('department', role);
     }
 
+    // Fixed purchase_orders query: selects raw items JSONB + joins vendor, technician, authorizer
+    const poQuery = supabase
+      .from('purchase_orders')
+      .select(`
+        *,
+        vendor:vendors(id, name, category, contact_info),
+        technician:technician_id(id, full_name),
+        authorizer:authorizer_id(id, full_name)
+      `)
+      .in('status', ['PO Issued', 'Issued / Pending Delivery'])
+      .order('created_at', { ascending: false });
+
     const [catRes, vendorRes, poRes, locRes] = await Promise.all([
       catQuery,
       supabase.from('vendors').select('*').order('name'),
-      supabase.from('purchase_orders').select('*, vendor:vendors(name, category), items:purchase_order_items(*)').eq('status', 'PO Issued'),
+      poQuery,
       locQuery
     ]);
 
