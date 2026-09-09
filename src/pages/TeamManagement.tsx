@@ -1,12 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { createClient } from '@supabase/supabase-js';
-import { Users, Shield, UserCog, Edit, Trash2, X, Save, UserPlus, Phone, Upload, Download, FileSpreadsheet, AlertCircle, CheckCircle } from 'lucide-react';
+import { Users, Shield, UserCog, Edit, Trash2, X, Save, UserPlus, Phone, Upload, Download, FileSpreadsheet, AlertCircle, CheckCircle, Mail } from 'lucide-react';
 import Papa from 'papaparse';
 import { useSystemConfig } from '../hooks/useSystemConfig';
 
-// 1. Initialize a secondary client explicitly for provisioning users
-// This prevents Supabase from destroying the Admin's active session upon user creation.
+// Secondary client for user provisioning without hijacking the admin's session
 const authProvisionClient = createClient(
   import.meta.env.VITE_SUPABASE_URL,
   import.meta.env.VITE_SUPABASE_ANON_KEY,
@@ -19,7 +18,6 @@ const authProvisionClient = createClient(
     }
   }
 );
-
 
 export default function TeamManagement() {
   const { trades: AVAILABLE_TRADES, zones: AVAILABLE_ZONES, defaultPassword } = useSystemConfig();
@@ -87,7 +85,6 @@ export default function TeamManagement() {
     const cleanPassword = defaultPassword || '786110';
 
     try {
-      // FIX: Use the isolated provision client to prevent session hijacking
       const { data: authData, error: authError } = await authProvisionClient.auth.signUp({
         email: cleanEmail,
         password: cleanPassword,
@@ -102,6 +99,7 @@ export default function TeamManagement() {
 
         const payload = {
           id: authData.user.id,
+          email: cleanEmail,
           full_name: newUser.full_name,
           phone_number: newUser.phone_number.trim() || null,
           department: newUser.department,
@@ -111,7 +109,6 @@ export default function TeamManagement() {
           trade: tradeString,
         };
 
-        // Use the main client (Admin Session) to execute the DB insert
         const { error: profileError } = await supabase.from('profiles').upsert(payload);
         if (profileError) throw profileError;
 
@@ -186,7 +183,6 @@ export default function TeamManagement() {
           const zoneFormatted = row.zone ? row.zone.replace(/;/g, ',').trim() : null;
           const tradeFormatted = row.trade ? row.trade.replace(/;/g, ',').trim() : null;
 
-          // Normalize role name mapping
           if (cleanRole === 'TECHNICIAN') cleanRole = 'EXECUTOR';
           if (cleanRole === 'STANDARD_USER') cleanRole = 'REQUESTER';
 
@@ -221,7 +217,6 @@ export default function TeamManagement() {
 
               if (authError) {
                 if (authError.message.includes('rate limit')) {
-                  // Rate limit encountered: wait 3 seconds and retry once
                   await delay(3000);
                   continue;
                 }
@@ -231,6 +226,7 @@ export default function TeamManagement() {
               if (authData.user) {
                 const payload = {
                   id: authData.user.id,
+                  email: cleanEmail,
                   full_name: cleanName,
                   phone_number: cleanPhone || null,
                   department: cleanDept,
@@ -252,7 +248,6 @@ export default function TeamManagement() {
           }
 
           setBulkProgress({ total: rows.length, current: i + 1, failed: failCount });
-          // Throttles calls to stay below auth rate limits
           await delay(600);
         }
 
@@ -272,7 +267,10 @@ export default function TeamManagement() {
 
   // --- EDIT & DELETE LOGIC ---
   const openEditModal = (user: any) => {
-    setEditingUser({ ...user });
+    setEditingUser({ 
+      ...user, 
+      originalEmail: user.email || '' 
+    });
     if (user.role === 'SUPERVISOR' && user.zone) {
       setSelectedZones(user.zone.split(',').map((s: string) => s.trim()));
     } else {
@@ -292,35 +290,51 @@ export default function TeamManagement() {
     if (!editingUser) return;
     setProcessingId(editingUser.id);
 
-    const zoneString = editingUser.role === 'SUPERVISOR' ? selectedZones.join(', ') : null;
-    const tradeString = editingUser.role === 'EXECUTOR' ? selectedTrades.join(', ') : null;
+    try {
+      const zoneString = editingUser.role === 'SUPERVISOR' ? selectedZones.join(', ') : null;
+      const tradeString = editingUser.role === 'EXECUTOR' ? selectedTrades.join(', ') : null;
+      const cleanEmail = (editingUser.email || '').trim().toLowerCase();
 
-    const payload = {
-      full_name: editingUser.full_name,
-      phone_number: editingUser.phone_number ? editingUser.phone_number.trim() : null,
-      department: editingUser.department,
-      its_number: editingUser.its_number,
-      role: editingUser.role,
-      zone: zoneString,
-      trade: tradeString,
-    };
+      // 1. If email was modified, invoke the secure backend RPC
+      if (cleanEmail && cleanEmail !== (editingUser.originalEmail || '').toLowerCase()) {
+        const { error: emailRpcError } = await supabase.rpc('admin_update_user_email', {
+          p_user_id: editingUser.id,
+          p_new_email: cleanEmail
+        });
 
-    const { error } = await supabase.from('profiles').update(payload).eq('id', editingUser.id);
+        if (emailRpcError) throw emailRpcError;
+      }
 
-    if (!error) {
+      // 2. Update profile details
+      const payload = {
+        email: cleanEmail || null,
+        full_name: editingUser.full_name,
+        phone_number: editingUser.phone_number ? editingUser.phone_number.trim() : null,
+        department: editingUser.department,
+        its_number: editingUser.its_number,
+        role: editingUser.role,
+        zone: zoneString,
+        trade: tradeString,
+      };
+
+      const { error: profileError } = await supabase.from('profiles').update(payload).eq('id', editingUser.id);
+      if (profileError) throw profileError;
+
       const { data: authData } = await supabase.auth.getUser();
       await supabase.from('system_logs').insert({
         action_type: 'PROFILE_UPDATED',
-        description: `Admin updated profile for ${editingUser.full_name}. Role set to ${editingUser.role}.`,
+        description: `Admin updated profile for ${editingUser.full_name} (${cleanEmail}). Role set to ${editingUser.role}.`,
         user_email: authData.user?.email || 'System Admin'
       });
+
       alert('User profile updated successfully!');
       setEditModalOpen(false);
       fetchTeam();
-    } else {
-      alert("Error updating user: " + error.message);
+    } catch (err: any) {
+      alert("Error updating user: " + err.message);
+    } finally {
+      setProcessingId(null);
     }
-    setProcessingId(null);
   };
 
   const handleDeleteUser = async (id: string, name: string) => {
@@ -351,7 +365,7 @@ export default function TeamManagement() {
             <Users className="w-6 h-6" />
             Team & Access Management
           </h2>
-          <p className="text-xs text-slate-500 mt-1">Manage personnel, roles, and automated batch onboarding.</p>
+          <p className="text-xs text-slate-500 mt-1">Manage personnel, credentials, roles, and automated batch onboarding.</p>
         </div>
         <div className="flex items-center gap-2 w-full sm:w-auto">
           <button 
@@ -375,7 +389,7 @@ export default function TeamManagement() {
         </div>
       </div>
 
-      {/* --- Active Personnel Roster Table --- */}
+      {/* Active Personnel Roster Table */}
       <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 space-y-4">
         <div className="flex items-center space-x-2 border-b pb-3">
           <UserCog className="w-4 h-4 text-brand-maroon" />
@@ -409,7 +423,10 @@ export default function TeamManagement() {
                     <tr key={user.id} className="hover:bg-slate-50 transition">
                       <td className="p-3">
                         <div className="font-bold text-slate-800">{user.full_name || 'Unknown User'}</div>
-                        <div className="text-[10px] text-slate-500">{user.email}</div>
+                        <div className="text-[11px] text-slate-500 font-medium flex items-center gap-1 mt-0.5">
+                          <Mail className="w-3 h-3 text-slate-400 shrink-0" />
+                          <span className="font-semibold text-slate-600">{user.email || 'No email registered'}</span>
+                        </div>
                       </td>
                       <td className="p-3">
                         {user.phone_number ? (
@@ -473,7 +490,7 @@ export default function TeamManagement() {
         </div>
       </div>
 
-      {/* --- BULK UPLOAD MODAL --- */}
+      {/* Bulk Upload Modal */}
       {bulkModalOpen && (
         <div className="fixed inset-0 bg-black/60 z-50 flex justify-center items-center p-4 backdrop-blur-sm">
           <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden animate-in zoom-in-95">
@@ -505,7 +522,6 @@ export default function TeamManagement() {
                 </button>
               </div>
 
-              {/* Upload Dropzone */}
               <div 
                 onClick={() => !isBulkProcessing && fileInputRef.current?.click()}
                 className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition ${
@@ -514,7 +530,7 @@ export default function TeamManagement() {
               >
                 <Upload className="w-8 h-8 text-brand-maroon mx-auto mb-2" />
                 <p className="text-xs font-black text-slate-700 uppercase">Click to Select CSV File</p>
-                <p className="text-[10px] text-slate-400 font-semibold mt-1">Default password for all users will be 786110</p>
+                <p className="text-[10px] text-slate-400 font-semibold mt-1">Default password for all users will be {defaultPassword || '786110'}</p>
                 <input 
                   ref={fileInputRef}
                   type="file" 
@@ -525,7 +541,6 @@ export default function TeamManagement() {
                 />
               </div>
 
-              {/* Progress Bar */}
               {bulkProgress.total > 0 && (
                 <div className="space-y-2">
                   <div className="flex justify-between text-xs font-bold text-slate-600">
@@ -541,7 +556,6 @@ export default function TeamManagement() {
                 </div>
               )}
 
-              {/* Error Log Container */}
               {bulkErrors.length > 0 && (
                 <div className="bg-red-50 border border-red-200 p-3.5 rounded-2xl max-h-32 overflow-y-auto space-y-1 text-[11px] text-red-700">
                   <div className="font-black uppercase flex items-center gap-1 mb-1">
@@ -563,7 +577,7 @@ export default function TeamManagement() {
         </div>
       )}
 
-      {/* --- ADD / EDIT USER MODAL --- */}
+      {/* ADD / EDIT USER MODAL */}
       {(addModalOpen || editModalOpen) && (
         <div className="fixed inset-0 bg-black/50 z-50 flex justify-center items-center p-4">
           <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden">
@@ -575,7 +589,7 @@ export default function TeamManagement() {
             <form onSubmit={addModalOpen ? handleAddUser : handleUpdateUser} className="p-5 space-y-4 max-h-[80vh] overflow-y-auto">
               {addModalOpen && (
                 <div className="bg-amber-50 border border-amber-200 p-3 rounded-lg text-[10px] text-amber-800 font-bold mb-4">
-                  Note: The user will be created with the default password <span className="bg-amber-200 px-1 rounded">{defaultPassword}</span>.
+                  Note: The user will be created with the default password <span className="bg-amber-200 px-1 rounded">{defaultPassword || '786110'}</span>.
                 </div>
               )}
 
@@ -585,12 +599,22 @@ export default function TeamManagement() {
                   <input required type="text" value={addModalOpen ? newUser.full_name : editingUser.full_name} onChange={e => addModalOpen ? setNewUser({...newUser, full_name: e.target.value}) : setEditingUser({...editingUser, full_name: e.target.value})} className="w-full p-2 border border-slate-300 rounded-lg text-xs outline-none focus:ring-2 focus:ring-brand-maroon"/>
                 </div>
                 
-                {addModalOpen && (
-                  <div className="col-span-2">
-                    <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">Email Address (Login ID) *</label>
-                    <input required type="email" value={newUser.email} onChange={e => setNewUser({...newUser, email: e.target.value})} className="w-full p-2 border border-slate-300 rounded-lg text-xs outline-none focus:ring-2 focus:ring-brand-maroon"/>
-                  </div>
-                )}
+                {/* Email input is active for both Adding AND Editing */}
+                <div className="col-span-2">
+                  <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1 flex items-center gap-1">
+                    <Mail className="w-3.5 h-3.5 text-slate-500" /> Email Address (Login ID) *
+                  </label>
+                  <input 
+                    required 
+                    type="email" 
+                    value={addModalOpen ? newUser.email : editingUser.email || ''} 
+                    onChange={e => addModalOpen ? setNewUser({...newUser, email: e.target.value}) : setEditingUser({...editingUser, email: e.target.value})} 
+                    className="w-full p-2 border border-slate-300 rounded-lg text-xs outline-none focus:ring-2 focus:ring-brand-maroon"
+                  />
+                  {!addModalOpen && (
+                    <p className="text-[9px] text-slate-400 mt-1">Modifying this will update their login credentials immediately.</p>
+                  )}
+                </div>
 
                 <div className="col-span-2">
                   <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1 flex items-center gap-1">
@@ -659,7 +683,7 @@ export default function TeamManagement() {
                 </div>
               )}
 
-              {/* DYNAMIC MULTI-SELECT FOR EXECUTORS (TECHNICIANS) */}
+              {/* DYNAMIC MULTI-SELECT FOR EXECUTORS */}
               {(addModalOpen ? newUser.role : editingUser.role) === 'EXECUTOR' && (
                 <div className="bg-emerald-50 p-3 rounded-lg border border-emerald-100">
                   <label className="block text-[11px] font-bold text-emerald-900 uppercase mb-2">Assign Trades (Select Multiple)</label>
