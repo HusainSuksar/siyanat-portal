@@ -31,29 +31,47 @@ export default function VendorPOEngine({ batch, userEmail, onClose, onSuccess }:
   const [taxRate, setTaxRate] = useState<number>(18.0);
 
   // Accept any non-fulfilled items
-  const pendingItems = (batch.items || []).filter(i => 
+  const pendingItems = (batch.items || []).filter(i =>
     !['Stock Injected', 'Fulfilled & Received', 'Cancelled'].includes(i.status)
   );
 
   useEffect(() => {
-    const fetchVendors = async () => {
-      const { data, error } = await supabase.from('vendors').select('*').eq('is_active', true).order('name');
-      if (error) {
-        console.error("Error loading vendors:", error);
+    const fetchVendorsAndInitialPrices = async () => {
+      const { data: vendorData, error: vendorErr } = await supabase
+        .from('vendors')
+        .select('*')
+        .eq('is_active', true)
+        .order('name');
+
+      if (vendorErr) {
+        console.error("Error loading vendors:", vendorErr);
         return;
       }
 
-      if (data && data.length > 0) {
-        setVendors(data as Vendor[]);
-        const defaultVendorId = data[0]?.id || '';
+      if (vendorData && vendorData.length > 0) {
+        setVendors(vendorData as Vendor[]);
+        const defaultVendorId = vendorData[0]?.id || '';
         const initialVendors: Record<string, string> = {};
         const initialQtys: Record<string, number> = {};
         const initialPrices: Record<string, number> = {};
 
+        // Fetch pre-existing price agreements for the default vendor
+        const { data: agreements } = await supabase
+          .from('vendor_price_agreements')
+          .select('item_name, unit_price, tax_rate')
+          .eq('vendor_id', defaultVendorId);
+
+        const agreementMap = new Map(
+          (agreements || []).map(a => [a.item_name.trim().toLowerCase(), a])
+        );
+
         pendingItems.forEach(item => {
+          const itemName = (item.inventory?.name || item.custom_item_name || '').trim().toLowerCase();
+          const matchedAgreement = agreementMap.get(itemName);
+
           initialVendors[item.id] = defaultVendorId;
           initialQtys[item.id] = item.requested_qty || 1;
-          initialPrices[item.id] = 0;
+          initialPrices[item.id] = matchedAgreement ? Number(matchedAgreement.unit_price) : 0;
         });
 
         setItemVendors(initialVendors);
@@ -61,8 +79,35 @@ export default function VendorPOEngine({ batch, userEmail, onClose, onSuccess }:
         setUnitPrices(initialPrices);
       }
     };
-    fetchVendors();
+
+    fetchVendorsAndInitialPrices();
   }, [batch.id]);
+
+  // Handle vendor change per item with instant catalog lookup
+  const handleVendorChange = async (itemId: string, selectedVendorId: string, itemRawName: string = '') => {
+    setItemVendors(prev => ({ ...prev, [itemId]: selectedVendorId }));
+
+    if (!selectedVendorId || !itemRawName) return;
+
+    try {
+      const cleanName = itemRawName.trim();
+      const { data } = await supabase
+        .from('vendor_price_agreements')
+        .select('unit_price, tax_rate')
+        .eq('vendor_id', selectedVendorId)
+        .ilike('item_name', cleanName)
+        .limit(1)
+        .maybeSingle();
+
+      if (data && Number(data.unit_price) > 0) {
+        setUnitPrices(prev => ({ ...prev, [itemId]: Number(data.unit_price) }));
+        if (data.tax_rate) setTaxRate(Number(data.tax_rate));
+        showToast(`Agreed rate ₹${data.unit_price} applied for ${cleanName}`, 'success');
+      }
+    } catch (err) {
+      console.warn("Price agreement lookup skipped:", err);
+    }
+  };
 
   // Real-time calculation of totals
   const estimatedSubtotal = pendingItems.reduce((sum, item) => {
@@ -75,15 +120,16 @@ export default function VendorPOEngine({ batch, userEmail, onClose, onSuccess }:
 
   const generatePOs = async (e: React.FormEvent) => {
     e.preventDefault();
-  // Guard against 0 or empty rates
-    const zeroRateItem = pendingItems.find(i => !unitPrices[i.id] || Number(unitPrices[i.id]) <= 0);
-    if (zeroRateItem) {
-      showToast(`Please enter an agreed unit rate (₹) for "${zeroRateItem.inventory?.name || zeroRateItem.custom_item_name}"`, 'warning');
-      return;
-    }
 
     if (pendingItems.length === 0) {
       showToast('No pending items found on this batch to order.', 'warning');
+      return;
+    }
+
+    // Guard against 0 or empty rates
+    const zeroRateItem = pendingItems.find(i => !unitPrices[i.id] || Number(unitPrices[i.id]) <= 0);
+    if (zeroRateItem) {
+      showToast(`Please enter an agreed unit rate (₹) for "${zeroRateItem.inventory?.name || zeroRateItem.custom_item_name}"`, 'warning');
       return;
     }
 
@@ -130,21 +176,15 @@ export default function VendorPOEngine({ batch, userEmail, onClose, onSuccess }:
           p_tax_rate: Number(taxRate) || 0
         };
 
-        console.log("Submitting PO Payload to RPC:", rpcPayload);
-
         const { data: poNumber, error } = await supabase.rpc('generate_vendor_po', rpcPayload);
 
-        if (error) {
-          console.error("RPC Error:", error);
-          throw error;
-        }
-
+        if (error) throw error;
         if (poNumber) generatedPoNumbers.push(poNumber);
       }
 
       showToast(`Successfully created ${generatedPoNumbers.length} PO(s): ${generatedPoNumbers.join(', ')}`, 'success');
       onSuccess();
-      onClose(); // Automatically dismiss the modal upon creation
+      onClose();
     } catch (err: any) {
       console.error("PO Creation Failed:", err);
       showToast('Error generating PO: ' + (err.message || 'Unknown database error'), 'error');
@@ -160,17 +200,18 @@ export default function VendorPOEngine({ batch, userEmail, onClose, onSuccess }:
           <h3 className="font-extrabold text-sm uppercase flex items-center gap-2">
             <ShoppingCart className="w-5 h-5" /> Commercial Purchase Order Generator
           </h3>
-          <button type="button" onClick={onClose} className="hover:bg-white/20 p-1 rounded-lg transition"><X className="w-5 h-5" /></button>
+          <button type="button" onClick={onClose} className="hover:bg-white/20 p-1 rounded-lg transition">
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
-        {/* noValidate stops the browser from silently blocking submit */}
         <form noValidate onSubmit={generatePOs} className="p-6 space-y-5 overflow-y-auto flex-1">
           <div className="bg-indigo-50 p-4 rounded-2xl border border-indigo-100 flex items-start gap-3">
             <PackagePlus className="w-5 h-5 text-indigo-600 shrink-0 mt-0.5" />
             <div>
               <p className="text-xs font-black text-indigo-900 mb-0.5 uppercase tracking-wide">Multi-Vendor Commercial Routing</p>
               <p className="text-[11px] font-bold text-indigo-700/80">
-                Assign suppliers, specify agreed pricing rates, and set delivery timelines. Separate formal PO records will be issued per vendor.
+                Suppliers with uploaded price directories will automatically populate rates upon selection.
               </p>
             </div>
           </div>
@@ -229,26 +270,27 @@ export default function VendorPOEngine({ batch, userEmail, onClose, onSuccess }:
               const currentQty = orderQuantities[item.id] ?? item.requested_qty ?? 1;
               const currentRate = unitPrices[item.id] ?? 0;
               const lineTotal = currentQty * currentRate;
+              const displayName = item.inventory?.name || item.custom_item_name || 'Item';
 
               return (
                 <div key={item.id} className="bg-slate-50 p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                   <div className="flex-1 min-w-[200px]">
                     <span className="text-[9px] font-black uppercase text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100 mb-1 inline-block">Item {index + 1}</span>
-                    <p className="text-xs font-bold text-slate-800">{item.inventory?.name || item.custom_item_name}</p>
+                    <p className="text-xs font-bold text-slate-800">{displayName}</p>
                     <p className="text-[10px] text-slate-500 font-bold uppercase mt-0.5">
                       Requested: <span className="text-brand-maroon font-black">{item.requested_qty}</span>
                     </p>
                   </div>
 
                   <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
-                    {/* Vendor Select */}
+                    {/* Vendor Select with instant Price Directory matching */}
                     <div className="flex-1 md:w-48">
                       <label className="block text-[9px] font-black text-slate-500 uppercase mb-1 flex items-center gap-1">
                         <Building2 className="w-3 h-3 text-slate-400" /> Vendor
                       </label>
                       <select
                         value={itemVendors[item.id] ?? ''}
-                        onChange={e => setItemVendors({ ...itemVendors, [item.id]: e.target.value })}
+                        onChange={e => handleVendorChange(item.id, e.target.value, displayName)}
                         className="w-full p-2 bg-white border border-slate-300 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500"
                       >
                         <option value="" disabled>-- Select Vendor --</option>
@@ -263,13 +305,14 @@ export default function VendorPOEngine({ batch, userEmail, onClose, onSuccess }:
                       <label className="block text-[9px] font-black text-slate-500 uppercase mb-1">Qty</label>
                       <input
                         type="number"
+                        min={1}
                         value={currentQty}
                         onChange={e => setOrderQuantities({ ...orderQuantities, [item.id]: parseInt(e.target.value) || 1 })}
                         className="w-full p-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-center outline-none focus:ring-2 focus:ring-indigo-500"
                       />
                     </div>
 
-                    {/* Estimated Unit Price */}
+                    {/* Auto-populated / Editable Unit Price */}
                     <div className="w-24">
                       <label className="block text-[9px] font-black text-slate-500 uppercase mb-1">Rate (₹)</label>
                       <input
@@ -300,7 +343,9 @@ export default function VendorPOEngine({ batch, userEmail, onClose, onSuccess }:
           <div className="bg-slate-900 text-white p-4 rounded-2xl flex justify-between items-center text-xs">
             <div>
               <span className="text-[10px] uppercase font-black tracking-widest text-slate-400 block">Total Est. Commitment</span>
-              <span className="text-[11px] text-slate-300 font-bold">Subtotal: ₹{estimatedSubtotal.toFixed(2)} + GST ({taxRate}%): ₹{estimatedTax.toFixed(2)}</span>
+              <span className="text-[11px] text-slate-300 font-bold">
+                Subtotal: ₹{estimatedSubtotal.toFixed(2)} + GST ({taxRate}%): ₹{estimatedTax.toFixed(2)}
+              </span>
             </div>
             <div className="text-right">
               <span className="text-lg font-black text-brand-gold">
