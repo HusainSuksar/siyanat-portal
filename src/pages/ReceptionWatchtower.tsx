@@ -23,28 +23,56 @@ export default function ReceptionWatchtower() {
   const fetchOmniData = async () => {
     setLoading(true);
 
-    const [compRes, matRes, evtRes, fleetRes] = await Promise.all([
-      // Complaints
-      supabase.from('complaints').select(`*, requester:profiles(full_name, department), assignments:technician_assignments(status, technician:profiles!technician_assignments_technician_id_fkey(full_name, trade))`).order('created_at', { ascending: false }),
-      // Materials
-      supabase.from('work_orders').select(`*, requester:profiles(full_name, department), items:work_order_items(id, requested_qty, item_type, custom_item_name, status, eta_days, inventory:inventory_items(name))`).order('created_at', { ascending: false }),
-      // Events
-      supabase.from('events').select(`*, requester:profiles(full_name, department)`).order('event_date', { ascending: false }),
-      // Fleet
-      supabase.from('vehicle_requests').select(`*, requester:profiles(full_name, department)`).order('created_at', { ascending: false })
-    ]);
+    const query = searchQuery.trim();
 
-    if (compRes.data) setComplaints(compRes.data);
-    if (matRes.data) setMaterials(matRes.data);
-    if (evtRes.data) setEvents(evtRes.data);
-    if (fleetRes.data) setFleet(fleetRes.data);
+    // Base Database Queries
+    let compQuery = supabase.from('complaints').select(`*, requester:profiles(full_name, department), assignments:technician_assignments(status, technician:profiles!technician_assignments_technician_id_fkey(full_name, trade))`).order('created_at', { ascending: false }).limit(50);
+    let matQuery = supabase.from('work_orders').select(`*, requester:profiles(full_name, department), items:work_order_items(id, requested_qty, item_type, custom_item_name, status, eta_days, inventory:inventory_items(name))`).order('created_at', { ascending: false }).limit(50);
+    let evtQuery = supabase.from('events').select(`*, requester:profiles(full_name, department)`).order('event_date', { ascending: false }).limit(50);
+    let fleetQuery = supabase.from('vehicle_requests').select(`*, requester:profiles(full_name, department)`).order('created_at', { ascending: false }).limit(50);
+
+    // Apply Supabase Native FTS / Trigram Filtering
+    if (query) {
+      compQuery = compQuery.or(`complaint_id.ilike.%${query}%,category.ilike.%${query}%,venue.ilike.%${query}%,description.ilike.%${query}%`);
+      matQuery = matQuery.or(`batch_id.ilike.%${query}%,location.ilike.%${query}%,department.ilike.%${query}%`);
+      evtQuery = evtQuery.or(`event_title.ilike.%${query}%,location.ilike.%${query}%`);
+      fleetQuery = fleetQuery.or(`destination.ilike.%${query}%,purpose.ilike.%${query}%`);
+    }
+
+    // Database-level state pre-filtering
+    if (historyFilter === 'active') {
+      const activeStates = ['SUBMITTED', 'AUTHORIZED', 'PROCESSING', 'ACTION_REQUIRED'];
+      compQuery = compQuery.in('pipeline_state', activeStates);
+      matQuery = matQuery.in('pipeline_state', activeStates);
+      evtQuery = evtQuery.in('pipeline_state', activeStates);
+      fleetQuery = fleetQuery.in('pipeline_state', activeStates);
+    } else if (historyFilter === 'closed') {
+      const closedStates = ['CLOSED', 'REJECTED'];
+      compQuery = compQuery.in('pipeline_state', closedStates);
+      matQuery = matQuery.in('pipeline_state', closedStates);
+      evtQuery = evtQuery.in('pipeline_state', closedStates);
+      fleetQuery = fleetQuery.in('pipeline_state', closedStates);
+    }
+
+    const [compRes, matRes, evtRes, fleetRes] = await Promise.all([compQuery, matQuery, evtQuery, fleetQuery]);
+
+    setComplaints(compRes.data || []);
+    setMaterials(matRes.data || []);
+    setEvents(evtRes.data || []);
+    setFleet(fleetRes.data || []);
 
     setLoading(false);
   };
 
+  // Debounced search logic (Triggers 400ms after user stops typing)
   useEffect(() => {
-    fetchOmniData();
-  }, []);
+    const delayDebounceFn = setTimeout(() => {
+      fetchOmniData();
+    }, 400);
+
+    return () => clearTimeout(delayDebounceFn);
+  }, [searchQuery, historyFilter]);
+
 
   // --- BOTTLENECK CALCULATORS ---
   const getComplaintBottleneck = (c: any) => {
@@ -85,40 +113,6 @@ export default function ReceptionWatchtower() {
     return { text: f.pipeline_state, icon: AlertCircle, color: 'text-slate-500', bg: 'bg-slate-100' };
   };
 
-  // --- OMNI SEARCH & HISTORY FILTER ---
-  const matchesQuery = (target: string | undefined | null) => {
-    if (!target) return false;
-    return target.toLowerCase().includes(searchQuery.trim().toLowerCase());
-  };
-
-  const matchesHistory = (state: string) => {
-    if (historyFilter === 'all') return true;
-    if (historyFilter === 'active') return !['CLOSED', 'REJECTED'].includes(state);
-    if (historyFilter === 'closed') return ['CLOSED', 'REJECTED'].includes(state);
-    return true;
-  };
-
-  const filteredComplaints = complaints.filter(c => 
-    matchesHistory(c.pipeline_state) &&
-    (!searchQuery || matchesQuery(c.complaint_id) || matchesQuery(c.id) || matchesQuery(c.requester?.full_name) || matchesQuery(c.category) || matchesQuery(c.venue) || matchesQuery(c.description))
-  );
-
-  const filteredMaterials = materials.filter(m => 
-    matchesHistory(m.pipeline_state) &&
-    (!searchQuery || matchesQuery(m.batch_id) || matchesQuery(m.id) || matchesQuery(m.requester?.full_name) || matchesQuery(m.location) || matchesQuery(m.department))
-  );
-
-  const filteredEvents = events.filter(e => 
-    matchesHistory(e.pipeline_state) &&
-    (!searchQuery || matchesQuery(e.event_title) || matchesQuery(e.id) || matchesQuery(e.requester?.full_name) || matchesQuery(e.location))
-  );
-
-  const filteredFleet = fleet.filter(f => 
-    matchesHistory(f.pipeline_state) &&
-    (!searchQuery || matchesQuery(f.destination) || matchesQuery(f.id) || matchesQuery(f.purpose) || matchesQuery(f.requester?.full_name))
-  );
-
-  // Status Pill Component
   const StatusPill = ({ bottleneck }: { bottleneck: any }) => {
     const Icon = bottleneck.icon;
     return (
@@ -156,19 +150,19 @@ export default function ReceptionWatchtower() {
         {/* Category Tabs */}
         <div className="flex space-x-1 overflow-x-auto w-full sm:w-auto pb-1 sm:pb-0">
           <button onClick={() => setActiveTab('all')} className={`px-4 py-2 text-xs uppercase tracking-wider font-black rounded-xl transition flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'all' ? 'bg-brand-maroon text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}>
-            <Layers className="w-3.5 h-3.5" /> All ({filteredComplaints.length + filteredMaterials.length + filteredEvents.length + filteredFleet.length})
+            <Layers className="w-3.5 h-3.5" /> All ({complaints.length + materials.length + events.length + fleet.length})
           </button>
           <button onClick={() => setActiveTab('complaints')} className={`px-4 py-2 text-xs uppercase tracking-wider font-black rounded-xl transition flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'complaints' ? 'bg-brand-maroon text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}>
-            <Wrench className="w-3.5 h-3.5" /> Complaints ({filteredComplaints.length})
+            <Wrench className="w-3.5 h-3.5" /> Complaints ({complaints.length})
           </button>
           <button onClick={() => setActiveTab('materials')} className={`px-4 py-2 text-xs uppercase tracking-wider font-black rounded-xl transition flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'materials' ? 'bg-brand-maroon text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}>
-            <Package className="w-3.5 h-3.5" /> Materials ({filteredMaterials.length})
+            <Package className="w-3.5 h-3.5" /> Materials ({materials.length})
           </button>
           <button onClick={() => setActiveTab('events')} className={`px-4 py-2 text-xs uppercase tracking-wider font-black rounded-xl transition flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'events' ? 'bg-brand-maroon text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}>
-            <Calendar className="w-3.5 h-3.5" /> Events ({filteredEvents.length})
+            <Calendar className="w-3.5 h-3.5" /> Events ({events.length})
           </button>
           <button onClick={() => setActiveTab('fleet')} className={`px-4 py-2 text-xs uppercase tracking-wider font-black rounded-xl transition flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'fleet' ? 'bg-brand-maroon text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}>
-            <Car className="w-3.5 h-3.5" /> Fleet ({filteredFleet.length})
+            <Car className="w-3.5 h-3.5" /> Fleet ({fleet.length})
           </button>
         </div>
 
@@ -187,7 +181,7 @@ export default function ReceptionWatchtower() {
         <div className="grid grid-cols-1 gap-4">
           
           {/* 1. COMPLAINTS */}
-          {(activeTab === 'all' || activeTab === 'complaints') && filteredComplaints.map(c => (
+          {(activeTab === 'all' || activeTab === 'complaints') && complaints.map(c => (
             <div key={c.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4 hover:shadow-md transition">
               <div className="flex-1">
                 <div className="flex items-center gap-3 mb-1">
@@ -206,7 +200,7 @@ export default function ReceptionWatchtower() {
           ))}
 
           {/* 2. MATERIALS */}
-          {(activeTab === 'all' || activeTab === 'materials') && filteredMaterials.map(m => (
+          {(activeTab === 'all' || activeTab === 'materials') && materials.map(m => (
             <div key={m.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4 hover:shadow-md transition">
               <div className="flex-1">
                 <div className="flex items-center gap-3 mb-1">
@@ -225,7 +219,7 @@ export default function ReceptionWatchtower() {
           ))}
 
           {/* 3. EVENTS */}
-          {(activeTab === 'all' || activeTab === 'events') && filteredEvents.map(e => (
+          {(activeTab === 'all' || activeTab === 'events') && events.map(e => (
             <div key={e.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4 hover:shadow-md transition">
               <div className="flex-1">
                 <div className="flex items-center gap-3 mb-1">
@@ -244,7 +238,7 @@ export default function ReceptionWatchtower() {
           ))}
 
           {/* 4. FLEET */}
-          {(activeTab === 'all' || activeTab === 'fleet') && filteredFleet.map(f => (
+          {(activeTab === 'all' || activeTab === 'fleet') && fleet.map(f => (
             <div key={f.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4 hover:shadow-md transition">
               <div className="flex-1">
                 <div className="flex items-center gap-3 mb-1">
@@ -263,7 +257,7 @@ export default function ReceptionWatchtower() {
           ))}
 
           {/* EMPTY STATE */}
-          {filteredComplaints.length === 0 && filteredMaterials.length === 0 && filteredEvents.length === 0 && filteredFleet.length === 0 && (
+          {complaints.length === 0 && materials.length === 0 && events.length === 0 && fleet.length === 0 && (
             <div className="p-16 text-center bg-white rounded-3xl border border-slate-200">
               <AlertCircle className="w-12 h-12 text-slate-300 mx-auto mb-3" />
               <p className="text-slate-500 font-bold uppercase tracking-wider text-xs">No matching records found.</p>
