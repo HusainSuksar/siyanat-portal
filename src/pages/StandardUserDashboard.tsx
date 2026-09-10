@@ -45,7 +45,6 @@ export default function StandardUserDashboard() {
       setUserRole(role);
       const isGodMode = role === "SUPER_ADMIN" || role === "ADMIN";
 
-      // THE FIX: Added `status` to work_order_items select to catch rejected items
       let matQuery = supabase.from("work_orders").select("*, logs:work_order_logs(author_id, created_at, message), items:work_order_items(id, status, custom_item_name, requested_qty, inventory:inventory_items(name))").order("created_at", { ascending: false }).limit(30);
       let compQuery = supabase.from("complaints").select("*").order("created_at", { ascending: false }).limit(30);
       let evQuery = supabase.from("events").select("*, requirements:event_requirements(*)").order("event_date", { ascending: true }).limit(30);
@@ -213,7 +212,6 @@ export default function StandardUserDashboard() {
               const logs = req.logs || [];
               const hasUnread = logs.length > 0 && logs[logs.length - 1].author_id !== currentUser?.id;
               
-              // Segregate Approved/Pending Items vs Rejected Items
               const allItems = req.items || [];
               const providedItems = allItems.filter((i: any) => i.status !== 'Not Provided' && i.status !== 'Rejected');
               const rejectedItems = allItems.filter((i: any) => i.status === 'Not Provided' || i.status === 'Rejected');
@@ -276,10 +274,18 @@ export default function StandardUserDashboard() {
 
             {/* 2. MAINTENANCE TAB */}
             {activeTab === 'maintenance' && (complaints.length === 0 ? <div className="p-12 text-center bg-white rounded-3xl border border-slate-200 text-slate-400 italic font-bold">No maintenance complaints registered.</div> : complaints.map((c) => (
-              <div key={c.id} className="bg-white rounded-3xl p-5 md:p-6 shadow-sm border border-slate-200 flex flex-col justify-between gap-4 transition hover:shadow-md">
+              <div 
+                key={c.id} 
+                onClick={() => navigate(`/complaints/${c.complaint_id}`)}
+                className="bg-white rounded-3xl p-5 md:p-6 shadow-sm border border-slate-200 flex flex-col justify-between gap-4 transition hover:shadow-md cursor-pointer hover:border-slate-300"
+              >
                  <div>
                    <div className="flex justify-between items-start">
-                     <div><span className="font-black text-brand-maroon text-base">{c.complaint_id}</span><h4 className="font-bold text-slate-800 text-sm mt-0.5">{c.category}</h4><p className="text-[11px] text-slate-500 font-medium">{c.zone} - {c.venue} ({c.room_area})</p></div>
+                     <div>
+                       <span className="font-black text-brand-maroon text-base">{c.complaint_id}</span>
+                       <h4 className="font-bold text-slate-800 text-sm mt-0.5">{c.category}</h4>
+                       <p className="text-[11px] text-slate-500 font-medium">{c.zone} - {c.venue} ({c.room_area})</p>
+                     </div>
                      <span className="text-[10px] font-bold text-slate-400 uppercase">{new Date(c.created_at).toLocaleDateString()}</span>
                    </div>
                    <p className="text-xs text-slate-600 font-medium mt-3 bg-slate-50 p-3 rounded-xl border border-slate-100 line-clamp-2">{c.description}</p>
@@ -316,7 +322,7 @@ export default function StandardUserDashboard() {
                         
                         {canCancel && (
                           <button 
-                            onClick={() => { setCancelModalEvent(e); setCancelReason(''); }}
+                            onClick={(eEvent) => { eEvent.stopPropagation(); setCancelModalEvent(e); setCancelReason(''); }}
                             disabled={processingId === e.id}
                             className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-[10px] font-black uppercase tracking-wider rounded-xl flex items-center gap-1.5 transition shadow-sm disabled:opacity-50"
                           >

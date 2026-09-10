@@ -72,6 +72,7 @@ export default function NotificationBell() {
   }, [user]);
 
   const handleNotificationClick = async (notif: any) => {
+    // 1. Mark as read
     if (!notif.is_read) {
       await supabase.from('in_app_notifications').update({ is_read: true }).eq('id', notif.id);
       setUnreadCount(prev => Math.max(0, prev - 1));
@@ -79,7 +80,33 @@ export default function NotificationBell() {
     }
     
     setIsOpen(false);
-    if (notif.redirect_url) navigate(notif.redirect_url);
+
+    // 2. Determine target direct route
+    const fullText = `${notif.link || ''} ${notif.redirect_url || ''} ${notif.title || ''} ${notif.message || ''}`;
+
+    // A. Direct link provided (e.g. /complaints/CMP-123 or /materials)
+    const directLink = notif.link || notif.redirect_url;
+    if (directLink && directLink !== '/') {
+      navigate(directLink);
+      return;
+    }
+
+    // B. Maintenance Complaint Match (CMP-XXXXX)
+    const compMatch = fullText.match(/CMP-[A-Za-z0-9_-]+/i);
+    if (compMatch) {
+      navigate(`/complaints/${compMatch[0]}`);
+      return;
+    }
+
+    // C. Material Requisition Match (BATCH-XXXXX)
+    const batchMatch = fullText.match(/BATCH-[A-Za-z0-9_-]+/i);
+    if (batchMatch) {
+      navigate(`/materials`);
+      return;
+    }
+
+    // D. Default fallback
+    navigate('/');
   };
 
   const markAllAsRead = async () => {
@@ -105,10 +132,8 @@ export default function NotificationBell() {
 
       {isOpen && (
         <>
-          {/* Mobile Backdrop */}
           <div className="fixed inset-0 bg-black/40 z-40 md:hidden" onClick={() => setIsOpen(false)} />
           
-          {/* Responsive Dropdown: Fixed centered on mobile, absolute right-aligned on desktop */}
           <div className="fixed inset-x-4 top-16 md:inset-x-auto md:absolute md:right-0 md:top-auto md:mt-3 md:w-96 bg-white rounded-2xl shadow-2xl border border-slate-200 z-50 overflow-hidden flex flex-col max-h-[80vh] md:max-h-[450px] animate-in zoom-in-95 md:slide-in-from-top-2 duration-200">
             <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center shrink-0">
               <div className="flex items-center gap-2">
