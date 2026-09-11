@@ -29,6 +29,7 @@ import NotificationBell from './components/NotificationBell';
 import InstallAppButton from './components/InstallAppButton';
 import MyRequests from "./pages/MyRequests";
 import SystemConfigManager from "./components/admin/SystemConfigManager";
+import GlobalActionController from "./components/GlobalActionController";
 
 // Clean Logout: Non-blocking push detachment + guaranteed signout
 const performCleanLogout = async () => {
@@ -449,6 +450,7 @@ export default function App() {
   return (
     <Router>
       <ForcePasswordChange>
+        <GlobalActionController />
         <Routes>
           <Route path="/login" element={!session ? <Login /> : <Navigate to="/" />} />
 

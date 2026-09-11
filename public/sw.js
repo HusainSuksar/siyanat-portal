@@ -36,21 +36,25 @@ self.addEventListener('push', (event) => {
 // Handle what happens when the user taps the notification banner
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
+
+  // Assuming your push payload includes { data: { ticket_id: "CMP-1234" } }
+  const ticketId = event.notification.data?.ticket_id || '';
   
-  const targetUrl = event.notification.data.url;
+  // Construct the URL with a query parameter
+  const urlToOpen = new URL(`/?action_ticket=${ticketId}`, self.location.origin).href;
 
   event.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
-      // If the app is already open, focus it and navigate
-      for (const client of clientList) {
-        if (client.url.includes(self.location.origin) && 'focus' in client) {
-          client.navigate(targetUrl);
-          return client.focus();
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
+      // If app is already open, focus it and navigate
+      for (let client of windowClients) {
+        if ('focus' in client && 'navigate' in client) {
+          client.focus();
+          return client.navigate(urlToOpen);
         }
       }
-      // If the app is closed, open a new window
+      // If app is closed, open a new window with the URL
       if (clients.openWindow) {
-        return clients.openWindow(targetUrl);
+        return clients.openWindow(urlToOpen);
       }
     })
   );

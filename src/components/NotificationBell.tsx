@@ -81,31 +81,29 @@ export default function NotificationBell() {
     
     setIsOpen(false);
 
-    // 2. Determine target direct route
     const fullText = `${notif.link || ''} ${notif.redirect_url || ''} ${notif.title || ''} ${notif.message || ''}`;
 
-    // A. Direct link provided (e.g. /complaints/CMP-123 or /materials)
+    // A. Detect Complaint ID
+    const compMatch = fullText.match(/CMP-[A-Za-z0-9_-]+/i);
+    if (compMatch) {
+      navigate(`/?action_ticket=${compMatch[0]}`);
+      return;
+    }
+
+    // B. Detect Material Batch ID
+    const batchMatch = fullText.match(/BATCH-[A-Za-z0-9_-]+/i);
+    if (batchMatch) {
+      navigate(`/?action_ticket=${batchMatch[0]}`);
+      return;
+    }
+
+    // C. Default fallback
     const directLink = notif.link || notif.redirect_url;
     if (directLink && directLink !== '/') {
       navigate(directLink);
       return;
     }
 
-    // B. Maintenance Complaint Match (CMP-XXXXX)
-    const compMatch = fullText.match(/CMP-[A-Za-z0-9_-]+/i);
-    if (compMatch) {
-      navigate(`/complaints/${compMatch[0]}`);
-      return;
-    }
-
-    // C. Material Requisition Match (BATCH-XXXXX)
-    const batchMatch = fullText.match(/BATCH-[A-Za-z0-9_-]+/i);
-    if (batchMatch) {
-      navigate(`/materials`);
-      return;
-    }
-
-    // D. Default fallback
     navigate('/');
   };
 
