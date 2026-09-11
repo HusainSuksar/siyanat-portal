@@ -1,6 +1,10 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { ShoppingCart, RefreshCw, Clock, AlertTriangle, Edit, Trash2, CheckCircle, X, PackageSearch, FileText } from 'lucide-react';
+import { 
+  ShoppingCart, RefreshCw, Clock, AlertTriangle, Edit, 
+  Trash2, CheckCircle, X, PackageSearch, FileText, ShoppingBag 
+} from 'lucide-react';
+import DirectPOModal from '../components/inventory/DirectPOModal';
 
 export default function RequestToOrder() {
   const [pendingItems, setPendingItems] = useState<any[]>([]);
@@ -13,6 +17,9 @@ export default function RequestToOrder() {
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
   const [newEta, setNewEta] = useState(0);
+
+  // Direct PO Modal State
+  const [isDirectPOOpen, setIsDirectPOOpen] = useState(false);
 
   const fetchData = async () => {
     setLoading(true);
@@ -174,10 +181,24 @@ export default function RequestToOrder() {
           </h2>
           <p className="text-xs text-slate-500 mt-1">Manage unavailable stock, ETAs, and external vendor orders.</p>
         </div>
-        <button onClick={fetchData} className="text-xs text-brand-maroon font-bold flex items-center space-x-1 hover:text-brand-dark">
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-          <span>Refresh Queue</span>
-        </button>
+
+        <div className="flex items-center gap-3">
+          {/* Direct PO Button */}
+          {['SIYANAT_HEAD', 'TANZEEM_HEAD', 'AVIT_HEAD', 'SUPER_ADMIN', 'ADMIN'].includes(userRole) && (
+            <button
+              onClick={() => setIsDirectPOOpen(true)}
+              className="px-4 py-2.5 bg-brand-maroon hover:bg-brand-dark text-brand-gold font-black text-xs uppercase tracking-wider rounded-xl shadow-sm transition flex items-center gap-1.5"
+            >
+              <ShoppingBag className="w-4 h-4" />
+              <span>Direct PO</span>
+            </button>
+          )}
+
+          <button onClick={fetchData} className="text-xs text-brand-maroon font-bold flex items-center space-x-1 hover:text-brand-dark bg-white px-3 py-2 rounded-xl border border-slate-200 shadow-sm">
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+            <span>Refresh Queue</span>
+          </button>
+        </div>
       </div>
 
       {/* KPI Metrics */}
@@ -326,6 +347,13 @@ export default function RequestToOrder() {
           </div>
         </div>
       )}
+
+      {/* Standalone Direct PO Modal */}
+      <DirectPOModal
+        isOpen={isDirectPOOpen}
+        onClose={() => setIsDirectPOOpen(false)}
+        onSuccess={fetchData}
+      />
     </div>
   );
 }
