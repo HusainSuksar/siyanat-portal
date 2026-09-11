@@ -6,9 +6,9 @@ export default function RoleAwareActionModal({
   role, 
   onClose 
 }: { 
-  ticket: any, 
-  role: string, 
-  onClose: () => void 
+  ticket: any;
+  role: string;
+  onClose: () => void;
 }) {
   const navigate = useNavigate();
 
@@ -22,7 +22,13 @@ export default function RoleAwareActionModal({
 
   // Extract common variables
   const state = ticket.pipeline_state;
-  const displayId = isComplaint ? ticket.complaint_id : isMaterial ? ticket.batch_id : isEvent ? ticket.event_title : ticket.destination;
+  const displayId = isComplaint 
+    ? ticket.complaint_id 
+    : isMaterial 
+      ? ticket.batch_id 
+      : isEvent 
+        ? ticket.event_title 
+        : ticket.destination;
   const location = ticket.location || ticket.venue || ticket.destination;
   const requesterName = ticket.requester?.full_name || 'A user';
 
@@ -65,22 +71,32 @@ export default function RoleAwareActionModal({
         onClick: () => { onClose(); navigate('/technician-portal'); }
       };
     } else if (state === 'ACTION_REQUIRED') {
-      contextMessage = `Technicians have marked your issue at ${location} as resolved. Please verify.`;
-      primaryAction = {
-        label: 'Verify & Close Ticket',
-        icon: CheckCircle,
-        color: 'bg-emerald-600 hover:bg-emerald-700 text-white',
-        onClick: () => { onClose(); navigate('/my-requests'); }
-      };
+      if (role === 'SUPERVISOR' || isGodMode) {
+        contextMessage = `Technician completed work at ${location}. Requires Supervisor verification and sign-off.`;
+        primaryAction = {
+          label: 'Verify in Supervisor Queue',
+          icon: ShieldCheck,
+          color: 'bg-emerald-600 hover:bg-emerald-700 text-white',
+          onClick: () => { onClose(); navigate('/supervisor-queue'); }
+        };
+      } else {
+        contextMessage = `Technicians have marked your issue at ${location} as resolved. Please verify.`;
+        primaryAction = {
+          label: 'Verify & Close Ticket',
+          icon: CheckCircle,
+          color: 'bg-emerald-600 hover:bg-emerald-700 text-white',
+          onClick: () => { onClose(); navigate('/my-requests'); }
+        };
+      }
     }
   }
 
   // C. MATERIALS (Work Orders)
   else if (isMaterial) {
     if (state === 'SUBMITTED' && (role === 'DEPT_HEAD' || isGodMode)) {
-      contextMessage = `${requesterName} submitted a material requisition. Requires Department Head approval.`;
+      contextMessage = `${requesterName} submitted a material requisition. Requires Department Head review.`;
       primaryAction = {
-        label: 'Review Request',
+        label: 'Review Requisition',
         icon: ClipboardList,
         color: 'bg-amber-600 hover:bg-amber-700 text-white',
         onClick: () => { onClose(); navigate('/my-requests'); }
@@ -91,7 +107,7 @@ export default function RoleAwareActionModal({
         label: 'Split & Allocate Stock',
         icon: Truck,
         color: 'bg-brand-maroon hover:bg-brand-dark text-white',
-        onClick: () => { onClose(); navigate(role === 'TANZEEM_HEAD' ? '/tanzeem' : '/siyanat-operations'); }
+        onClick: () => { onClose(); navigate('/siyanat-operations'); }
       };
     } else if (state === 'ACTION_REQUIRED') {
       contextMessage = `Your requested materials for Batch ${displayId} are ready for collection.`;
@@ -130,15 +146,28 @@ export default function RoleAwareActionModal({
     }
   }
 
-  // F. FALLBACK (General Intimation for Receptionist or passive states)
+  // F. FALLBACK (General Intimation)
   if (!contextMessage) {
     contextMessage = `Update regarding ${displayId}: Pipeline status is currently ${state}.`;
   }
 
-  // Determine fallback routing
+  // Fixed Safe Route Fallback (prevents "No routes matched location /materials")
   const getFallbackRoute = () => {
-    if (isComplaint) return `/complaints/${ticket.complaint_id}`;
-    if (isMaterial) return `/materials`;
+    if (isComplaint) {
+      if (role === 'SUPERVISOR') return '/supervisor-queue';
+      if (role === 'TECHNICIAN' || role === 'EXECUTOR') return '/technician-portal';
+      return '/my-requests';
+    }
+    if (isMaterial) {
+      if (['SIYANAT_HEAD', 'TANZEEM_HEAD', 'AVIT_HEAD', 'ADMIN', 'SUPER_ADMIN'].includes(role)) {
+        return '/siyanat-operations';
+      }
+      return '/my-requests';
+    }
+    if (isEvent || isFleet) {
+      if (role === 'TANZEEM_HEAD' || isGodMode) return '/tanzeem';
+      return '/my-requests';
+    }
     return '/my-requests';
   };
 
