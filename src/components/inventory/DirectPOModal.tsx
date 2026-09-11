@@ -210,7 +210,7 @@ export default function DirectPOModal({ isOpen, onClose, onSuccess }: Props) {
               </button>
             </div>
 
-            {items.map((item, idx) => (
+            {items.map((item) => (
               <div key={item.id} className="grid grid-cols-12 gap-2 items-center bg-slate-50 p-3 rounded-xl border border-slate-200">
                 <div className="col-span-5">
                   <label className="block text-[9px] font-bold text-slate-400 uppercase mb-0.5">Item Description *</label>
