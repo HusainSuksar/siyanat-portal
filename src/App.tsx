@@ -101,7 +101,7 @@ const usePushNotificationSync = (userId: string | null) => {
   }, [userId]);
 };
 
-// --- NOTIFICATION MANAGER ---
+// --- NOTIFICATION MANAGER WITH AUDIO RINGTONE ---
 const NotificationManager = ({ userId }: { userId: string | null; }) => {
   const [toast, setToast] = useState<{ id: string; message: string; title: string; } | null>(null);
 
@@ -116,6 +116,17 @@ const NotificationManager = ({ userId }: { userId: string | null; }) => {
         filter: `user_id=eq.${userId}`
       }, (payload) => {
         setToast({ id: payload.new.id, title: payload.new.title, message: payload.new.message });
+        
+        // Play the custom audio clip
+        try {
+          const ringtone = new Audio('/siyanat_alert.mp3');
+          ringtone.play().catch((err) => {
+            console.warn('Audio playback waiting for initial user interaction:', err);
+          });
+        } catch (e) {
+          console.error('Audio initialization error:', e);
+        }
+
         setTimeout(() => setToast(null), 6000);
       })
       .subscribe();
@@ -130,12 +141,16 @@ const NotificationManager = ({ userId }: { userId: string | null; }) => {
   return (
     <div className="fixed top-20 right-4 z-50 animate-in slide-in-from-right-8 fade-in duration-300">
       <div className="bg-slate-900 text-white p-4 rounded-xl shadow-2xl border-l-4 border-emerald-500 flex items-start space-x-3 w-80">
-        <div className="p-2 bg-emerald-500/20 rounded-lg mt-0.5"><Bell className="w-5 h-5 text-emerald-400 animate-[ring_2s_ease-in-out_infinite]" /></div>
+        <div className="p-2 bg-emerald-500/20 rounded-lg mt-0.5">
+          <Bell className="w-5 h-5 text-emerald-400 animate-[ring_2s_ease-in-out_infinite]" />
+        </div>
         <div className="flex-1">
           <h4 className="text-sm font-extrabold text-emerald-400 uppercase tracking-wide">{toast.title}</h4>
           <p className="text-xs text-slate-300 font-medium leading-relaxed mt-1">{toast.message}</p>
         </div>
-        <button onClick={() => setToast(null)} className="text-slate-400 hover:text-white transition mt-0.5"><X className="w-4 h-4" /></button>
+        <button onClick={() => setToast(null)} className="text-slate-400 hover:text-white transition mt-0.5">
+          <X className="w-4 h-4" />
+        </button>
       </div>
     </div>
   );
@@ -462,6 +477,9 @@ export default function App() {
           <Route path="/profile" element={session ? <PortalLayout userRole={role} userId={session.user.id}><UserProfile /></PortalLayout> : <Navigate to="/login" />} />
           <Route path="/book-vehicle" element={session ? <PortalLayout userRole={role} userId={session.user.id}><BookVehicle /></PortalLayout> : <Navigate to="/" />} />
           <Route path="/my-requests" element={session ? <PortalLayout userRole={role} userId={session.user.id}><MyRequests /></PortalLayout> : <Navigate to="/login" />} />
+          
+          {/* Legacy & Direct Route Fallback Alias */}
+          <Route path="/materials" element={<Navigate to="/my-requests" replace />} />
 
           {/* Receptionist Read-Only View */}
           <Route path="/watchtower" element={session && isReceptionist ? <PortalLayout userRole={role} userId={session.user.id}><ReceptionWatchtower /></PortalLayout> : <Navigate to="/" />} />
