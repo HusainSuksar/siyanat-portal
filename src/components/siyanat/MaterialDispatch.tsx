@@ -2,7 +2,10 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../hooks/useToast';
-import { Package, SplitSquareHorizontal, CheckCircle, ShoppingCart, MessageSquare, Trash2, X, ListFilter, History as HistoryIcon, Printer } from 'lucide-react';
+import { 
+  Package, SplitSquareHorizontal, CheckCircle, ShoppingCart, 
+  MessageSquare, Trash2, X, ListFilter, History as HistoryIcon, Printer 
+} from 'lucide-react';
 import type { WorkOrder } from '../../types';
 import VendorPOEngine from './VendorPOEngine';
 import BatchDetailsModal from '../BatchDetailsModal';
@@ -46,7 +49,7 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
 
   const openReviewModal = (batch: WorkOrder) => {
     setReviewBatch(batch);
-    const initial: any = {};
+    const initial: Record<string, { status: string; eta: number }> = {};
     
     batch.items
       .filter(i => userRole === 'SUPER_ADMIN' || userRole === 'ADMIN' || i.fulfillment_dept === userRole)
@@ -113,6 +116,30 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
     setProcessingId(null);
   };
 
+  const getActiveBatchBadge = (b: WorkOrder, myItems: any[]) => {
+    const hasPending = myItems.some(i => (i.status as string) === 'Pending');
+    const hasOrdered = myItems.some(i => (i.status as string) === 'Ordered');
+    const hasPOIssued = myItems.some(i => (i.status as string) === 'PO Issued');
+    const allRejectedByMe = myItems.length > 0 && myItems.every(i => (i.status as string) === 'Not Provided');
+
+    if (hasPending) {
+      return { label: 'Awaiting Dispatch', className: 'bg-amber-100 text-amber-800' };
+    }
+    if (hasOrdered) {
+      return { label: 'Awaiting PO', className: 'bg-purple-100 text-purple-800' };
+    }
+    if (hasPOIssued) {
+      return { label: 'PO Issued (In Transit)', className: 'bg-indigo-100 text-indigo-800' };
+    }
+    if (allRejectedByMe) {
+      return { label: 'Rejected (Needs Sync)', className: 'bg-red-100 text-red-700' };
+    }
+    return { 
+      label: (b as any).dispatch_status || 'Waiting on other Depts', 
+      className: 'bg-indigo-100 text-indigo-800' 
+    };
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center bg-white p-2 rounded-2xl border border-slate-200 shadow-sm w-full md:w-auto mb-4">
@@ -139,8 +166,9 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
         <div className="grid grid-cols-1 gap-4">
           {batches.map(b => {
             const myItems = b.items.filter(i => userRole === 'SUPER_ADMIN' || userRole === 'ADMIN' || i.fulfillment_dept === userRole);
-            const needsReview = myItems.some(i => i.status === 'Pending');
-            const needsPO = myItems.some(i => i.status === 'Ordered');
+            const needsReview = myItems.some(i => (i.status as string) === 'Pending');
+            const needsPO = myItems.some(i => (i.status as string) === 'Ordered');
+            const activeBadge = getActiveBatchBadge(b, myItems);
 
             return (
               <div key={b.id} className={`bg-white rounded-3xl p-5 shadow-sm border flex flex-col md:flex-row justify-between gap-5 transition hover:shadow-md ${b.pipeline_state === 'REJECTED' ? 'border-red-200' : 'border-slate-200'}`}>
@@ -148,8 +176,8 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
                   <div className="flex items-center justify-between">
                     <h3 className="font-black text-brand-maroon text-lg">Batch: {b.batch_id}</h3>
                     {viewMode === 'active' ? (
-                      <span className={`px-2 py-0.5 text-[9px] font-black uppercase rounded ${b.pipeline_state === 'PROCESSING' ? 'bg-indigo-100 text-indigo-800' : 'bg-amber-100 text-amber-800'}`}>
-                        {b.pipeline_state === 'PROCESSING' ? 'Waiting on other Depts' : 'Awaiting Dispatch'}
+                      <span className={`px-2 py-0.5 text-[9px] font-black uppercase rounded ${activeBadge.className}`}>
+                        {activeBadge.label}
                       </span>
                     ) : (
                       <span className={`px-2.5 py-0.5 text-[10px] font-black uppercase tracking-widest rounded ${b.pipeline_state === 'REJECTED' ? 'bg-red-100 text-red-600' : b.pipeline_state === 'CLOSED' ? 'bg-slate-200 text-slate-600' : 'bg-emerald-100 text-emerald-800'}`}>
@@ -162,18 +190,28 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
                   <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 mt-2">
                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Items Processed:</span>
                     <div className="space-y-1">
-                      {myItems.map((item) => (
-                        <div key={item.id} className="text-xs font-bold text-slate-700 flex justify-between items-center py-1">
-                          <span>{item.inventory?.name || item.custom_item_name}</span>
-                          {viewMode === 'history' ? (
-                            <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest ${item.status === 'Available' ? 'bg-emerald-100 text-emerald-700' : item.status === 'Not Provided' ? 'bg-red-100 text-red-600' : 'bg-indigo-100 text-indigo-700'}`}>
-                              {item.status} (Qty: {item.requested_qty})
-                            </span>
-                          ) : (
-                            <span className="text-brand-maroon font-black">Qty: {item.requested_qty}</span>
-                          )}
-                        </div>
-                      ))}
+                      {myItems.map((item) => {
+                        const statusStr = item.status as string;
+                        return (
+                          <div key={item.id} className="text-xs font-bold text-slate-700 flex justify-between items-center py-1">
+                            <span>{item.inventory?.name || item.custom_item_name}</span>
+                            <div className="flex items-center gap-2">
+                              <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest ${
+                                statusStr === 'Available' || statusStr === 'Stock Injected'
+                                  ? 'bg-emerald-100 text-emerald-700'
+                                  : statusStr === 'Not Provided'
+                                  ? 'bg-red-100 text-red-600'
+                                  : statusStr === 'Ordered' || statusStr === 'PO Issued'
+                                  ? 'bg-purple-100 text-purple-700'
+                                  : 'bg-amber-100 text-amber-800'
+                              }`}>
+                                {statusStr}
+                              </span>
+                              <span className="text-brand-maroon font-black">Qty: {item.requested_qty}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 </div>
@@ -187,14 +225,19 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
                         </button>
                       )}
                       {!needsReview && needsPO && (
-                        <button onClick={() => setPoBatch(b)} className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5 shadow-sm transition">
-                          <ShoppingCart className="w-4 h-4"/> Issue PO (Missing)
-                        </button>
+                        <>
+                          <button onClick={() => setPoBatch(b)} className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5 shadow-sm transition">
+                            <ShoppingCart className="w-4 h-4"/> Issue PO (Missing)
+                          </button>
+                          <button onClick={() => openReviewModal(b)} className="w-full py-2.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5 shadow-sm transition">
+                            <SplitSquareHorizontal className="w-3.5 h-3.5"/> Edit / Reject
+                          </button>
+                        </>
                       )}
                       {!needsReview && !needsPO && (
-                        <div className="w-full py-3 bg-slate-100 text-slate-500 font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5 border border-slate-200">
-                          <CheckCircle className="w-4 h-4"/> Fully Reviewed
-                        </div>
+                        <button onClick={() => openReviewModal(b)} className="w-full py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5 border border-slate-200 transition">
+                          <CheckCircle className="w-4 h-4"/> Re-Review Batch
+                        </button>
                       )}
                     </>
                   )}
@@ -288,6 +331,7 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
                             {hasEnoughStock ? (
                               <>
                                 <option value="Available">Available (Freeze Stock)</option>
+                                <option value="Ordered">Order Anyway (Requires PO)</option>
                                 <option value="Not Provided">Not Provided (Reject)</option>
                               </>
                             ) : (

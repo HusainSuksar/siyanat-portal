@@ -9,7 +9,6 @@ export default function StationeryDispatcher() {
   const { user } = useAuth();
   const { showToast, toasts, removeToast } = useToast();
   
-  // THE NEW FEATURE: Toggle between Active Queue and History Archive
   const [viewMode, setViewMode] = useState<'active' | 'history'>('active');
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState<string | null>(null);
@@ -20,7 +19,6 @@ export default function StationeryDispatcher() {
   const fetchStationery = async () => {
     setLoading(true);
     
-    // Switch database target based on view mode
     const targetStates = viewMode === 'active' 
       ? ['AUTHORIZED', 'PROCESSING'] 
       : ['ACTION_REQUIRED', 'CLOSED', 'REJECTED'];
@@ -98,6 +96,30 @@ export default function StationeryDispatcher() {
     }
   };
 
+  const getActiveBatchBadge = (b: WorkOrder, myItems: any[]) => {
+    const hasPending = myItems.some(i => (i.status as string) === 'Pending');
+    const hasOrdered = myItems.some(i => (i.status as string) === 'Ordered');
+    const hasPOIssued = myItems.some(i => (i.status as string) === 'PO Issued');
+    const allRejectedByMe = myItems.length > 0 && myItems.every(i => (i.status as string) === 'Not Provided');
+
+    if (hasPending) {
+      return { label: 'Awaiting Dispatch', className: 'bg-amber-100 text-amber-800' };
+    }
+    if (hasOrdered) {
+      return { label: 'Awaiting PO (In RTO Queue)', className: 'bg-purple-100 text-purple-800' };
+    }
+    if (hasPOIssued) {
+      return { label: 'PO Issued (In Transit)', className: 'bg-indigo-100 text-indigo-800' };
+    }
+    if (allRejectedByMe) {
+      return { label: 'Rejected (Needs Sync)', className: 'bg-red-100 text-red-700' };
+    }
+    return { 
+      label: (b as any).dispatch_status || 'Waiting on other Depts', 
+      className: 'bg-indigo-100 text-indigo-800' 
+    };
+  };
+
   return (
     <div className="space-y-4 relative">
       {/* View Mode Toggle Switch */}
@@ -133,7 +155,8 @@ export default function StationeryDispatcher() {
         <div className="grid grid-cols-1 gap-4">
           {batches.map((b) => {
             const myItems = b.items?.filter((i) => i.fulfillment_dept === 'TANZEEM_HEAD') || [];
-            const needsReview = myItems.some((i) => i.status === 'Pending');
+            const needsReview = myItems.some((i) => (i.status as string) === 'Pending');
+            const activeBadge = getActiveBatchBadge(b, myItems);
 
             return (
               <div key={b.id} className={`bg-white rounded-3xl p-5 shadow-sm border flex flex-col lg:flex-row justify-between gap-5 transition hover:shadow-md ${b.pipeline_state === 'REJECTED' ? 'border-red-200' : 'border-slate-200'}`}>
@@ -141,10 +164,9 @@ export default function StationeryDispatcher() {
                   <div className="flex items-center gap-2">
                     <h3 className="font-black text-brand-maroon text-base">Batch: {b.batch_id}</h3>
                     
-                    {/* Dynamic Status Badges depending on view mode */}
                     {viewMode === 'active' ? (
-                      <span className={`px-2 py-0.5 text-[9px] font-black uppercase rounded ${b.pipeline_state === 'PROCESSING' ? 'bg-indigo-100 text-indigo-800' : 'bg-amber-100 text-amber-800'}`}>
-                        {b.pipeline_state === 'PROCESSING' ? 'Waiting on other Depts' : 'Awaiting Dispatch'}
+                      <span className={`px-2 py-0.5 text-[9px] font-black uppercase rounded ${activeBadge.className}`}>
+                        {activeBadge.label}
                       </span>
                     ) : (
                       <span className={`px-2 py-0.5 text-[9px] font-black uppercase rounded ${b.pipeline_state === 'REJECTED' ? 'bg-red-100 text-red-600' : b.pipeline_state === 'CLOSED' ? 'bg-slate-200 text-slate-600' : 'bg-emerald-100 text-emerald-800'}`}>
@@ -155,33 +177,41 @@ export default function StationeryDispatcher() {
                   <p className="text-xs text-slate-500 font-bold uppercase">{b.requester?.full_name} • {b.location}</p>
                   <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Stationery Items in Batch:</span>
-                    {myItems.map((item) => (
-                      <div key={item.id} className="text-xs font-bold text-slate-700 flex justify-between py-0.5">
-                        <span>{item.inventory?.name || item.custom_item_name}</span>
-                        {/* Show finalized status in history view */}
-                        {viewMode === 'history' ? (
-                          <span className={`px-2 py-0.5 rounded text-[9px] uppercase tracking-wider ${item.status === 'Available' ? 'bg-emerald-100 text-emerald-700' : item.status === 'Not Provided' ? 'bg-red-100 text-red-600' : 'bg-indigo-100 text-indigo-700'}`}>
-                            {item.status} (Qty: {item.requested_qty})
-                          </span>
-                        ) : (
-                          <span className="text-brand-maroon">Qty: {item.requested_qty}</span>
-                        )}
-                      </div>
-                    ))}
+                    {myItems.map((item) => {
+                      const statusStr = item.status as string;
+                      return (
+                        <div key={item.id} className="text-xs font-bold text-slate-700 flex justify-between items-center py-0.5">
+                          <span>{item.inventory?.name || item.custom_item_name}</span>
+                          <div className="flex items-center gap-2">
+                            <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${
+                              statusStr === 'Available' || statusStr === 'Stock Injected'
+                                ? 'bg-emerald-100 text-emerald-700'
+                                : statusStr === 'Not Provided'
+                                ? 'bg-red-100 text-red-600'
+                                : statusStr === 'Ordered' || statusStr === 'PO Issued'
+                                ? 'bg-purple-100 text-purple-700'
+                                : 'bg-amber-100 text-amber-800'
+                            }`}>
+                              {statusStr}
+                            </span>
+                            <span className="text-brand-maroon font-black">Qty: {item.requested_qty}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
                 
-                {/* Only render action buttons in Active Queue view */}
                 {viewMode === 'active' && (
-                  <div className="flex flex-col justify-center lg:w-48">
+                  <div className="flex flex-col justify-center gap-2 lg:w-48">
                     {needsReview ? (
                       <button onClick={() => openReviewModal(b)} className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black uppercase tracking-wider rounded-xl text-xs shadow-sm flex items-center justify-center gap-1.5 transition">
                         <SplitSquareHorizontal className="w-4 h-4"/> Split & Dispatch
                       </button>
                     ) : (
-                      <div className="w-full py-3 bg-slate-100 text-slate-500 font-black uppercase tracking-wider rounded-xl text-xs flex items-center justify-center gap-1.5 border border-slate-200">
-                        <CheckCircle className="w-4 h-4" /> Reviewed
-                      </div>
+                      <button onClick={() => openReviewModal(b)} className="w-full py-3 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 font-black uppercase tracking-wider rounded-xl text-xs shadow-sm flex items-center justify-center gap-1.5 transition">
+                        <SplitSquareHorizontal className="w-4 h-4" /> Edit / Reject
+                      </button>
                     )}
                   </div>
                 )}
@@ -191,7 +221,7 @@ export default function StationeryDispatcher() {
         </div>
       )}
 
-      {/* Review Modal Omitted for Brevity (It remains absolutely identical to your working version) */}
+      {/* Review Modal */}
       {reviewBatch && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex justify-center items-end sm:items-center p-4">
           <div className="bg-white rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden animate-in duration-300">
