@@ -1,7 +1,10 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
-import { CheckCircle, XCircle, Users, X, Clock, MapPin, History, ListFilter, ClipboardCheck, PackageCheck } from 'lucide-react';
+import { 
+  CheckCircle, XCircle, Users, X, Clock, MapPin, 
+  History, ListFilter, ClipboardCheck, PackageCheck 
+} from 'lucide-react';
 import { useToast } from '../../hooks/useToast';
 import type { BaseEventData } from '../../types/eventBooking';
 
@@ -48,7 +51,6 @@ export default function EventsManager() {
 
   const fetchEvents = async () => {
     setLoading(true);
-    // Include SUBMITTED in the active queue
     const targetStates = viewMode === 'active' ? ['SUBMITTED', 'AUTHORIZED', 'PROCESSING'] : ['CLOSED', 'REJECTED'];
 
     const { data, error } = await supabase
@@ -102,7 +104,7 @@ export default function EventsManager() {
     return now.getTime() >= eventEndTime.getTime();
   };
 
-  // --- APPROVAL WORKFLOW ---
+  // --- APPROVAL & AUTOMATED HANDOFF WORKFLOW ---
   const openApproveModal = (event: BaseEventData) => {
     setTargetEvent(event);
     const initialDecisions: Record<string, DecisionState> = {};
@@ -128,19 +130,42 @@ export default function EventsManager() {
   const processEventApproval = async (eventId: string, decisions: DecisionState[]) => {
     setProcessingId(eventId);
     try {
-      const { error } = await supabase.rpc('process_event_approvals', {
+      // 1. Sync reviewed decisions to event_requirements table
+      if (decisions && decisions.length > 0) {
+        for (const dec of decisions) {
+          await supabase.from('event_requirements').update({
+            status: dec.status,
+            is_returnable: dec.is_returnable,
+            approved_qty: dec.status === 'Approved' ? dec.approved_qty : 0,
+            return_status: dec.status === 'Approved' && dec.is_returnable ? 'PENDING_RETURN' : null
+          }).eq('id', dec.id);
+        }
+      }
+
+      // 2. Trigger notification & acknowledgment handoff RPC
+      const { data, error } = await supabase.rpc('approve_event_and_handoff', {
         p_event_id: eventId,
-        p_decisions: decisions,
-        p_admin_email: user?.email
+        p_approver_email: user?.email || 'Tanzeem Head'
       });
       
       if (error) throw error;
-      showToast('Event & accessories processed successfully!', 'success');
+
+      // 3. Feedback message detailing departments alerted
+      const mobilized: string[] = [];
+      if (data?.siyanat_items > 0) mobilized.push('Siyanat');
+      if (data?.avit_items > 0) mobilized.push('AVIT');
+
+      if (mobilized.length > 0) {
+        showToast(`Event confirmed! Setup notifications sent to ${mobilized.join(' & ')}.`, 'success');
+      } else {
+        showToast('Event booking approved and venue confirmed!', 'success');
+      }
+
       setApproveModalOpen(false);
       fetchEvents();
       fetchInitialData();
     } catch (err: any) {
-      showToast(err.message, 'error');
+      showToast('Error approving event: ' + err.message, 'error');
     } finally {
       setProcessingId(null);
     }
@@ -192,13 +217,28 @@ export default function EventsManager() {
     setProcessingId(targetEvent.id);
 
     try {
-      const { error } = await supabase.from('events').update({ pipeline_state: 'REJECTED', rejection_reason: rejectionReason }).eq('id', targetEvent.id);
+      const { error } = await supabase.from('events').update({ 
+        pipeline_state: 'REJECTED', 
+        rejection_reason: rejectionReason 
+      }).eq('id', targetEvent.id);
+      
       if (error) throw error;
 
       if (targetEvent.requirements && targetEvent.requirements.length > 0) {
         const reqIds = targetEvent.requirements.map(r => r.id);
         await supabase.from('event_requirements').update({ status: 'Rejected' }).in('id', reqIds);
       }
+
+      // Notify Requester
+      if (targetEvent.requester_id) {
+        await supabase.from('in_app_notifications').insert({
+          user_id: targetEvent.requester_id,
+          title: 'Event Booking Declined',
+          message: `Your booking for "${targetEvent.event_title}" was declined by Tanzeem. Reason: ${rejectionReason}`,
+          is_read: false
+        });
+      }
+
       showToast('Event rejected and requester notified.', 'success');
       setRejectModalOpen(false);
       setRejectionReason('');
@@ -270,7 +310,22 @@ export default function EventsManager() {
                         </span>
                       )}
                     </div>
-                    <p className="text-xs text-slate-500 mt-1 font-bold flex items-center gap-1 uppercase">
+
+                    {/* LIVE ACKNOWLEDGMENT BADGES FOR TANZEEM VIEW */}
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {(e as any).siyanat_status && (e as any).siyanat_status !== 'Not Required' && (
+                        <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest ${(e as any).siyanat_status === 'Acknowledged' ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-amber-100 text-amber-800 border border-amber-200'}`}>
+                          Siyanat: {(e as any).siyanat_status}
+                        </span>
+                      )}
+                      {(e as any).avit_status && (e as any).avit_status !== 'Not Required' && (
+                        <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest ${(e as any).avit_status === 'Acknowledged' ? 'bg-indigo-100 text-indigo-800 border border-indigo-200' : 'bg-amber-100 text-amber-800 border border-amber-200'}`}>
+                          AVIT: {(e as any).avit_status}
+                        </span>
+                      )}
+                    </div>
+
+                    <p className="text-xs text-slate-500 mt-2 font-bold flex items-center gap-1 uppercase">
                       <Users className="w-3 h-3"/> {e.requester?.full_name || 'Requester'} • {e.requester?.department || 'Campus'}
                     </p>
                   </div>
@@ -305,7 +360,7 @@ export default function EventsManager() {
                               </span>
                               {isApproved && (
                                 <span className="text-[9px] uppercase font-black opacity-80 tracking-widest mt-0.5">
-                                  {req.is_returnable ? '🔄 Returnable' : '📦 Consumable'}
+                                  {req.is_returnable ? 'Returnable' : 'Consumable'}
                                 </span>
                               )}
                             </div>
@@ -359,7 +414,7 @@ export default function EventsManager() {
             
             <form onSubmit={(e) => { e.preventDefault(); processEventApproval(targetEvent.id, Object.values(reqDecisions)); }} className="p-6 max-h-[75vh] overflow-y-auto">
               <p className="text-xs text-slate-500 font-bold mb-5">
-                Classify items and allocate quantities. Consumables will deduct stock; Returnables will freeze stock until returned.
+                Classify items and allocate quantities. Siyanat & AVIT teams will be automatically notified with their setup requirements for acknowledgment upon confirmation.
               </p>
               
               <div className="space-y-4">
@@ -384,8 +439,8 @@ export default function EventsManager() {
                           disabled={state.status === 'Rejected'}
                           className="p-2.5 rounded-xl text-xs font-black uppercase tracking-wider outline-none border focus:ring-2 focus:ring-emerald-500 bg-white border-slate-300 disabled:opacity-50"
                         >
-                          <option value="Returnable">🔄 Returnable</option>
-                          <option value="Consumable">📦 Consumable</option>
+                          <option value="Returnable">Returnable</option>
+                          <option value="Consumable">Consumable</option>
                         </select>
 
                         <div className="flex items-center bg-white border border-slate-300 rounded-xl overflow-hidden focus-within:ring-2 focus-within:ring-emerald-500">
@@ -414,7 +469,7 @@ export default function EventsManager() {
               </div>
 
               <button type="submit" disabled={processingId === targetEvent.id} className="w-full py-4 mt-6 bg-slate-900 hover:bg-black text-white font-black rounded-xl uppercase text-xs tracking-wider transition disabled:opacity-50">
-                Confirm Approvals & Allocate Stock
+                Confirm Approvals & Notify Departments
               </button>
             </form>
           </div>

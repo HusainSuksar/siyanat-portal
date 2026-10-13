@@ -4,20 +4,30 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../hooks/useToast';
 import { 
   Package, SplitSquareHorizontal, CheckCircle, ShoppingCart, 
-  MessageSquare, Trash2, X, ListFilter, History as HistoryIcon, Printer 
+  MessageSquare, Trash2, X, ListFilter, History as HistoryIcon, Printer, Calendar 
 } from 'lucide-react';
 import type { WorkOrder } from '../../types';
 import VendorPOEngine from './VendorPOEngine';
 import BatchDetailsModal from '../BatchDetailsModal';
 import { generateDispatchSlip } from '../../utils/printDispatchSlip';
 
+// Helper to categorize AVIT items reliably
+const isAvitItem = (item: any) => {
+  const name = typeof item === 'string' ? item : (item?.item_name || '');
+  const dept = typeof item === 'object' ? (item?.department || '') : '';
+  if (dept === 'AVIT' || dept === 'AVIT_HEAD') return true;
+  if (dept === 'SIYANAT' || dept === 'SIYANAT_HEAD') return false;
+  return /(projector|mic|microphone|audio|recording|screen|sound|pa system|speaker|camera|hdmi|display|avit|laptop|computer|pc|pointer|marker gadget|gadget|clicker|presenter|laser|tv|monitor|cable)/i.test(name);
+};
+
 export default function MaterialDispatch({ userRole }: { userRole: string }) {
   const { user } = useAuth();
   const { showToast } = useToast();
   
-  const [viewMode, setViewMode] = useState<'active' | 'history'>('active');
+  const [viewMode, setViewMode] = useState<'active' | 'history' | 'event_setups'>('active');
   const [loading, setLoading] = useState(true);
   const [batches, setBatches] = useState<WorkOrder[]>([]);
+  const [eventSetups, setEventSetups] = useState<any[]>([]);
   const [processingId, setProcessingId] = useState<string | null>(null);
 
   const [reviewBatch, setReviewBatch] = useState<WorkOrder | null>(null);
@@ -26,26 +36,63 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
   const [chatBatch, setChatBatch] = useState<WorkOrder | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<WorkOrder | null>(null);
 
-  const fetchMaterials = async () => {
+  const fetchData = async () => {
     setLoading(true);
-    const targetStates = viewMode === 'active' 
-      ? ['AUTHORIZED', 'PROCESSING'] 
-      : ['ACTION_REQUIRED', 'CLOSED', 'REJECTED'];
 
-    const { data, error } = await supabase
-      .from('work_orders')
-      .select(`*, requester:profiles(full_name, department), items:work_order_items!inner(id, requested_qty, item_type, custom_item_name, status, eta_days, fulfillment_dept, inventory_id, inventory:inventory_items(id, name, physical_stock, freezed_stock, unit))`)
-      .in('pipeline_state', targetStates)
-      .order('created_at', { ascending: false });
+    if (viewMode === 'event_setups') {
+      const { data } = await supabase
+        .from('events')
+        .select(`*, requirements:event_requirements(*)`)
+        .in('pipeline_state', ['PROCESSING', 'AUTHORIZED'])
+        .order('event_date', { ascending: true });
+        
+      if (data) {
+        const filtered = data.filter(e => {
+          if (userRole === 'SUPER_ADMIN' || userRole === 'ADMIN') return e.siyanat_status !== 'Not Required' || e.avit_status !== 'Not Required';
+          if (userRole === 'SIYANAT_HEAD') return e.siyanat_status !== 'Not Required';
+          if (userRole === 'AVIT_HEAD') return e.avit_status !== 'Not Required';
+          return false;
+        });
+        setEventSetups(filtered);
+      }
+    } else {
+      const targetStates = viewMode === 'active' 
+        ? ['AUTHORIZED', 'PROCESSING'] 
+        : ['ACTION_REQUIRED', 'CLOSED', 'REJECTED'];
 
-    if (!error && data) {
-      const filtered = data.filter(b => userRole === 'SUPER_ADMIN' || userRole === 'ADMIN' || b.items.some((i: any) => i.fulfillment_dept === userRole));
-      setBatches(filtered as WorkOrder[]);
+      const { data, error } = await supabase
+        .from('work_orders')
+        .select(`*, requester:profiles(full_name, department), items:work_order_items!inner(id, requested_qty, item_type, custom_item_name, status, eta_days, fulfillment_dept, inventory_id, inventory:inventory_items(id, name, physical_stock, freezed_stock, unit))`)
+        .in('pipeline_state', targetStates)
+        .order('created_at', { ascending: false });
+
+      if (!error && data) {
+        const filtered = data.filter(b => userRole === 'SUPER_ADMIN' || userRole === 'ADMIN' || b.items.some((i: any) => i.fulfillment_dept === userRole));
+        setBatches(filtered as WorkOrder[]);
+      }
     }
     setLoading(false);
   };
 
-  useEffect(() => { fetchMaterials(); }, [userRole, viewMode]);
+  useEffect(() => { fetchData(); }, [userRole, viewMode]);
+
+  const handleAcknowledgeEvent = async (eventId: string, targetDept: string) => {
+    setProcessingId(eventId);
+    try {
+      const { error } = await supabase.rpc('acknowledge_event_handoff', {
+        p_event_id: eventId,
+        p_dept: targetDept,
+        p_user_email: user?.email
+      });
+      if (error) throw error;
+      showToast('Event Setup Acknowledged!', 'success');
+      fetchData();
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    } finally {
+      setProcessingId(null);
+    }
+  };
 
   const openReviewModal = (batch: WorkOrder) => {
     setReviewBatch(batch);
@@ -98,7 +145,7 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
       }
 
       setReviewBatch(null);
-      fetchMaterials();
+      fetchData();
     } catch (err: any) {
       showToast(err.message, "error");
     } finally {
@@ -112,7 +159,7 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
     await supabase.from('work_orders').delete().eq('id', deleteTarget.id);
     showToast("Batch eradicated.", "success");
     setDeleteTarget(null);
-    fetchMaterials();
+    fetchData();
     setProcessingId(null);
   };
 
@@ -142,10 +189,13 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-between items-center bg-white p-2 rounded-2xl border border-slate-200 shadow-sm w-full md:w-auto mb-4">
-        <div className="flex gap-2 w-full">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-2 rounded-2xl border border-slate-200 shadow-sm w-full mb-4">
+        <div className="flex flex-wrap gap-2 w-full">
           <button onClick={() => setViewMode('active')} className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 transition ${viewMode === 'active' ? 'bg-brand-maroon text-brand-gold shadow-md' : 'text-slate-400 hover:bg-slate-50'}`}>
             <ListFilter className="w-4 h-4" /> Active Queue
+          </button>
+          <button onClick={() => setViewMode('event_setups')} className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 transition ${viewMode === 'event_setups' ? 'bg-purple-700 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50'}`}>
+            <Calendar className="w-4 h-4" /> Event Setups
           </button>
           <button onClick={() => setViewMode('history')} className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 transition ${viewMode === 'history' ? 'bg-slate-800 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50'}`}>
             <HistoryIcon className="w-4 h-4" /> History Log
@@ -154,119 +204,191 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
       </div>
 
       {loading ? (
-        <div className="p-8 text-center animate-pulse text-slate-500 font-bold bg-white rounded-3xl border border-slate-200">Loading materials...</div>
-      ) : batches.length === 0 ? (
-        <div className="p-12 text-center bg-white rounded-3xl border border-slate-200 shadow-sm">
-          <Package className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-          <p className="text-slate-500 font-bold uppercase tracking-wider text-xs">
-            {viewMode === 'active' ? 'No active material batches.' : 'No historical records found.'}
-          </p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 gap-4">
-          {batches.map(b => {
-            const myItems = b.items.filter(i => userRole === 'SUPER_ADMIN' || userRole === 'ADMIN' || i.fulfillment_dept === userRole);
-            const needsReview = myItems.some(i => (i.status as string) === 'Pending');
-            const needsPO = myItems.some(i => (i.status as string) === 'Ordered');
-            const activeBadge = getActiveBatchBadge(b, myItems);
+        <div className="p-8 text-center animate-pulse text-slate-500 font-bold bg-white rounded-3xl border border-slate-200">Loading records...</div>
+      ) : viewMode === 'event_setups' ? (
+        // --- EVENT SETUPS VIEW ---
+        eventSetups.length === 0 ? (
+          <div className="p-12 text-center bg-white rounded-3xl border border-slate-200 shadow-sm">
+            <Calendar className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+            <p className="text-slate-500 font-bold uppercase tracking-wider text-xs">No pending event setups.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-4">
+            {eventSetups.map(e => {
+              const siyItems = e.requirements?.filter((r: any) => r.status === 'Approved' && !isAvitItem(r)) || [];
+const avitItems = e.requirements?.filter((r: any) => r.status === 'Approved' && isAvitItem(r)) || [];
 
-            return (
-              <div key={b.id} className={`bg-white rounded-3xl p-5 shadow-sm border flex flex-col md:flex-row justify-between gap-5 transition hover:shadow-md ${b.pipeline_state === 'REJECTED' ? 'border-red-200' : 'border-slate-200'}`}>
-                <div className="space-y-3 flex-1 w-full">
-                  <div className="flex items-center justify-between">
-                    <h3 className="font-black text-brand-maroon text-lg">Batch: {b.batch_id}</h3>
-                    {viewMode === 'active' ? (
-                      <span className={`px-2 py-0.5 text-[9px] font-black uppercase rounded ${activeBadge.className}`}>
-                        {activeBadge.label}
-                      </span>
-                    ) : (
-                      <span className={`px-2.5 py-0.5 text-[10px] font-black uppercase tracking-widest rounded ${b.pipeline_state === 'REJECTED' ? 'bg-red-100 text-red-600' : b.pipeline_state === 'CLOSED' ? 'bg-slate-200 text-slate-600' : 'bg-emerald-100 text-emerald-800'}`}>
-                        {b.pipeline_state === 'REJECTED' ? 'Rejected' : b.pipeline_state === 'CLOSED' ? 'Picked Up' : 'Awaiting Pickup'}
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-xs text-slate-600 font-bold uppercase tracking-wider">{b.requester?.full_name} • {b.location}</p>
-                  
-                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 mt-2">
-                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Items Processed:</span>
-                    <div className="space-y-1">
-                      {myItems.map((item) => {
-                        const statusStr = item.status as string;
-                        return (
-                          <div key={item.id} className="text-xs font-bold text-slate-700 flex justify-between items-center py-1">
-                            <span>{item.inventory?.name || item.custom_item_name}</span>
-                            <div className="flex items-center gap-2">
-                              <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest ${
-                                statusStr === 'Available' || statusStr === 'Stock Injected'
-                                  ? 'bg-emerald-100 text-emerald-700'
-                                  : statusStr === 'Not Provided'
-                                  ? 'bg-red-100 text-red-600'
-                                  : statusStr === 'Ordered' || statusStr === 'PO Issued'
-                                  ? 'bg-purple-100 text-purple-700'
-                                  : 'bg-amber-100 text-amber-800'
-                              }`}>
-                                {statusStr}
-                              </span>
-                              <span className="text-brand-maroon font-black">Qty: {item.requested_qty}</span>
-                            </div>
-                          </div>
-                        );
-                      })}
+              const showSiy = (userRole === 'SIYANAT_HEAD' || userRole === 'SUPER_ADMIN' || userRole === 'ADMIN') && e.siyanat_status !== 'Not Required';
+              const showAvit = (userRole === 'AVIT_HEAD' || userRole === 'SUPER_ADMIN' || userRole === 'ADMIN') && e.avit_status !== 'Not Required';
+
+              return (
+                <div key={e.id} className="bg-white rounded-3xl p-5 shadow-sm border border-slate-200 flex flex-col md:flex-row gap-5">
+                  <div className="flex-1 space-y-3">
+                    <h3 className="font-black text-purple-800 text-lg leading-tight">{e.event_title}</h3>
+                    <p className="text-xs text-slate-600 font-bold uppercase tracking-wider">{e.location} • {new Date(e.event_date).toLocaleDateString()} ({e.time_slot})</p>
+                    
+                    <div className="flex flex-col gap-2 mt-2">
+                      {showSiy && (
+                        <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Siyanat Facility Setup</span>
+                          {siyItems.length === 0 ? <span className="text-xs text-slate-400 italic">General Room Setup</span> : siyItems.map((req: any) => (
+                            <div key={req.id} className="text-xs font-bold text-slate-700 py-0.5">• {req.item_name} (x{req.approved_qty || 1})</div>
+                          ))}
+                        </div>
+                      )}
+                      {showAvit && (
+                        <div className="bg-indigo-50 p-3 rounded-xl border border-indigo-100">
+                          <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1 block">AVIT Presentation Setup</span>
+                          {avitItems.length === 0 ? <span className="text-xs text-indigo-400 italic">General AV Setup</span> : avitItems.map((req: any) => (
+                            <div key={req.id} className="text-xs font-bold text-indigo-900 py-0.5">• {req.item_name} (x{req.approved_qty || 1})</div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
+                  
+                  <div className="flex flex-col gap-2 justify-center border-t md:border-t-0 md:border-l border-slate-100 pt-4 md:pt-0 md:pl-5 w-full md:w-48">
+                    {showSiy && e.siyanat_status === 'Pending Acknowledgment' && (
+                      <button onClick={() => handleAcknowledgeEvent(e.id, 'SIYANAT_HEAD')} disabled={processingId === e.id} className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black uppercase tracking-wider rounded-xl text-[10px] shadow-sm transition">
+                        Acknowledge Siyanat
+                      </button>
+                    )}
+                    {showSiy && e.siyanat_status === 'Acknowledged' && (
+                      <div className="w-full py-3 bg-slate-100 text-emerald-700 font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5">
+                        <CheckCircle className="w-4 h-4"/> Siyanat Ack'd
+                      </div>
+                    )}
+                    {showAvit && e.avit_status === 'Pending Acknowledgment' && (
+                      <button onClick={() => handleAcknowledgeEvent(e.id, 'AVIT_HEAD')} disabled={processingId === e.id} className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase tracking-wider rounded-xl text-[10px] shadow-sm transition">
+                        Acknowledge AVIT
+                      </button>
+                    )}
+                    {showAvit && e.avit_status === 'Acknowledged' && (
+                      <div className="w-full py-3 bg-slate-100 text-indigo-700 font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5">
+                        <CheckCircle className="w-4 h-4"/> AVIT Ack'd
+                      </div>
+                    )}
+                  </div>
                 </div>
+              );
+            })}
+          </div>
+        )
+      ) : (
+        // --- STANDARD MATERIAL / WORK ORDER QUEUE ---
+        batches.length === 0 ? (
+          <div className="p-12 text-center bg-white rounded-3xl border border-slate-200 shadow-sm">
+            <Package className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+            <p className="text-slate-500 font-bold uppercase tracking-wider text-xs">
+              {viewMode === 'active' ? 'No active material batches.' : 'No historical records found.'}
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-4">
+            {batches.map(b => {
+              const myItems = b.items.filter(i => userRole === 'SUPER_ADMIN' || userRole === 'ADMIN' || i.fulfillment_dept === userRole);
+              const needsReview = myItems.some(i => (i.status as string) === 'Pending');
+              const needsPO = myItems.some(i => (i.status as string) === 'Ordered');
+              const activeBadge = getActiveBatchBadge(b, myItems);
 
-                <div className="flex gap-2 flex-wrap md:flex-col md:w-48 justify-center border-t md:border-t-0 md:border-l border-slate-100 pt-4 md:pt-0 md:pl-5">
-                  {viewMode === 'active' && (
-                    <>
-                      {needsReview && (
-                        <button onClick={() => openReviewModal(b)} className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5 shadow-sm transition">
-                          <SplitSquareHorizontal className="w-4 h-4"/> Review & Split
-                        </button>
+              return (
+                <div key={b.id} className={`bg-white rounded-3xl p-5 shadow-sm border flex flex-col md:flex-row justify-between gap-5 transition hover:shadow-md ${b.pipeline_state === 'REJECTED' ? 'border-red-200' : 'border-slate-200'}`}>
+                  <div className="space-y-3 flex-1 w-full">
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-black text-brand-maroon text-lg">Batch: {b.batch_id}</h3>
+                      {viewMode === 'active' ? (
+                        <span className={`px-2 py-0.5 text-[9px] font-black uppercase rounded ${activeBadge.className}`}>
+                          {activeBadge.label}
+                        </span>
+                      ) : (
+                        <span className={`px-2.5 py-0.5 text-[10px] font-black uppercase tracking-widest rounded ${b.pipeline_state === 'REJECTED' ? 'bg-red-100 text-red-600' : b.pipeline_state === 'CLOSED' ? 'bg-slate-200 text-slate-600' : 'bg-emerald-100 text-emerald-800'}`}>
+                          {b.pipeline_state === 'REJECTED' ? 'Rejected' : b.pipeline_state === 'CLOSED' ? 'Picked Up' : 'Awaiting Pickup'}
+                        </span>
                       )}
-                      {!needsReview && needsPO && (
-                        <>
-                          <button onClick={() => setPoBatch(b)} className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5 shadow-sm transition">
-                            <ShoppingCart className="w-4 h-4"/> Issue PO (Missing)
-                          </button>
-                          <button onClick={() => openReviewModal(b)} className="w-full py-2.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5 shadow-sm transition">
-                            <SplitSquareHorizontal className="w-3.5 h-3.5"/> Edit / Reject
-                          </button>
-                        </>
-                      )}
-                      {!needsReview && !needsPO && (
-                        <button onClick={() => openReviewModal(b)} className="w-full py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5 border border-slate-200 transition">
-                          <CheckCircle className="w-4 h-4"/> Re-Review Batch
-                        </button>
-                      )}
-                    </>
-                  )}
-                  
-                  {/* 1-Click Printable Gate Pass Button */}
-                  <button 
-                    onClick={() => generateDispatchSlip(b, userRole)} 
-                    className="w-full py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5 border border-slate-300 shadow-sm transition"
-                  >
-                    <Printer className="w-4 h-4 text-slate-600"/> Print Gate Slip
-                  </button>
+                    </div>
+                    <p className="text-xs text-slate-600 font-bold uppercase tracking-wider">{b.requester?.full_name} • {b.location}</p>
+                    
+                    <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 mt-2">
+                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Items Processed:</span>
+                      <div className="space-y-1">
+                        {myItems.map((item) => {
+                          const statusStr = item.status as string;
+                          return (
+                            <div key={item.id} className="text-xs font-bold text-slate-700 flex justify-between items-center py-1">
+                              <span>{item.inventory?.name || item.custom_item_name}</span>
+                              <div className="flex items-center gap-2">
+                                <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest ${
+                                  statusStr === 'Available' || statusStr === 'Stock Injected'
+                                    ? 'bg-emerald-100 text-emerald-700'
+                                    : statusStr === 'Not Provided'
+                                    ? 'bg-red-100 text-red-600'
+                                    : statusStr === 'Ordered' || statusStr === 'PO Issued'
+                                    ? 'bg-purple-100 text-purple-700'
+                                    : 'bg-amber-100 text-amber-800'
+                                }`}>
+                                  {statusStr}
+                                </span>
+                                <span className="text-brand-maroon font-black">Qty: {item.requested_qty}</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
 
-                  <button onClick={() => setChatBatch(b)} className="w-full py-3 bg-slate-800 hover:bg-slate-900 text-white font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5 shadow-sm transition">
-                    <MessageSquare className="w-4 h-4"/> Thread
-                  </button>
-                  
-                  {userRole === 'SUPER_ADMIN' && viewMode === 'active' && (
-                    <button onClick={() => setDeleteTarget(b)} className="w-full py-3 bg-white hover:bg-red-50 text-red-600 font-black uppercase tracking-wider rounded-xl border border-red-200 text-[10px] flex items-center justify-center shadow-sm transition">
-                      <Trash2 className="w-4 h-4"/>
+                  <div className="flex gap-2 flex-wrap md:flex-col md:w-48 justify-center border-t md:border-t-0 md:border-l border-slate-100 pt-4 md:pt-0 md:pl-5">
+                    {viewMode === 'active' && (
+                      <>
+                        {needsReview && (
+                          <button onClick={() => openReviewModal(b)} className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5 shadow-sm transition">
+                            <SplitSquareHorizontal className="w-4 h-4"/> Review & Split
+                          </button>
+                        )}
+                        {!needsReview && needsPO && (
+                          <>
+                            <button onClick={() => setPoBatch(b)} className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5 shadow-sm transition">
+                              <ShoppingCart className="w-4 h-4"/> Issue PO (Missing)
+                            </button>
+                            <button onClick={() => openReviewModal(b)} className="w-full py-2.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5 shadow-sm transition">
+                              <SplitSquareHorizontal className="w-3.5 h-3.5"/> Edit / Reject
+                            </button>
+                          </>
+                        )}
+                        {!needsReview && !needsPO && (
+                          <button onClick={() => openReviewModal(b)} className="w-full py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5 border border-slate-200 transition">
+                            <CheckCircle className="w-4 h-4"/> Re-Review Batch
+                          </button>
+                        )}
+                      </>
+                    )}
+                    
+                    {/* 1-Click Printable Gate Pass Button */}
+                    <button 
+                      onClick={() => generateDispatchSlip(b, userRole)} 
+                      className="w-full py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5 border border-slate-300 shadow-sm transition"
+                    >
+                      <Printer className="w-4 h-4 text-slate-600"/> Print Gate Slip
                     </button>
-                  )}
+
+                    <button onClick={() => setChatBatch(b)} className="w-full py-3 bg-slate-800 hover:bg-slate-900 text-white font-black uppercase tracking-wider rounded-xl text-[10px] flex items-center justify-center gap-1.5 shadow-sm transition">
+                      <MessageSquare className="w-4 h-4"/> Thread
+                    </button>
+                    
+                    {userRole === 'SUPER_ADMIN' && viewMode === 'active' && (
+                      <button onClick={() => setDeleteTarget(b)} className="w-full py-3 bg-white hover:bg-red-50 text-red-600 font-black uppercase tracking-wider rounded-xl border border-red-200 text-[10px] flex items-center justify-center shadow-sm transition">
+                        <Trash2 className="w-4 h-4"/>
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )
       )}
 
-      {poBatch && user && <VendorPOEngine batch={poBatch} userEmail={user.email || ''} onClose={() => setPoBatch(null)} onSuccess={() => { setPoBatch(null); fetchMaterials(); }} />}
+      {poBatch && user && <VendorPOEngine batch={poBatch} userEmail={user.email || ''} onClose={() => setPoBatch(null)} onSuccess={() => { setPoBatch(null); fetchData(); }} />}
       {chatBatch && user && <BatchDetailsModal batchId={chatBatch.batch_id} workOrderId={chatBatch.id} isOpen={!!chatBatch} onClose={() => setChatBatch(null)} currentUser={user} />}
       
       {deleteTarget && (
