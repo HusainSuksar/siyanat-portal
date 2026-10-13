@@ -219,7 +219,7 @@ export default function StandardUserDashboard() {
               const sla = getDeliverySlaMessage(req);
 
               return (
-                <div key={req.id} className="bg-white rounded-3xl p-5 md:p-6 shadow-sm border border-slate-200 flex flex-col justify-between gap-4 transition hover:shadow-md">
+                <div key={req.id} className={`bg-white rounded-3xl p-5 md:p-6 shadow-sm border flex flex-col justify-between gap-4 transition hover:shadow-md ${req.pipeline_state === 'REJECTED' ? 'border-red-200 bg-red-50/10' : 'border-slate-200'}`}>
                    <div>
                      <div className="flex justify-between items-start">
                        <div>
@@ -277,18 +277,36 @@ export default function StandardUserDashboard() {
               <div 
                 key={c.id} 
                 onClick={() => navigate(`/complaints/${c.complaint_id}`)}
-                className="bg-white rounded-3xl p-5 md:p-6 shadow-sm border border-slate-200 flex flex-col justify-between gap-4 transition hover:shadow-md cursor-pointer hover:border-slate-300"
+                className={`bg-white rounded-3xl p-5 md:p-6 shadow-sm border flex flex-col justify-between gap-4 transition hover:shadow-md cursor-pointer ${c.pipeline_state === 'REJECTED' ? 'border-red-200 hover:border-red-300 bg-red-50/20' : 'border-slate-200 hover:border-slate-300'}`}
               >
                  <div>
                    <div className="flex justify-between items-start">
                      <div>
-                       <span className="font-black text-brand-maroon text-base">{c.complaint_id}</span>
+                       <div className="flex items-center gap-2">
+                         <span className="font-black text-brand-maroon text-base">{c.complaint_id}</span>
+                         {c.pipeline_state === 'REJECTED' && (
+                           <span className="px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest bg-red-100 text-red-700 border border-red-200">
+                             Declined
+                           </span>
+                         )}
+                       </div>
                        <h4 className="font-bold text-slate-800 text-sm mt-0.5">{c.category}</h4>
                        <p className="text-[11px] text-slate-500 font-medium">{c.zone} - {c.venue} ({c.room_area})</p>
                      </div>
                      <span className="text-[10px] font-bold text-slate-400 uppercase">{new Date(c.created_at).toLocaleDateString()}</span>
                    </div>
                    <p className="text-xs text-slate-600 font-medium mt-3 bg-slate-50 p-3 rounded-xl border border-slate-100 line-clamp-2">{c.description}</p>
+
+                   {/* REJECTION REASON DISPLAY */}
+                   {c.pipeline_state === 'REJECTED' && c.resolution_notes && (
+                     <div className="mt-3 bg-red-50 p-3 rounded-xl border border-red-100 flex items-start gap-2">
+                       <Ban className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                       <div>
+                         <span className="text-[10px] font-black text-red-600 uppercase tracking-widest block mb-0.5">Request Declined</span>
+                         <p className="text-xs font-semibold text-red-900">{c.resolution_notes}</p>
+                       </div>
+                     </div>
+                   )}
                  </div>
                  <VisualPipelineStepper type="COMPLAINT" pipelineState={c.pipeline_state} />
               </div>
@@ -306,7 +324,7 @@ export default function StandardUserDashboard() {
               const needsReturnReminder = e.pipeline_state === 'CLOSED' && pendingReturns.length > 0;
 
               return (
-                <div key={e.id} className={`bg-white rounded-3xl p-5 md:p-6 shadow-sm border flex flex-col justify-between gap-4 transition hover:shadow-md ${e.pipeline_state === 'REJECTED' ? 'border-red-200' : 'border-slate-200'}`}>
+                <div key={e.id} className={`bg-white rounded-3xl p-5 md:p-6 shadow-sm border flex flex-col justify-between gap-4 transition hover:shadow-md ${e.pipeline_state === 'REJECTED' ? 'border-red-200 bg-red-50/10' : 'border-slate-200'}`}>
                   <div>
                     <div className="flex justify-between items-start">
                       <div>
@@ -389,7 +407,7 @@ export default function StandardUserDashboard() {
 
             {/* 4. FLEET TAB */}
             {activeTab === 'fleet' && !isStandardUser && (fleet.length === 0 ? <div className="p-12 text-center bg-white rounded-3xl border border-slate-200 text-slate-400 italic font-bold">No fleet requests booked.</div> : fleet.map((f) => (
-              <div key={f.id} className="bg-white rounded-3xl p-5 md:p-6 shadow-sm border border-slate-200 flex flex-col justify-between gap-4 transition hover:shadow-md">
+              <div key={f.id} className={`bg-white rounded-3xl p-5 md:p-6 shadow-sm border flex flex-col justify-between gap-4 transition hover:shadow-md ${f.pipeline_state === 'REJECTED' ? 'border-red-200 bg-red-50/10' : 'border-slate-200'}`}>
                  <div className="flex justify-between items-start">
                    <div><span className="font-black text-brand-maroon text-base">{f.destination}</span><p className="text-xs font-bold text-slate-700 mt-0.5">Purpose: {f.purpose}</p></div>
                    <div className="text-right"><div className="font-bold text-slate-800 text-xs">{new Date(f.request_date).toLocaleDateString()}</div><div className="text-[9px] font-black text-emerald-600 uppercase mt-0.5">Reach: {f.arrival_time}</div></div>
