@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import type { UserRole } from '../utils/roles';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -15,7 +16,7 @@ export type Profile = {
   its_number: string;
   full_name: string;
   department: string;
-  role: 'ADMIN' | 'SIYANAT_HEAD' | 'REQUESTER';
+  role: UserRole;
 };
 
 export type InventoryItem = {

@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { Car, Send, MapPin, Clock, Users, ShieldAlert, Route as RouteIcon, Map } from 'lucide-react';
 import { ZONE_COORDINATES, LOCAL_LANDMARKS } from '../constants/locations';
 import { useSystemConfig } from '../hooks/useSystemConfig';
+import { canBookFleet } from '../utils/roles';
 
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
 
@@ -70,7 +71,7 @@ export default function BookVehicle() {
   const [othersCount, setOthersCount] = useState(0);
   const totalCount = maleCount + femaleCount + othersCount;
 
-  const isStandardUser = role === 'REQUESTER';
+  const isUnauthorized = !canBookFleet(role);
 
   // Mobile Past Date Validation Interceptor
   const handleDateChange = (selectedDate: string) => {
@@ -239,7 +240,7 @@ export default function BookVehicle() {
     }
   };
 
-  if (isStandardUser) {
+  if (isUnauthorized) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] text-center p-6">
         <ShieldAlert className="w-16 h-16 text-red-500 mb-4" />

@@ -67,14 +67,15 @@ export default function SupervisorQueue() {
     const { error } = await supabase.rpc('advance_pipeline', { target_table: 'complaints', target_id: id });
 
     if (!error) {
-      await supabase.from('system_logs').insert({
+      const { error: logErr } = await supabase.from('system_logs').insert({
         action_type: 'SUPERVISOR_APPROVED',
         description: `Supervisor approved complaint ${complaintIdName} and forwarded to Siyanat Operations.`,
         user_email: userProfile?.email || 'Supervisor'
       });
+      if (logErr) console.warn('Audit log insert failed:', logErr.message);
       fetchQueue();
     } else {
-      alert('Error advancing pipeline.');
+      alert(`Error advancing pipeline: ${error.message}`);
     }
     setProcessingId(null);
   };
@@ -94,23 +95,34 @@ export default function SupervisorQueue() {
     if (modalAction === 'REJECT') {
       const { error } = await supabase.from('complaints').update({ pipeline_state: 'REJECTED', rejection_reason: reasonText }).eq('id', targetComplaint.id);
       if (!error) {
-        await supabase.from('system_logs').insert({
+        const { error: logErr } = await supabase.from('system_logs').insert({
           action_type: 'SUPERVISOR_REJECTED',
           description: `Supervisor rejected complaint ${targetComplaint.complaint_id}. Reason: ${reasonText}`,
           user_email: userProfile?.email || 'Supervisor'
         });
+        if (logErr) console.warn('Audit log insert failed:', logErr.message);
+      } else {
+        alert(`Error rejecting complaint: ${error.message}`);
       }
     } else {
       const { error: compError } = await supabase.from('complaints').update({ pipeline_state: 'PROCESSING' }).eq('id', targetComplaint.id);
-      await supabase.from('technician_assignments').update({ status: 'Assigned' }).eq('complaint_id', targetComplaint.id);
-
-      if (!compError) {
-        await supabase.from('system_logs').insert({
-          action_type: 'SUPERVISOR_REOPENED',
-          description: `Supervisor reopened complaint ${targetComplaint.complaint_id}. Reason: ${reasonText}`,
-          user_email: userProfile?.email || 'Supervisor'
-        });
+      if (compError) {
+        alert(`Error reopening complaint: ${compError.message}`);
+        setProcessingId(null);
+        return;
       }
+
+      const { error: assignError } = await supabase.from('technician_assignments').update({ status: 'Assigned' }).eq('complaint_id', targetComplaint.id);
+      if (assignError) {
+        console.warn('Failed to update assignment status:', assignError.message);
+      }
+
+      const { error: logErr } = await supabase.from('system_logs').insert({
+        action_type: 'SUPERVISOR_REOPENED',
+        description: `Supervisor reopened complaint ${targetComplaint.complaint_id}. Reason: ${reasonText}`,
+        user_email: userProfile?.email || 'Supervisor'
+      });
+      if (logErr) console.warn('Audit log insert failed:', logErr.message);
     }
 
     setReasonModalOpen(false);
@@ -125,14 +137,15 @@ export default function SupervisorQueue() {
     const { error } = await supabase.rpc('advance_pipeline', { target_table: 'complaints', target_id: id });
 
     if (!error) {
-      await supabase.from('system_logs').insert({
+      const { error: logErr } = await supabase.from('system_logs').insert({
         action_type: 'SUPERVISOR_VERIFIED',
         description: `Supervisor officially verified and signed-off on complaint ${complaintIdName}.`,
         user_email: userProfile?.email || 'Supervisor'
       });
+      if (logErr) console.warn('Audit log insert failed:', logErr.message);
       fetchQueue();
     } else {
-      alert('Error verifying complaint.');
+      alert(`Error verifying complaint: ${error.message}`);
     }
     setProcessingId(null);
   };

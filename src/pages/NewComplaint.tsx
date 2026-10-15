@@ -155,25 +155,36 @@ export default function NewComplaint() {
             .from('complaint_photos')
             .upload(filePath, fileToUpload);
 
-          if (!uploadError) {
+          if (uploadError) {
+            console.error(`Storage upload failed for ${originalFile.name}:`, uploadError);
+            alert(`Failed to upload photo "${originalFile.name}": ${uploadError.message}`);
+          } else {
             const { data: publicUrlData } = supabase.storage
               .from('complaint_photos')
               .getPublicUrl(filePath);
 
-            await supabase.from('complaint_photos').insert({ 
+            const { error: photoDbError } = await supabase.from('complaint_photos').insert({ 
               complaint_id: complaintData.id, 
               file_name: originalFile.name, 
               file_url: publicUrlData.publicUrl 
             });
+
+            if (photoDbError) {
+              console.error(`Failed to record photo attachment ${originalFile.name}:`, photoDbError);
+              alert(`Failed to save photo record for "${originalFile.name}": ${photoDbError.message}`);
+            }
           }
         }
       }
 
-      await supabase.from('system_logs').insert({
+      const { error: logError } = await supabase.from('system_logs').insert({
         action_type: 'COMPLAINT_REGISTERED',
         description: `Registered structural complaint ${complaintData.complaint_id} in ${selectedZone}.`,
         user_email: authData.user.email || 'Requester'
       });
+      if (logError) {
+        console.warn('System log insert failed:', logError.message);
+      }
 
       setSuccessRef(complaintData.complaint_id);
       

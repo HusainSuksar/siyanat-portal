@@ -1,13 +1,14 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import type { Session, User } from '@supabase/supabase-js';
+import type { UserRole } from '../utils/roles';
 
 // 1. Define the shape of our global memory
 type AuthContextType = {
   session: Session | null;
   user: User | null;
   profile: any | null; // Holds their zone, department, trade, etc.
-  role: string;        // Holds STANDARD_USER, SIYANAT_HEAD, etc.
+  role: UserRole;        // Single source of truth UserRole
   loading: boolean;
 };
 
@@ -19,7 +20,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<any | null>(null);
-  const [role, setRole] = useState<string>('STANDARD_USER');
+  const [role, setRole] = useState<UserRole>('REQUESTER');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -41,7 +42,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             .single();
             
           setProfile(data);
-          setRole(data?.role || 'STANDARD_USER');
+          const resolvedRole = (data?.role === 'STANDARD_USER' ? 'REQUESTER' : data?.role) as UserRole || 'REQUESTER';
+          setRole(resolvedRole);
         }
         
         setLoading(false);
@@ -58,10 +60,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (session?.user) {
         const { data } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
         setProfile(data);
-        setRole(data?.role || 'STANDARD_USER');
+        const resolvedRole = (data?.role === 'STANDARD_USER' ? 'REQUESTER' : data?.role) as UserRole || 'REQUESTER';
+        setRole(resolvedRole);
       } else {
         setProfile(null);
-        setRole('STANDARD_USER');
+        setRole('REQUESTER');
       }
       setLoading(false);
     });

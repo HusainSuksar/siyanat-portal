@@ -74,9 +74,13 @@ export default function NotificationBell() {
   const handleNotificationClick = async (notif: any) => {
     // 1. Mark as read
     if (!notif.is_read) {
-      await supabase.from('in_app_notifications').update({ is_read: true }).eq('id', notif.id);
-      setUnreadCount(prev => Math.max(0, prev - 1));
-      setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, is_read: true } : n));
+      const { error } = await supabase.from('in_app_notifications').update({ is_read: true }).eq('id', notif.id);
+      if (error) {
+        console.warn('Failed to mark notification as read:', error.message);
+      } else {
+        setUnreadCount(prev => Math.max(0, prev - 1));
+        setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, is_read: true } : n));
+      }
     }
     
     setIsOpen(false);
@@ -109,9 +113,13 @@ export default function NotificationBell() {
 
   const markAllAsRead = async () => {
     if (!user) return;
-    await supabase.from('in_app_notifications').update({ is_read: true }).eq('user_id', user.id).eq('is_read', false);
-    setUnreadCount(0);
-    setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
+    const { error } = await supabase.from('in_app_notifications').update({ is_read: true }).eq('user_id', user.id).eq('is_read', false);
+    if (error) {
+      console.warn('Failed to mark all notifications as read:', error.message);
+    } else {
+      setUnreadCount(0);
+      setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
+    }
   };
 
   return (

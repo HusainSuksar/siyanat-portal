@@ -5,9 +5,12 @@ export type UserRole =
   | 'AVIT_HEAD' 
   | 'TANZEEM_HEAD' 
   | 'DEPT_HEAD' 
+  | 'SUPERVISOR'
   | 'REQUESTER' 
   | 'EXECUTOR' 
-  | 'RECEPTIONIST';
+  | 'TECHNICIAN'
+  | 'RECEPTIONIST'
+  | 'STANDARD_USER';
 
 export const ELEVATED_REQUESTER_ROLES: UserRole[] = [
   'DEPT_HEAD', 
@@ -18,14 +21,24 @@ export const ELEVATED_REQUESTER_ROLES: UserRole[] = [
   'TANZEEM_HEAD'
 ];
 
-export const canBookFleet = (role: string): boolean => {
+export const canBookFleet = (role: string | null | undefined): boolean => {
+  if (!role) return false;
   return ELEVATED_REQUESTER_ROLES.includes(role as UserRole);
 };
 
-export const canBookAfterClassEvents = (role: string): boolean => {
+export const canBookAfterClassEvents = (role: string | null | undefined): boolean => {
+  if (!role) return false;
   return ELEVATED_REQUESTER_ROLES.includes(role as UserRole);
 };
 
-export const isDepartmentHead = (role: string): boolean => {
+export const isDepartmentHead = (role: string | null | undefined): boolean => {
   return role === 'DEPT_HEAD';
+};
+
+export const isTechnicianRole = (role: string | null | undefined): boolean => {
+  return role === 'EXECUTOR' || role === 'TECHNICIAN';
+};
+
+export const isSupervisorRole = (role: string | null | undefined): boolean => {
+  return role === 'SUPERVISOR';
 };

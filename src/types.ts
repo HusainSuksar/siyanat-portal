@@ -1,10 +1,11 @@
 // src/types.ts
+import type { UserRole } from './utils/roles';
 
 export interface Profile {
   id: string; // <-- Added this
   full_name: string;
   department: string;
-  role?: string;
+  role?: UserRole;
 }
 
 export interface InventoryItem {

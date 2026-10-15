@@ -30,6 +30,7 @@ import InstallAppButton from './components/InstallAppButton';
 import MyRequests from "./pages/MyRequests";
 import SystemConfigManager from "./components/admin/SystemConfigManager";
 import GlobalActionController from "./components/GlobalActionController";
+import { canBookFleet } from "./utils/roles";
 
 // Clean Logout: Non-blocking push detachment + guaranteed signout
 const performCleanLogout = async () => {
@@ -173,7 +174,7 @@ const DesktopNavigation = ({ userRole, badges }: { userRole: string; badges: any
   const isReceptionist = userRole === 'RECEPTIONIST' || isGodMode;
   
   const canCreateRequests = true;
-  const canBookVehicle = !['STANDARD_USER', 'REQUESTER'].includes(userRole);
+  const canBookVehicle = canBookFleet(userRole);
 
   return (
     <div className="hidden md:block bg-white border-b border-slate-200 shadow-sm sticky top-[57px] z-40">
@@ -302,7 +303,7 @@ const MobileDrawerNavigation = ({ userRole, isOpen, setIsOpen, badges }: { userR
   const isReceptionist = userRole === 'RECEPTIONIST' || isGodMode;
   
   const canCreateRequests = true;
-  const canBookVehicle = !['STANDARD_USER', 'REQUESTER'].includes(userRole);
+  const canBookVehicle = canBookFleet(userRole);
 
   return (
     <div className="md:hidden fixed inset-0 z-50 bg-black/50 flex justify-end">
@@ -475,7 +476,7 @@ export default function App() {
           <Route path="/new-complaint" element={session ? <PortalLayout userRole={role} userId={session.user.id}><NewComplaint /></PortalLayout> : <Navigate to="/login" />} />
           <Route path="/book-event" element={session ? <PortalLayout userRole={role} userId={session.user.id}><BookEvent /></PortalLayout> : <Navigate to="/login" />} />
           <Route path="/profile" element={session ? <PortalLayout userRole={role} userId={session.user.id}><UserProfile /></PortalLayout> : <Navigate to="/login" />} />
-          <Route path="/book-vehicle" element={session ? <PortalLayout userRole={role} userId={session.user.id}><BookVehicle /></PortalLayout> : <Navigate to="/" />} />
+          <Route path="/book-vehicle" element={session && canBookFleet(role) ? <PortalLayout userRole={role} userId={session.user.id}><BookVehicle /></PortalLayout> : <Navigate to="/" />} />
           <Route path="/my-requests" element={session ? <PortalLayout userRole={role} userId={session.user.id}><MyRequests /></PortalLayout> : <Navigate to="/login" />} />
           
           {/* Legacy & Direct Route Fallback Alias */}

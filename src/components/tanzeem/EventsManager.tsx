@@ -132,14 +132,20 @@ export default function EventsManager() {
     try {
       // 1. Sync reviewed decisions to event_requirements table
       if (decisions && decisions.length > 0) {
-        for (const dec of decisions) {
-          await supabase.from('event_requirements').update({
+        const updatePromises = decisions.map(async (dec) => {
+          const { error: updateErr } = await supabase.from('event_requirements').update({
             status: dec.status,
             is_returnable: dec.is_returnable,
             approved_qty: dec.status === 'Approved' ? dec.approved_qty : 0,
             return_status: dec.status === 'Approved' && dec.is_returnable ? 'PENDING_RETURN' : null
           }).eq('id', dec.id);
-        }
+
+          if (updateErr) {
+            throw new Error(`Failed to update requirement "${dec.item_name}": ${updateErr.message}`);
+          }
+        });
+
+        await Promise.all(updatePromises);
       }
 
       // 2. Trigger notification & acknowledgment handoff RPC

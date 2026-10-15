@@ -3,10 +3,10 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { 
   Plus, Trash2, Save, Hash, UploadCloud, DownloadCloud, MapPin, 
-   AlertTriangle, CheckCircle, XCircle, Loader2, Sparkles
+  AlertTriangle, CheckCircle, XCircle, Loader2, Sparkles
 } from 'lucide-react';
 import { useToast } from '../../hooks/useToast';
-import { useSystemConfig } from '../../hooks/useSystemConfig'; // <-- ADD THIS IMPORT
+import { useSystemConfig } from '../../hooks/useSystemConfig';
 
 interface RestockRow {
   id: string;
@@ -25,8 +25,6 @@ interface Props {
   isTanzeemOnly: boolean;
   onRefresh: () => void;
 }
-
-
 
 export default function BulkRestockTab({ catalog, locations, isTanzeemOnly, onRefresh }: Props) {
   const { user } = useAuth();
@@ -55,7 +53,7 @@ export default function BulkRestockTab({ catalog, locations, isTanzeemOnly, onRe
   const availableCategories = dynamicCategories
     .filter(c => isTanzeemOnly ? c.department === 'TANZEEM_HEAD' : true)
     .map(c => c.name)
-    .filter((v, i, a) => a.indexOf(v) === i); // Unique categories
+    .filter((v, i, a) => a.indexOf(v) === i);
 
   const defaultLocationName = locations.length > 0 ? locations[0].name : 'Main Store';
 
@@ -178,23 +176,25 @@ export default function BulkRestockTab({ catalog, locations, isTanzeemOnly, onRe
           totalUnitsRestocked += row.qty;
           newItemsCount++;
         } else if (row.type === 'EXISTING' && row.itemId) {
-          const item = catalog.find(ci => ci.id === row.itemId);
-          if (item) {
-            await supabase.from('inventory_items').update({ 
-              physical_stock: item.physical_stock + row.qty,
-              warehouse_location: row.warehouse_location || item.warehouse_location 
-            }).eq('id', row.itemId);
-            totalUnitsRestocked += row.qty;
-            existingItemsCount++;
-          }
+          const { error } = await supabase.rpc('increment_inventory_stock', {
+            p_item_id: row.itemId,
+            p_qty_delta: row.qty,
+            p_new_location: row.warehouse_location || null
+          });
+          if (error) throw error;
+          totalUnitsRestocked += row.qty;
+          existingItemsCount++;
         }
       }
 
-      await supabase.from('system_logs').insert({
+      const { error: logError } = await supabase.from('system_logs').insert({
         action_type: 'INVENTORY_RESTOCK',
         description: `Bulk restocked ${rows.length} line items (${totalUnitsRestocked} units total).`,
         user_email: user?.email || 'System Admin'
       });
+      if (logError) {
+        console.error('Failed to write system_logs:', logError);
+      }
 
       setUploadResult({
         totalItems: rows.length,

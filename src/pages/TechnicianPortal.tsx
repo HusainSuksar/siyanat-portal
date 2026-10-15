@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase, type InventoryItem } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { Wrench, Printer, CheckCircle, MapPin, AlertCircle, PackageSearch, X, PlusCircle, Trash2, Send, PackageCheck, ListFilter, History as HistoryIcon } from 'lucide-react';
@@ -23,66 +23,84 @@ export default function TechnicianPortal() {
   const [customDept, setCustomDept] = useState('SIYANAT_HEAD'); // NEW: Department Routing State
   const [submittingMaterial, setSubmittingMaterial] = useState(false);
 
-  const fetchAssignments = async () => {
-    setLoading(true);
+  const fetchAssignments = useCallback(async () => {
     const userId = user?.id;
+    if (!userId) {
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', userId)
+      .single();
     
-    if (userId) {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .single();
-      
-      setUserProfile(profile);
+    setUserProfile(profile);
 
-      const targetStates = viewMode === 'active' 
-        ? ['PROCESSING', 'ACTION_REQUIRED'] 
-        : ['CLOSED'];
+    const targetStates = viewMode === 'active' 
+      ? ['PROCESSING', 'ACTION_REQUIRED'] 
+      : ['CLOSED'];
 
-      const { data, error } = await supabase
-        .from('technician_assignments')
-        .select(`
-          *,
-          complaint:complaints(*)
-        `)
-        .eq('technician_id', userId)
-        .in('complaint.pipeline_state', targetStates)
-        .order('assigned_at', { ascending: false });
+    const { data, error } = await supabase
+      .from('technician_assignments')
+      .select(`
+        *,
+        complaint:complaints(*)
+      `)
+      .eq('technician_id', userId)
+      .in('complaint.pipeline_state', targetStates)
+      .order('assigned_at', { ascending: false });
 
-      if (error) {
-        console.error("Database Error fetching assignments:", error.message);
-      }
-      
-      if (data) {
-        const validAssignments = data.filter(a => a.complaint !== null);
+    if (error) {
+      console.error("Database Error fetching assignments:", error.message);
+    }
+    
+    if (data) {
+      const validAssignments = data.filter(a => a.complaint !== null);
 
-        // Deduplicate assignments by complaint ID to prevent double cards
-        const uniqueAssignments = Array.from(
-          new Map(validAssignments.map(a => [a.complaint.id || a.complaint.complaint_id, a])).values()
-        );
+      // Deduplicate assignments by complaint ID to prevent double cards
+      const uniqueAssignments = Array.from(
+        new Map(validAssignments.map(a => [a.complaint.id || a.complaint.complaint_id, a])).values()
+      );
 
-        setAssignments(uniqueAssignments);
-      }
+      setAssignments(uniqueAssignments);
     }
     setLoading(false);
-  };
+  }, [user, viewMode]);
 
-  const fetchCatalog = async () => {
+  const fetchCatalog = useCallback(async () => {
     const { data } = await supabase.from('inventory_items').select('*').order('name');
     if (data) setCatalog(data);
-  };
+  }, []);
 
   useEffect(() => {
-    fetchAssignments();
-    fetchCatalog();
-  }, [viewMode, user]);
+    let isMounted = true;
+    const loadData = async () => {
+      if (isMounted) {
+        await Promise.all([fetchAssignments(), fetchCatalog()]);
+      }
+    };
+    loadData();
+    return () => {
+      isMounted = false;
+    };
+  }, [fetchAssignments, fetchCatalog]);
 
   const completeTask = async (assignmentId: string, complaintId: string) => {
     if (!confirm(`Mark this task as fully completed? The Supervisor will be notified to verify.`)) return;
 
-    await supabase.rpc('advance_pipeline', { target_table: 'complaints', target_id: complaintId });
-    await supabase.from('technician_assignments').update({ status: 'Completed' }).eq('id', assignmentId);
+    const { error: pipeErr } = await supabase.rpc('advance_pipeline', { target_table: 'complaints', target_id: complaintId });
+    if (pipeErr) {
+      alert(`Error completing task: ${pipeErr.message}`);
+      return;
+    }
+
+    const { error: assignErr } = await supabase.from('technician_assignments').update({ status: 'Completed' }).eq('id', assignmentId);
+    if (assignErr) {
+      console.warn('Assignment update warning:', assignErr.message);
+    }
     
     await supabase.from('system_logs').insert({
       action_type: 'TASK_COMPLETED',
@@ -95,7 +113,9 @@ export default function TechnicianPortal() {
 
   const resumeTask = async (assignmentId: string) => {
     try {
-      await supabase.from('technician_assignments').update({ status: 'Assigned' }).eq('id', assignmentId);
+      const { error } = await supabase.from('technician_assignments').update({ status: 'Assigned' }).eq('id', assignmentId);
+      if (error) throw error;
+
       await supabase.from('system_logs').insert({
         action_type: 'TECH_RESUMED_TASK',
         description: `Technician ${userProfile?.full_name} picked up requested materials and resumed work.`,
@@ -158,7 +178,8 @@ export default function TechnicianPortal() {
         urgency: 'High',
         reason: `Material required for Complaint: ${activeAssignment.complaint.complaint_id}`,
         approval_status: 'Pending Admin PO', 
-        dispatch_status: 'Pending'
+        dispatch_status: 'Pending',
+        pipeline_state: 'AUTHORIZED'
       }).select().single();
 
       if (woError) throw woError;
@@ -178,13 +199,15 @@ export default function TechnicianPortal() {
       const { error: itemsError } = await supabase.from('work_order_items').insert(itemsToInsert);
       if (itemsError) throw itemsError;
 
-      await supabase.from('technician_assignments').update({ status: 'Waiting for Material' }).eq('id', activeAssignment.id);
+      const { error: assignError } = await supabase.from('technician_assignments').update({ status: 'Waiting for Material' }).eq('id', activeAssignment.id);
+      if (assignError) console.warn('Failed to update assignment status:', assignError.message);
 
-      await supabase.from('system_logs').insert({
+      const { error: logError } = await supabase.from('system_logs').insert({
         action_type: 'TECH_MATERIAL_REQUEST',
         description: `Technician ${userProfile?.full_name} requested materials for ${activeAssignment.complaint.complaint_id}.`,
         user_email: userProfile?.email || user?.email || 'Technician'
       });
+      if (logError) console.warn('Failed to insert system log:', logError.message);
 
       alert("Material request sent to Operations for fulfillment!");
       setMaterialModalOpen(false);

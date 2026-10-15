@@ -20,7 +20,11 @@ export default function PendingPOsTab({ pendingPOs, role, onRefresh }: Props) {
     setProcessingId(poConfirmTarget.id);
 
     try {
-      await supabase.from('purchase_orders').update({ status: 'Fulfilled & Received' }).eq('id', poConfirmTarget.id);
+      const { error: poErr } = await supabase
+        .from('purchase_orders')
+        .update({ status: 'Fulfilled & Received' })
+        .eq('id', poConfirmTarget.id);
+      if (poErr) throw poErr;
 
       const affectedWorkOrderIds = new Set<string>();
 
@@ -28,15 +32,16 @@ export default function PendingPOsTab({ pendingPOs, role, onRefresh }: Props) {
         let targetInventoryId = item.inventory_id;
         
         if (!targetInventoryId && item.custom_item_name) {
-          const { data: woItems } = await supabase.from('work_order_items')
+          const { data: woItems, error: woFetchErr } = await supabase.from('work_order_items')
             .select('id, work_order_id, requested_qty')
             .eq('custom_item_name', item.custom_item_name)
             .in('status', ['Ordered', 'Pending', 'PO Issued']);
+          if (woFetchErr) throw woFetchErr;
             
           const totalReq = woItems?.reduce((sum, wi) => sum + wi.requested_qty, 0) || 0;
           woItems?.forEach(wi => affectedWorkOrderIds.add(wi.work_order_id));
 
-          const { data: newInv } = await supabase.from('inventory_items').insert({
+          const { data: newInv, error: invInsertErr } = await supabase.from('inventory_items').insert({
             item_id: `CAT-${Math.floor(10000 + Math.random() * 90000)}`,
             name: item.custom_item_name,
             category: 'General / Miscellaneous',
@@ -46,49 +51,61 @@ export default function PendingPOsTab({ pendingPOs, role, onRefresh }: Props) {
             fulfillment_dept: role?.includes('_HEAD') ? role : 'SIYANAT_HEAD',
             warehouse_location: 'Main Store'
           }).select().single();
+          if (invInsertErr) throw invInsertErr;
           
           if (newInv && woItems && woItems.length > 0) {
             targetInventoryId = newInv.id;
-            await supabase.from('work_order_items')
+            const { error: woUpdateErr } = await supabase.from('work_order_items')
               .update({ status: 'Stock Injected', inventory_id: targetInventoryId })
               .in('id', woItems.map(wi => wi.id));
+            if (woUpdateErr) throw woUpdateErr;
           }
 
         } else if (targetInventoryId) {
-          const { data: inv } = await supabase.from('inventory_items').select('physical_stock, freezed_stock').eq('id', targetInventoryId).single();
-          
-          if (inv) {
-            const { data: woItems } = await supabase.from('work_order_items')
-              .select('id, work_order_id, requested_qty')
-              .eq('inventory_id', targetInventoryId)
-              .in('status', ['Ordered', 'Pending', 'PO Issued']);
-              
-            const newReq = woItems?.reduce((sum, wi) => sum + wi.requested_qty, 0) || 0;
-            woItems?.forEach(wi => affectedWorkOrderIds.add(wi.work_order_id));
+          const { data: woItems, error: woFetchErr } = await supabase.from('work_order_items')
+            .select('id, work_order_id, requested_qty')
+            .eq('inventory_id', targetInventoryId)
+            .in('status', ['Ordered', 'Pending', 'PO Issued']);
+          if (woFetchErr) throw woFetchErr;
+            
+          const newReq = woItems?.reduce((sum, wi) => sum + wi.requested_qty, 0) || 0;
+          woItems?.forEach(wi => affectedWorkOrderIds.add(wi.work_order_id));
 
-            await supabase.from('inventory_items').update({ 
-              physical_stock: inv.physical_stock + item.requested_qty,
-              freezed_stock: inv.freezed_stock + newReq
-            }).eq('id', targetInventoryId);
+          const { error: rpcErr } = await supabase.rpc('increment_inventory_and_freeze_stock', {
+            p_item_id: targetInventoryId,
+            p_physical_delta: item.requested_qty,
+            p_freezed_delta: newReq
+          });
+          if (rpcErr) throw rpcErr;
 
-            if (woItems && woItems.length > 0) {
-              await supabase.from('work_order_items')
-                .update({ status: 'Stock Injected' })
-                .in('id', woItems.map(wi => wi.id));
-            }
+          if (woItems && woItems.length > 0) {
+            const { error: woUpdateErr } = await supabase.from('work_order_items')
+              .update({ status: 'Stock Injected' })
+              .in('id', woItems.map(wi => wi.id));
+            if (woUpdateErr) throw woUpdateErr;
           }
         }
       }
 
       if (poConfirmTarget.complaint_id) {
-        await supabase.from('technician_assignments').update({ status: 'Assigned' }).eq('complaint_id', poConfirmTarget.complaint_id);
-        await supabase.from('complaints').update({ pipeline_state: 'PROCESSING' }).eq('id', poConfirmTarget.complaint_id);
+        const { error: assignErr } = await supabase
+          .from('technician_assignments')
+          .update({ status: 'Assigned' })
+          .eq('complaint_id', poConfirmTarget.complaint_id);
+        if (assignErr) throw assignErr;
+
+        const { error: compErr } = await supabase
+          .from('complaints')
+          .update({ pipeline_state: 'PROCESSING' })
+          .eq('id', poConfirmTarget.complaint_id);
+        if (compErr) throw compErr;
       }
 
       for (const woId of Array.from(affectedWorkOrderIds)) {
-        await supabase.from('work_orders')
+        const { error: woStateErr } = await supabase.from('work_orders')
           .update({ pipeline_state: 'ACTION_REQUIRED', dispatch_status: 'Ready for Collection' })
           .eq('id', woId);
+        if (woStateErr) throw woStateErr;
       }
 
       showToast(`PO ${poConfirmTarget.po_number} received & warehouse stock updated!`, "success");

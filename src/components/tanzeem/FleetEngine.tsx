@@ -111,8 +111,12 @@ export default function FleetEngine() {
   };
 
   const toggleVehicleStatus = async (id: string, currentStatus: boolean) => {
-    await supabase.from('fleet_inventory').update({ is_active: !currentStatus }).eq('id', id);
-    fetchFleet();
+    const { error } = await supabase.from('fleet_inventory').update({ is_active: !currentStatus }).eq('id', id);
+    if (error) {
+      showToast('Failed to update vehicle status: ' + error.message, 'error');
+    } else {
+      fetchFleet();
+    }
   };
 
   // --- CONFLICT DETECTION ENGINE ---
@@ -158,9 +162,14 @@ export default function FleetEngine() {
     const assignmentString = assignments.map(a => `${a.name} (x${a.rounds} rounds)`).join(' | ');
 
     try {
-      await supabase.from('vehicle_requests').update({ assigned_vehicles: assignmentString, departure_time: departureTime }).eq('id', selectedReq.id);
-      await supabase.rpc('advance_pipeline', { target_table: 'vehicle_requests', target_id: selectedReq.id });
-      await supabase.from('system_logs').insert({ action_type: 'FLEET_DISPATCHED', description: `Dispatched fleet for ${selectedReq.destination}. Setup: ${assignmentString}.`, user_email: user?.email || 'Admin' });
+      const { error: updateErr } = await supabase.from('vehicle_requests').update({ assigned_vehicles: assignmentString, departure_time: departureTime }).eq('id', selectedReq.id);
+      if (updateErr) throw updateErr;
+
+      const { error: pipeErr } = await supabase.rpc('advance_pipeline', { target_table: 'vehicle_requests', target_id: selectedReq.id });
+      if (pipeErr) throw pipeErr;
+
+      const { error: logErr } = await supabase.from('system_logs').insert({ action_type: 'FLEET_DISPATCHED', description: `Dispatched fleet for ${selectedReq.destination}. Setup: ${assignmentString}.`, user_email: user?.email || 'Admin' });
+      if (logErr) console.warn('Audit log insert failed:', logErr.message);
 
       showToast('Fleet assigned and requester notified!', 'success');
       setFleetModalOpen(false); setAssignments([]); setDepartureTime('');
@@ -178,7 +187,9 @@ export default function FleetEngine() {
     setProcessingId(targetReq.id);
 
     try {
-      await supabase.from('vehicle_requests').update({ pipeline_state: 'REJECTED', rejection_reason: rejectionReason }).eq('id', targetReq.id);
+      const { error } = await supabase.from('vehicle_requests').update({ pipeline_state: 'REJECTED', rejection_reason: rejectionReason }).eq('id', targetReq.id);
+      if (error) throw error;
+
       showToast('Vehicle request rejected and requester notified.', 'success');
       setRejectModalOpen(false); setRejectionReason('');
       fetchFleet();

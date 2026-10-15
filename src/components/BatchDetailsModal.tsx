@@ -61,7 +61,12 @@ export default function BatchDetailsModal({
       message: newMessage.trim(),
     });
 
-    if (!error) setNewMessage('');
+    if (!error) {
+      setNewMessage('');
+    } else {
+      console.error('Failed to post message to batch thread:', error.message);
+      alert(`Failed to send message: ${error.message}`);
+    }
   };
 
   if (!isOpen) return null;
