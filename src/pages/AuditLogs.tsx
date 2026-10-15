@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { ShieldAlert, Search, RefreshCw, ChevronDown } from 'lucide-react';
 
@@ -13,7 +13,7 @@ export default function AuditLogs() {
   const [page, setPage] = useState(0);
 
   // Initial fetch and search fetch (resets to page 0)
-  const fetchLogs = async (search = searchTerm) => {
+  const fetchLogs = useCallback(async (search = '') => {
     setLoading(true);
     setPage(0);
 
@@ -37,7 +37,7 @@ export default function AuditLogs() {
       setHasMore(data.length === PAGE_SIZE && (count ? data.length < count : true));
     }
     setLoading(false);
-  };
+  }, []);
 
   // Load the next 50 records
   const loadMoreLogs = async () => {
@@ -80,7 +80,7 @@ export default function AuditLogs() {
     }, 400);
 
     return () => clearTimeout(delayDebounceFn);
-  }, [searchTerm]);
+  }, [searchTerm, fetchLogs]);
 
   return (
     <div className="space-y-6 pb-24">

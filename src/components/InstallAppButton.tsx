@@ -6,7 +6,7 @@ import { useAuth } from '../contexts/AuthContext';
 // Helper function to decode the VAPID Public Key for the browser
 function urlBase64ToUint8Array(base64String: string) {
   const padding = '='.repeat((4 - base64String.length % 4) % 4);
-  const base64 = (base64String + padding).replace(/\-/g, '+').replace(/_/g, '/');
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
   const rawData = window.atob(base64);
   const outputArray = new Uint8Array(rawData.length);
   for (let i = 0; i < rawData.length; ++i) {
@@ -18,22 +18,17 @@ function urlBase64ToUint8Array(base64String: string) {
 export default function InstallAppButton() {
   const { user } = useAuth();
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
-  const [isIOS, setIsIOS] = useState(false);
-  const [isStandalone, setIsStandalone] = useState(false);
+  const isIOS = typeof window !== 'undefined' && /iphone|ipad|ipod/.test(window.navigator.userAgent.toLowerCase());
+  const isStandalone = typeof window !== 'undefined' && (window.matchMedia('(display-mode: standalone)').matches || Boolean((window.navigator as unknown as { standalone?: boolean }).standalone));
   const [showIOSModal, setShowIOSModal] = useState(false);
-  const [notifsEnabled, setNotifsEnabled] = useState(true);
+  const [notifsEnabled, setNotifsEnabled] = useState(() => {
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      return Notification.permission === 'granted';
+    }
+    return true;
+  });
 
   useEffect(() => {
-    const isAppStandalone = window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone;
-    setIsStandalone(isAppStandalone);
-
-    const userAgent = window.navigator.userAgent.toLowerCase();
-    setIsIOS(/iphone|ipad|ipod/.test(userAgent));
-
-    if ('Notification' in window) {
-      setNotifsEnabled(Notification.permission === 'granted');
-    }
-
     const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
       setDeferredPrompt(e);

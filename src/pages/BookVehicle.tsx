@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { Car, Send, MapPin, Clock, Users, ShieldAlert, Route as RouteIcon, Map } from 'lucide-react';
@@ -61,8 +61,20 @@ export default function BookVehicle() {
   const [travelTimeMins, setTravelTimeMins] = useState<number>(0);
   const [arrivalTime, setArrivalTime] = useState('');
   const [releaseTime, setReleaseTime] = useState('');
-  const [calculatedDeparture, setCalculatedDeparture] = useState('');
-  const [calculatedReturn, setCalculatedReturn] = useState('');
+
+  const calculatedDeparture = useMemo(() => {
+    if (arrivalTime && travelTimeMins > 0) {
+      return addMinutesToTime(arrivalTime, -(travelTimeMins + 15));
+    }
+    return '';
+  }, [arrivalTime, travelTimeMins]);
+
+  const calculatedReturn = useMemo(() => {
+    if (releaseTime && travelTimeMins > 0) {
+      return addMinutesToTime(releaseTime, travelTimeMins);
+    }
+    return '';
+  }, [releaseTime, travelTimeMins]);
   
   // Multi-Class & Headcount State
   const [selectedClasses, setSelectedClasses] = useState<string[]>([]);
@@ -107,12 +119,12 @@ export default function BookVehicle() {
 
   // Hybrid Search: Local Landmarks + Proximity-Biased Mapbox
   useEffect(() => {
-    if (!destinationQuery || destinationQuery.length < 2 || destinationCoords) {
-      setSuggestions([]);
-      return;
-    }
-
     const fetchPlaces = async () => {
+      if (!destinationQuery || destinationQuery.length < 2 || destinationCoords) {
+        setSuggestions([]);
+        return;
+      }
+
       const queryLower = destinationQuery.toLowerCase();
       
       // 1. Search Local Landmarks
@@ -178,20 +190,6 @@ export default function BookVehicle() {
     };
     getRoute();
   }, [zone, destinationCoords]);
-
-  useEffect(() => {
-    if (arrivalTime && travelTimeMins > 0) {
-      setCalculatedDeparture(addMinutesToTime(arrivalTime, -(travelTimeMins + 15)));
-    } else {
-      setCalculatedDeparture('');
-    }
-
-    if (releaseTime && travelTimeMins > 0) {
-      setCalculatedReturn(addMinutesToTime(releaseTime, travelTimeMins));
-    } else {
-      setCalculatedReturn('');
-    }
-  }, [arrivalTime, releaseTime, travelTimeMins]);
 
   const submitVehicleRequest = async (e: React.FormEvent) => {
     e.preventDefault();

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { Car, MapPin, Calculator, XCircle, Send, X, Plus, History, ListFilter, Settings, AlertTriangle } from 'lucide-react';
@@ -64,7 +64,7 @@ export default function FleetEngine() {
   // New Fleet Vehicle State
   const [newVehicle, setNewVehicle] = useState({ type: '', plate: '', capacity: 4 });
 
-  const fetchFleet = async () => {
+  const fetchFleet = useCallback(async () => {
     setLoading(true);
     const targetStates = viewMode === 'active' 
       ? ['AUTHORIZED'] 
@@ -81,9 +81,18 @@ export default function FleetEngine() {
     if (reqRes.data) setVehicles(reqRes.data as VehicleRequest[]);
     if (invRes.data) setInternalFleet(invRes.data as FleetInventory[]);
     setLoading(false);
-  };
+  }, [viewMode]);
 
-  useEffect(() => { fetchFleet(); }, [viewMode]);
+  useEffect(() => {
+    let isMounted = true;
+    const run = async () => {
+      if (isMounted) await fetchFleet();
+    };
+    run();
+    return () => {
+      isMounted = false;
+    };
+  }, [fetchFleet]);
 
   // --- FLEET INVENTORY MANAGEMENT ---
   const handleAddVehicle = async (e: React.FormEvent) => {

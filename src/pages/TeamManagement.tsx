@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { createClient } from '@supabase/supabase-js';
 import { Users, Shield, UserCog, Edit, Trash2, X, Save, UserPlus, Phone, Upload, Download, FileSpreadsheet, AlertCircle, CheckCircle, Mail } from 'lucide-react';
@@ -52,11 +52,7 @@ export default function TeamManagement() {
   const [selectedZones, setSelectedZones] = useState<string[]>([]);
   const [selectedTrades, setSelectedTrades] = useState<string[]>([]);
 
-  useEffect(() => {
-    fetchTeam();
-  }, []);
-
-  const fetchTeam = async () => {
+  const fetchTeam = useCallback(async () => {
     setLoading(true);
     const { data, error } = await supabase
       .from('profiles')
@@ -66,7 +62,18 @@ export default function TeamManagement() {
 
     if (data && !error) setTeam(data);
     setLoading(false);
-  };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+    const run = async () => {
+      if (isMounted) await fetchTeam();
+    };
+    run();
+    return () => {
+      isMounted = false;
+    };
+  }, [fetchTeam]);
 
   const toggleZone = (zone: string) => {
     setSelectedZones(prev => prev.includes(zone) ? prev.filter(z => z !== zone) : [...prev, zone]);
@@ -650,7 +657,11 @@ export default function TeamManagement() {
                   value={addModalOpen ? newUser.role : editingUser.role} 
                   onChange={e => {
                     const r = e.target.value;
-                    addModalOpen ? setNewUser({...newUser, role: r}) : setEditingUser({...editingUser, role: r});
+                    if (addModalOpen) {
+                      setNewUser({ ...newUser, role: r });
+                    } else {
+                      setEditingUser({ ...editingUser, role: r });
+                    }
                     setSelectedZones([]); setSelectedTrades([]);
                   }} 
                   className="w-full p-2 border border-slate-300 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-brand-maroon"

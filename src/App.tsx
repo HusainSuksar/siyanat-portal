@@ -1,5 +1,5 @@
 import { BrowserRouter as Router, Routes, Route, Navigate, Link, useLocation } from "react-router-dom";
-import { useState, useEffect } from "react";
+import { useState, useEffect, lazy, Suspense } from "react";
 import { supabase } from "./lib/supabase";
 import { useAuth } from "./contexts/AuthContext"; 
 import { PackageCheck, LogOut, LayoutDashboard, PlusCircle, Truck, Warehouse, Bell, X, Server, PieChart, ShieldAlert, Users, Menu, Wrench, ClipboardList, Calendar, Car, CalendarCheck, ShoppingCart, Package, UserCircle, Eye, Clock, Settings } from "lucide-react";
@@ -7,30 +7,31 @@ import { useWorkloadBadges } from "./hooks/useWorkloadBadges";
 
 import ForcePasswordChange from "./components/ForcePasswordChange";
 import UserProfile from "./pages/UserProfile";
-import ReceptionWatchtower from "./pages/ReceptionWatchtower";
-
 import SupervisorQueue from "./pages/SupervisorQueue";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import NewRequisition from "./pages/NewRequisition";
-import SiyanatOperations from "./pages/SiyanatOperations";
-import RestockInventory from "./pages/RestockInventory";
-import Reports from "./pages/Reports";
-import AssetRegister from "./pages/AssetRegister";
 import AuditLogs from "./pages/AuditLogs";
-import TeamManagement from "./pages/TeamManagement";
 import NewComplaint from "./pages/NewComplaint";
 import TechnicianPortal from "./pages/TechnicianPortal";
 import BookEvent from "./pages/BookEvent";
 import BookVehicle from "./pages/BookVehicle";
-import TanzeemCommandCenter from "./pages/TanzeemCommandCenter";
 import RequestToOrder from "./pages/RequestToOrder";
 import NotificationBell from './components/NotificationBell';
 import InstallAppButton from './components/InstallAppButton';
 import MyRequests from "./pages/MyRequests";
-import SystemConfigManager from "./components/admin/SystemConfigManager";
 import GlobalActionController from "./components/GlobalActionController";
 import { canBookFleet } from "./utils/roles";
+
+// Heavy pages loaded lazily with Suspense boundaries to keep bundle chunks small
+const ReceptionWatchtower = lazy(() => import("./pages/ReceptionWatchtower"));
+const Reports = lazy(() => import("./pages/Reports"));
+const AssetRegister = lazy(() => import("./pages/AssetRegister"));
+const TeamManagement = lazy(() => import("./pages/TeamManagement"));
+const SiyanatOperations = lazy(() => import("./pages/SiyanatOperations"));
+const TanzeemCommandCenter = lazy(() => import("./pages/TanzeemCommandCenter"));
+const RestockInventory = lazy(() => import("./pages/RestockInventory"));
+const SystemConfigManager = lazy(() => import("./components/admin/SystemConfigManager"));
 
 // Clean Logout: Non-blocking push detachment + guaranteed signout
 const performCleanLogout = async () => {
@@ -436,7 +437,13 @@ const PortalLayout = ({ children, userRole, userId }: { children: React.ReactNod
       <MobileDrawerNavigation userRole={userRole} isOpen={isMobileMenuOpen} setIsOpen={setIsMobileMenuOpen} badges={badges} />
 
       <main className="max-w-7xl mx-auto px-4 py-6 flex-grow w-full relative">
-        {children}
+        <Suspense fallback={
+          <div className="flex justify-center items-center py-24 text-brand-maroon font-bold animate-pulse">
+            Loading Workspace...
+          </div>
+        }>
+          {children}
+        </Suspense>
         <div className="fixed bottom-6 right-6 z-[45]">
           <InstallAppButton />
         </div>
@@ -467,45 +474,49 @@ export default function App() {
     <Router>
       <ForcePasswordChange>
         <GlobalActionController />
-        <Routes>
-          <Route path="/login" element={!session ? <Login /> : <Navigate to="/" />} />
+        <Suspense fallback={<div className="flex justify-center items-center min-h-screen bg-brand-maroon text-brand-gold font-bold animate-pulse">Loading Portal...</div>}>
+          <Routes>
+            <Route path="/login" element={!session ? <Login /> : <Navigate to="/" />} />
 
-          {/* Universal Routes */}
-          <Route path="/" element={session ? <PortalLayout userRole={role} userId={session.user.id}><Dashboard /></PortalLayout> : <Navigate to="/login" />} />
-          <Route path="/new-requisition" element={session ? <PortalLayout userRole={role} userId={session.user.id}><NewRequisition /></PortalLayout> : <Navigate to="/login" />} />
-          <Route path="/new-complaint" element={session ? <PortalLayout userRole={role} userId={session.user.id}><NewComplaint /></PortalLayout> : <Navigate to="/login" />} />
-          <Route path="/book-event" element={session ? <PortalLayout userRole={role} userId={session.user.id}><BookEvent /></PortalLayout> : <Navigate to="/login" />} />
-          <Route path="/profile" element={session ? <PortalLayout userRole={role} userId={session.user.id}><UserProfile /></PortalLayout> : <Navigate to="/login" />} />
-          <Route path="/book-vehicle" element={session && canBookFleet(role) ? <PortalLayout userRole={role} userId={session.user.id}><BookVehicle /></PortalLayout> : <Navigate to="/" />} />
-          <Route path="/my-requests" element={session ? <PortalLayout userRole={role} userId={session.user.id}><MyRequests /></PortalLayout> : <Navigate to="/login" />} />
-          
-          {/* Legacy & Direct Route Fallback Alias */}
-          <Route path="/materials" element={<Navigate to="/my-requests" replace />} />
+            {/* Universal Routes */}
+            <Route path="/" element={session ? <PortalLayout userRole={role} userId={session.user.id}><Dashboard /></PortalLayout> : <Navigate to="/login" />} />
+            <Route path="/new-requisition" element={session ? <PortalLayout userRole={role} userId={session.user.id}><NewRequisition /></PortalLayout> : <Navigate to="/login" />} />
+            <Route path="/new-complaint" element={session ? <PortalLayout userRole={role} userId={session.user.id}><NewComplaint /></PortalLayout> : <Navigate to="/login" />} />
+            <Route path="/book-event" element={session ? <PortalLayout userRole={role} userId={session.user.id}><BookEvent /></PortalLayout> : <Navigate to="/login" />} />
+            <Route path="/profile" element={session ? <PortalLayout userRole={role} userId={session.user.id}><UserProfile /></PortalLayout> : <Navigate to="/login" />} />
+            <Route path="/book-vehicle" element={session && canBookFleet(role) ? <PortalLayout userRole={role} userId={session.user.id}><BookVehicle /></PortalLayout> : <Navigate to="/" />} />
+            <Route path="/my-requests" element={session ? <PortalLayout userRole={role} userId={session.user.id}><MyRequests /></PortalLayout> : <Navigate to="/login" />} />
+            
+            {/* Legacy & Direct Route Fallback Alias */}
+            <Route path="/materials" element={<Navigate to="/my-requests" replace />} />
+            <Route path="/siyanat-ops" element={<Navigate to="/siyanat-operations" replace />} />
+            <Route path="/tanzeem-ops" element={<Navigate to="/tanzeem" replace />} />
 
-          {/* Receptionist Read-Only View */}
-          <Route path="/watchtower" element={session && isReceptionist ? <PortalLayout userRole={role} userId={session.user.id}><ReceptionWatchtower /></PortalLayout> : <Navigate to="/" />} />
+            {/* Receptionist Read-Only View */}
+            <Route path="/watchtower" element={session && isReceptionist ? <PortalLayout userRole={role} userId={session.user.id}><ReceptionWatchtower /></PortalLayout> : <Navigate to="/" />} />
 
-          {/* Head Routes */}
-          <Route path="/siyanat-operations" element={session && isOpsHead ? <PortalLayout userRole={role} userId={session.user.id}><SiyanatOperations /></PortalLayout> : <Navigate to="/" />} />
-          <Route path="/restock" element={session && isOpsHead ? <PortalLayout userRole={role} userId={session.user.id}><RestockInventory /></PortalLayout> : <Navigate to="/" />} />
-          <Route path="/rto" element={session && isOpsHead ? <PortalLayout userRole={role} userId={session.user.id}><RequestToOrder /></PortalLayout> : <Navigate to="/" />} />
-          
-          {/* Strictly Admin / Siyanat */}
-          <Route path="/reports" element={session && isSiyanatHead ? <PortalLayout userRole={role} userId={session.user.id}><Reports /></PortalLayout> : <Navigate to="/" />} />
-          <Route path="/assets" element={session && isSiyanatHead ? <PortalLayout userRole={role} userId={session.user.id}><AssetRegister /></PortalLayout> : <Navigate to="/" />} />
-          <Route path="/audit" element={session && isSiyanatHead ? <PortalLayout userRole={role} userId={session.user.id}><AuditLogs /></PortalLayout> : <Navigate to="/" />} />
-          <Route path="/team" element={session && isSiyanatHead ? <PortalLayout userRole={role} userId={session.user.id}><TeamManagement /></PortalLayout> : <Navigate to="/" />} />
-          
-          {/* Admin System Settings Route */}
-          <Route path="/settings" element={session && isGodMode ? <PortalLayout userRole={role} userId={session.user.id}><SystemConfigManager /></PortalLayout> : <Navigate to="/" />} />
+            {/* Head Routes */}
+            <Route path="/siyanat-operations" element={session && isOpsHead ? <PortalLayout userRole={role} userId={session.user.id}><SiyanatOperations /></PortalLayout> : <Navigate to="/" />} />
+            <Route path="/restock" element={session && isOpsHead ? <PortalLayout userRole={role} userId={session.user.id}><RestockInventory /></PortalLayout> : <Navigate to="/" />} />
+            <Route path="/rto" element={session && isOpsHead ? <PortalLayout userRole={role} userId={session.user.id}><RequestToOrder /></PortalLayout> : <Navigate to="/" />} />
+            
+            {/* Strictly Admin / Siyanat */}
+            <Route path="/reports" element={session && isSiyanatHead ? <PortalLayout userRole={role} userId={session.user.id}><Reports /></PortalLayout> : <Navigate to="/" />} />
+            <Route path="/assets" element={session && isSiyanatHead ? <PortalLayout userRole={role} userId={session.user.id}><AssetRegister /></PortalLayout> : <Navigate to="/" />} />
+            <Route path="/audit" element={session && isSiyanatHead ? <PortalLayout userRole={role} userId={session.user.id}><AuditLogs /></PortalLayout> : <Navigate to="/" />} />
+            <Route path="/team" element={session && isSiyanatHead ? <PortalLayout userRole={role} userId={session.user.id}><TeamManagement /></PortalLayout> : <Navigate to="/" />} />
+            
+            {/* Admin System Settings Route */}
+            <Route path="/settings" element={session && isGodMode ? <PortalLayout userRole={role} userId={session.user.id}><SystemConfigManager /></PortalLayout> : <Navigate to="/" />} />
 
-          {/* Tanzeem Command Center */}
-          <Route path="/tanzeem" element={session && isTanzeemHead ? <PortalLayout userRole={role} userId={session.user.id}><TanzeemCommandCenter /></PortalLayout> : <Navigate to="/" />} />
+            {/* Tanzeem Command Center */}
+            <Route path="/tanzeem" element={session && isTanzeemHead ? <PortalLayout userRole={role} userId={session.user.id}><TanzeemCommandCenter /></PortalLayout> : <Navigate to="/" />} />
 
-          {/* Supervisor & Tech Routes */}
-          <Route path="/supervisor-queue" element={session && isSupervisor ? <PortalLayout userRole={role} userId={session.user.id}><SupervisorQueue /></PortalLayout> : <Navigate to="/" />} />
-          <Route path="/technician-portal" element={session && isTech ? <PortalLayout userRole={role} userId={session.user.id}><TechnicianPortal /></PortalLayout> : <Navigate to="/" />} />
-        </Routes>
+            {/* Supervisor & Tech Routes */}
+            <Route path="/supervisor-queue" element={session && isSupervisor ? <PortalLayout userRole={role} userId={session.user.id}><SupervisorQueue /></PortalLayout> : <Navigate to="/" />} />
+            <Route path="/technician-portal" element={session && isTech ? <PortalLayout userRole={role} userId={session.user.id}><TechnicianPortal /></PortalLayout> : <Navigate to="/" />} />
+          </Routes>
+        </Suspense>
       </ForcePasswordChange>
     </Router>
   );

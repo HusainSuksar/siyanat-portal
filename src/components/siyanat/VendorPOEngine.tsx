@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../../lib/supabase';
 import { ShoppingCart, X, FileText, PackagePlus, Building2, Calendar, CreditCard, IndianRupee } from 'lucide-react';
 import { useToast } from '../../hooks/useToast';
@@ -13,6 +13,10 @@ interface VendorPOEngineProps {
   onSuccess: () => void;
 }
 
+function getDefaultDeliveryDate(): string {
+  return new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+}
+
 export default function VendorPOEngine({ batch, userEmail, onClose, onSuccess }: VendorPOEngineProps) {
   const { showToast } = useToast();
   const [vendors, setVendors] = useState<Vendor[]>([]);
@@ -25,15 +29,15 @@ export default function VendorPOEngine({ batch, userEmail, onClose, onSuccess }:
 
   // Global order-level terms
   const [paymentTerms, setPaymentTerms] = useState<string>('Immediate / COD');
-  const [expectedDeliveryDate, setExpectedDeliveryDate] = useState<string>(
-    new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
-  );
+  const [expectedDeliveryDate, setExpectedDeliveryDate] = useState<string>(() => getDefaultDeliveryDate());
   const [taxRate, setTaxRate] = useState<number>(18.0);
 
   // Accept any non-fulfilled items
-  const pendingItems = (batch.items || []).filter(i =>
-    !['Stock Injected', 'Fulfilled & Received', 'Cancelled'].includes(i.status)
-  );
+  const pendingItems = useMemo(() => {
+    return (batch.items || []).filter(i =>
+      !['Stock Injected', 'Fulfilled & Received', 'Cancelled'].includes(i.status)
+    );
+  }, [batch.items]);
 
   useEffect(() => {
     const fetchVendorsAndInitialPrices = async () => {
@@ -81,7 +85,7 @@ export default function VendorPOEngine({ batch, userEmail, onClose, onSuccess }:
     };
 
     fetchVendorsAndInitialPrices();
-  }, [batch.id]);
+  }, [batch.id, pendingItems]);
 
   // Handle vendor change per item with instant catalog lookup
   const handleVendorChange = async (itemId: string, selectedVendorId: string, itemRawName: string = '') => {

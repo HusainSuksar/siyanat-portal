@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { X, Send, MessageSquare } from 'lucide-react';
 
@@ -19,10 +19,26 @@ export default function BatchDetailsModal({
   const [newMessage, setNewMessage] = useState('');
   const [loading, setLoading] = useState(true);
 
+  const fetchLogs = useCallback(async () => {
+    if (!workOrderId) return;
+    const { data, error } = await supabase
+      .from('work_order_logs')
+      .select('*, author:profiles(full_name, role)')
+      .eq('work_order_id', workOrderId)
+      .order('created_at', { ascending: true });
+
+    if (!error && data) setLogs(data);
+    setLoading(false);
+  }, [workOrderId]);
+
   useEffect(() => {
     if (!isOpen || !workOrderId) return;
     
-    fetchLogs();
+    let isMounted = true;
+    const run = async () => {
+      if (isMounted) await fetchLogs();
+    };
+    run();
 
     // Listen for incoming chat messages in real-time
     const channel = supabase
@@ -37,19 +53,11 @@ export default function BatchDetailsModal({
       })
       .subscribe();
 
-    return () => { supabase.removeChannel(channel); };
-  }, [isOpen, workOrderId]);
-
-  const fetchLogs = async () => {
-    const { data, error } = await supabase
-      .from('work_order_logs')
-      .select('*, author:profiles(full_name, role)')
-      .eq('work_order_id', workOrderId)
-      .order('created_at', { ascending: true });
-
-    if (!error && data) setLogs(data);
-    setLoading(false);
-  };
+    return () => {
+      isMounted = false;
+      supabase.removeChannel(channel);
+    };
+  }, [isOpen, workOrderId, fetchLogs]);
 
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault();

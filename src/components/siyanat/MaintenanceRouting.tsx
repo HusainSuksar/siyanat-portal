@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../hooks/useToast';
@@ -36,7 +36,7 @@ export default function MaintenanceRouting({ userRole }: { userRole: string }) {
   // Print Slip Tab States
   const [printTechId, setPrintTechId] = useState('');
 
-  const fetchMaintenance = async () => {
+  const fetchMaintenance = useCallback(async () => {
     setLoading(true);
     
     const targetStates = viewMode === 'history' 
@@ -64,9 +64,18 @@ export default function MaintenanceRouting({ userRole }: { userRole: string }) {
     if (compRes.data) setComplaints(compRes.data);
     if (techRes.data) setTechnicians(techRes.data);
     setLoading(false);
-  };
+  }, [userRole, viewMode]);
 
-  useEffect(() => { fetchMaintenance(); }, [userRole, viewMode]);
+  useEffect(() => {
+    let isMounted = true;
+    const run = async () => {
+      if (isMounted) await fetchMaintenance();
+    };
+    run();
+    return () => {
+      isMounted = false;
+    };
+  }, [fetchMaintenance]);
 
   // Derived Zone Filter Data
   const availableZones = Array.from(new Set([...CAMPUS_ZONES, ...complaints.map(c => c.zone)])).filter(Boolean);

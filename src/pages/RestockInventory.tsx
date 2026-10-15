@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { PackageSearch, Warehouse, MapPin, ShoppingCart, Building2 } from 'lucide-react';
@@ -20,7 +20,7 @@ export default function RestockInventory() {
 
   const isTanzeemOnly = role === 'TANZEEM_HEAD';
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     let catQuery = supabase.from('inventory_items').select('*').order('name');
     if (isTanzeemOnly) catQuery = catQuery.in('category', ['Office & Administrative Supplies', 'IT & Networking Hardware']);
@@ -55,11 +55,18 @@ export default function RestockInventory() {
     if (locRes.data) setLocations(locRes.data);
 
     setLoading(false);
-  };
+  }, [isTanzeemOnly, role]);
 
   useEffect(() => {
-    fetchData();
-  }, [activeTab]);
+    let isMounted = true;
+    const run = async () => {
+      if (isMounted) await fetchData();
+    };
+    run();
+    return () => {
+      isMounted = false;
+    };
+  }, [fetchData, activeTab]);
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto pb-24">

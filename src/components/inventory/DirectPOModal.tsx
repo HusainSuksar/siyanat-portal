@@ -19,6 +19,10 @@ interface Props {
   onSuccess: () => void;
 }
 
+function generateDirectPONumber() {
+  return `PO-DIR-${Math.floor(10000 + Math.random() * 90000)}`;
+}
+
 export default function DirectPOModal({ isOpen, onClose, onSuccess }: Props) {
   const { user, profile } = useAuth();
   const { showToast } = useToast();
@@ -80,7 +84,7 @@ export default function DirectPOModal({ isOpen, onClose, onSuccess }: Props) {
 
     setSubmitting(true);
     try {
-      const poNumber = `PO-DIR-${Math.floor(10000 + Math.random() * 90000)}`;
+      const poNumber = generateDirectPONumber();
 
       // Format line items matching PendingPOsTab structure
       const formattedItems = items.map(item => ({

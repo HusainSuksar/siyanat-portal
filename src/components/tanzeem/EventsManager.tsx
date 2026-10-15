@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { 
@@ -44,12 +44,12 @@ export default function EventsManager() {
   const [rejectModalOpen, setRejectModalOpen] = useState(false);
   const [rejectionReason, setRejectionReason] = useState('');
 
-  const fetchInitialData = async () => {
+  const fetchInitialData = useCallback(async () => {
     const { data } = await supabase.from('inventory_items').select('name, physical_stock, freezed_stock');
     if (data) setInventory(data);
-  };
+  }, []);
 
-  const fetchEvents = async () => {
+  const fetchEvents = useCallback(async () => {
     setLoading(true);
     const targetStates = viewMode === 'active' ? ['SUBMITTED', 'AUTHORIZED', 'PROCESSING'] : ['CLOSED', 'REJECTED'];
 
@@ -66,12 +66,20 @@ export default function EventsManager() {
     if (error) showToast('Failed to sync events', 'error');
     if (data) setEvents(data as BaseEventData[]);
     setLoading(false);
-  };
+  }, [viewMode, showToast]);
 
   useEffect(() => { 
-    fetchInitialData();
-    fetchEvents(); 
-  }, [viewMode]);
+    let isMounted = true;
+    const run = async () => {
+      if (isMounted) {
+        await Promise.all([fetchInitialData(), fetchEvents()]);
+      }
+    };
+    run();
+    return () => {
+      isMounted = false;
+    };
+  }, [fetchInitialData, fetchEvents]);
 
   // Evaluates if the exact date & time has elapsed
   const isEventPassed = (eventDate: string, timeSlot: string) => {

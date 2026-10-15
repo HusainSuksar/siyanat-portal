@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
 import { Plus, Trash2, Edit2, X, RefreshCw, Layers } from 'lucide-react';
 import { useToast } from '../../hooks/useToast';
@@ -28,7 +28,7 @@ export default function StandardAssetsManager() {
   const [isActive, setIsActive] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  const fetchAssets = async () => {
+  const fetchAssets = useCallback(async () => {
     setLoading(true);
     const { data, error } = await supabase
       .from('standard_event_assets')
@@ -41,11 +41,18 @@ export default function StandardAssetsManager() {
       setAssets(data as StandardAssetItem[]);
     }
     setLoading(false);
-  };
+  }, [showToast]);
 
   useEffect(() => {
-    fetchAssets();
-  }, []);
+    let isMounted = true;
+    const run = async () => {
+      if (isMounted) await fetchAssets();
+    };
+    run();
+    return () => {
+      isMounted = false;
+    };
+  }, [fetchAssets]);
 
   const openAddModal = () => {
     setEditingId(null);

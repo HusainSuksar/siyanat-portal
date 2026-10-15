@@ -4,10 +4,19 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../hooks/useToast';
 import { User, Shield, Building, MapPin, Key, Wrench, Send } from 'lucide-react';
 
+interface UserProfileData {
+  id: string;
+  full_name: string;
+  role: string;
+  department: string;
+  zone?: string | null;
+  trade?: string | null;
+}
+
 export default function UserProfile() {
   const { user } = useAuth();
   const { showToast } = useToast();
-  const [profile, setProfile] = useState<any>(null);
+  const [profile, setProfile] = useState<UserProfileData | null>(null);
   const [loading, setLoading] = useState(true);
 
   // Password State
@@ -19,7 +28,7 @@ export default function UserProfile() {
     const fetchProfile = async () => {
       if (user) {
         const { data } = await supabase.from('profiles').select('*').eq('id', user.id).single();
-        setProfile(data);
+        if (data) setProfile(data as UserProfileData);
       }
       setLoading(false);
     };
@@ -39,8 +48,9 @@ export default function UserProfile() {
       showToast('Password updated successfully!', 'success');
       setNewPassword('');
       setConfirmPassword('');
-    } catch (err: any) {
-      showToast(err.message, 'error');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to update password';
+      showToast(message, 'error');
     } finally {
       setUpdatingAuth(false);
     }

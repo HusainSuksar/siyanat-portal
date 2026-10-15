@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { Server, Search, Wrench, Plus, AlertCircle, CheckCircle2, X } from 'lucide-react';
 
@@ -16,7 +16,7 @@ export default function AssetRegister() {
   const [newAsset, setNewAsset] = useState({ tag: '', name: '', category: 'HVAC', location: '' });
   const [serviceLog, setServiceLog] = useState({ desc: '', nextDate: '', status: 'Operational' });
 
-  const fetchAssets = async () => {
+  const fetchAssets = useCallback(async () => {
     setLoading(true);
     const { data, error } = await supabase
       .from('fixed_assets')
@@ -25,9 +25,18 @@ export default function AssetRegister() {
 
     if (data && !error) setAssets(data);
     setLoading(false);
-  };
+  }, []);
 
-  useEffect(() => { fetchAssets(); }, []);
+  useEffect(() => {
+    let isMounted = true;
+    const run = async () => {
+      if (isMounted) await fetchAssets();
+    };
+    run();
+    return () => {
+      isMounted = false;
+    };
+  }, [fetchAssets]);
 
   // --- ACTIONS ---
   const handleAddAsset = async (e: React.FormEvent) => {

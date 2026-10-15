@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../hooks/useToast';
@@ -36,7 +36,7 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
   const [chatBatch, setChatBatch] = useState<WorkOrder | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<WorkOrder | null>(null);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
 
     if (viewMode === 'event_setups') {
@@ -72,9 +72,18 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
       }
     }
     setLoading(false);
-  };
+  }, [userRole, viewMode]);
 
-  useEffect(() => { fetchData(); }, [userRole, viewMode]);
+  useEffect(() => {
+    let isMounted = true;
+    const run = async () => {
+      if (isMounted) await fetchData();
+    };
+    run();
+    return () => {
+      isMounted = false;
+    };
+  }, [fetchData]);
 
   const handleAcknowledgeEvent = async (eventId: string, targetDept: string) => {
     setProcessingId(eventId);

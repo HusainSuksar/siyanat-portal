@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../../hooks/useToast';
 import { Plus, Trash2, Users, Wrench, FolderTree, KeyRound, Store } from 'lucide-react';
@@ -18,7 +18,7 @@ export default function SystemConfigManager() {
   const [newCat, setNewCat] = useState({ name: '', dept: 'SIYANAT_HEAD' });
   const [newVendorCat, setNewVendorCat] = useState('');
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     const [c, t, cat, vCat, s] = await Promise.all([
       supabase.from('academic_classes').select('*').order('class_name'),
@@ -35,9 +35,18 @@ export default function SystemConfigManager() {
       setDefaultPassword(typeof s.data.value === 'string' ? s.data.value : String(s.data.value));
     }
     setLoading(false);
-  };
+  }, []);
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => {
+    let isMounted = true;
+    const run = async () => {
+      if (isMounted) await fetchData();
+    };
+    run();
+    return () => {
+      isMounted = false;
+    };
+  }, [fetchData]);
 
   // Vendor Category Handlers
   const addVendorCategory = async (e: React.FormEvent) => {

@@ -55,9 +55,7 @@ export default function VendorDirectoryTab({ vendors, onRefresh }: Props) {
       if (!error && data && data.length > 0) {
         const catNames = data.map((c: any) => c.name);
         setCategories(catNames);
-        if (!catNames.includes(newVendorCategory)) {
-          setNewVendorCategory(catNames[0]);
-        }
+        setNewVendorCategory(prev => catNames.includes(prev) ? prev : catNames[0]);
       }
     };
     fetchCategories();

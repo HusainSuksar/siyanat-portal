@@ -50,14 +50,6 @@ export default function BookEvent() {
     init();
   }, []);
 
-  useEffect(() => {
-    const minDate = getMinBookingDate();
-    if (formData.date && formData.date < minDate) {
-      showToast("Cannot book past dates. Setting to earliest available.", "error");
-      setFormData(prev => ({ ...prev, date: minDate }));
-    }
-  }, [formData.date, showToast]);
-
   const processSubmission = async () => {
     const totalCount = formData.maleCount + formData.femaleCount + formData.othersCount;
     if (totalCount === 0) {
@@ -112,6 +104,12 @@ export default function BookEvent() {
 
   const attemptSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const minDate = getMinBookingDate();
+    if (formData.date && formData.date < minDate) {
+      showToast("Cannot book past dates. Setting to earliest available.", "error");
+      setFormData(prev => ({ ...prev, date: minDate }));
+      return;
+    }
     setConfirmModalData({
       title: "Submit Event Booking?",
       action: processSubmission

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { supabase } from "../lib/supabase";
 import { 
   CheckSquare, RefreshCw, MessageSquare, Package, Wrench, 
@@ -34,7 +34,7 @@ export default function MyRequests() {
   const [activeBatch, setActiveBatch] = useState<any>(null);
   const [isChatOpen, setIsChatOpen] = useState(false);
 
-  const fetchDashboardData = async () => {
+  const fetchDashboardData = useCallback(async () => {
     setLoading(true);
     const { data: authData } = await supabase.auth.getUser();
 
@@ -104,11 +104,18 @@ export default function MyRequests() {
       });
     }
     setLoading(false);
-  };
+  }, []);
 
   useEffect(() => { 
-    fetchDashboardData(); 
-  }, []);
+    let isMounted = true;
+    const run = async () => {
+      if (isMounted) await fetchDashboardData();
+    };
+    run();
+    return () => {
+      isMounted = false;
+    };
+  }, [fetchDashboardData]);
 
   const confirmReceipt = async (batch: any) => {
     setProcessingId(batch.id);

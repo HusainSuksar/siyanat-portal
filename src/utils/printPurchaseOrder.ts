@@ -1,4 +1,47 @@
-export function printPurchaseOrder(po: any, vendor?: any, authorizer?: any) {
+export interface PurchaseOrderVendor {
+  id?: string;
+  name?: string;
+  contact_info?: string | null;
+  category?: string;
+}
+
+export interface PurchaseOrderAuthorizer {
+  id?: string;
+  full_name?: string;
+}
+
+export interface PurchaseOrderItem {
+  id?: string;
+  custom_item_name?: string | null;
+  requested_qty?: number;
+  unit_price?: number;
+  inventory?: {
+    name?: string;
+    unit?: string;
+  } | null;
+}
+
+export interface PurchaseOrderData {
+  id?: string;
+  po_number?: string;
+  created_at?: string;
+  expected_delivery_date?: string | null;
+  payment_terms?: string | null;
+  status?: string;
+  subtotal?: number;
+  tax_rate?: number;
+  tax_amount?: number;
+  total_amount?: number;
+  vendor?: PurchaseOrderVendor | null;
+  authorizer?: PurchaseOrderAuthorizer | null;
+  items?: PurchaseOrderItem[];
+}
+
+export function printPurchaseOrder(
+  po: PurchaseOrderData,
+  vendor?: PurchaseOrderVendor,
+  authorizer?: PurchaseOrderAuthorizer
+) {
   const activeVendor = vendor || po.vendor || {};
   const activeAuthorizer = authorizer || po.authorizer || {};
 
@@ -7,7 +50,7 @@ export function printPurchaseOrder(po: any, vendor?: any, authorizer?: any) {
 
   const itemsRows = (po.items || [])
     .map(
-      (item: any, idx: number) => `
+      (item: PurchaseOrderItem, idx: number) => `
       <tr>
         <td style="padding: 10px; border-bottom: 1px solid #e2e8f0; text-align: center; font-size: 11px;">${idx + 1}</td>
         <td style="padding: 10px; border-bottom: 1px solid #e2e8f0; font-size: 11px; font-weight: bold;">${item.inventory?.name || item.custom_item_name}</td>

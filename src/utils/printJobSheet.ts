@@ -1,12 +1,32 @@
 // src/utils/printJobSheet.ts
 
-export const generateJobSheet = (technician: any, complaints: any[]) => {
+export interface JobSheetTechnician {
+  id?: string;
+  full_name?: string;
+  trade?: string;
+  phone_number?: string;
+}
+
+export interface JobSheetComplaint {
+  id?: string;
+  complaint_id?: string;
+  priority?: string;
+  venue?: string;
+  zone?: string;
+  floor?: string;
+  description?: string;
+}
+
+export const generateJobSheet = (
+  technician: JobSheetTechnician | null | undefined,
+  complaints: JobSheetComplaint[]
+) => {
   const printWindow = window.open('', '_blank');
   if (!printWindow) return;
 
   const dateStr = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 
-  const rows = complaints.map((c, i) => `
+  const rows = complaints.map((c: JobSheetComplaint, i: number) => `
     <tr>
       <td style="padding: 12px; border: 1px solid #cbd5e1; text-align: center;">${i + 1}</td>
       <td style="padding: 12px; border: 1px solid #cbd5e1;">

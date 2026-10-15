@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 
 export interface ClassHeadcount {
@@ -51,7 +51,7 @@ export function useSystemConfig() {
   const [categories, setCategories] = useState<InventoryCategoryItem[]>(FALLBACK_CATEGORIES);
   const [loading, setLoading] = useState(true);
 
-  const fetchConfig = async () => {
+  const fetchConfig = useCallback(async () => {
     setLoading(true);
     try {
       const [clsRes, trdRes, catRes, setRes] = await Promise.all([
@@ -95,11 +95,18 @@ export function useSystemConfig() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchConfig();
-  }, []);
+    let isMounted = true;
+    const run = async () => {
+      if (isMounted) await fetchConfig();
+    };
+    run();
+    return () => {
+      isMounted = false;
+    };
+  }, [fetchConfig]);
 
   return { classes, trades, zones, categories, defaultPassword, loading, refreshConfig: fetchConfig };
 }

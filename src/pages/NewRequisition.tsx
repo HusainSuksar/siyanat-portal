@@ -43,31 +43,27 @@ export default function NewRequisition() {
   const [customQty, setCustomQty] = useState(1);
 
   useEffect(() => {
-    fetchCatalog();
-  }, []);
-
-  const fetchCatalog = async () => {
-    setLoading(true);
-    let role = 'REQUESTER';
-    
-    const { data: authData } = await supabase.auth.getUser();
-    if (authData.user) {
-      const { data: profile } = await supabase.from('profiles').select('role, zone').eq('id', authData.user.id).single();
-      if (profile) {
-        role = profile.role;
-        setUserRole(role);
-        
-        if (role === 'SUPERVISOR') {
-          setIsSupervisor(true);
-          if (profile.zone) setSelectedZone(profile.zone.split(',')[0].trim());
+    const fetchCatalog = async () => {
+      setLoading(true);
+      const { data: authData } = await supabase.auth.getUser();
+      if (authData.user) {
+        const { data: profile } = await supabase.from('profiles').select('role, zone').eq('id', authData.user.id).single();
+        if (profile) {
+          setUserRole(profile.role);
+          
+          if (profile.role === 'SUPERVISOR') {
+            setIsSupervisor(true);
+            if (profile.zone) setSelectedZone(profile.zone.split(',')[0].trim());
+          }
         }
       }
-    }
 
-    const { data, error } = await supabase.from('inventory_items').select('*').order('name');
-    if (data && !error) setCatalog(data);
-    setLoading(false);
-  };
+      const { data, error } = await supabase.from('inventory_items').select('*').order('name');
+      if (data && !error) setCatalog(data);
+      setLoading(false);
+    };
+    fetchCatalog();
+  }, []);
 
   // Switch department with cart protection
   const handleDepartmentSwitch = (deptId: any) => {

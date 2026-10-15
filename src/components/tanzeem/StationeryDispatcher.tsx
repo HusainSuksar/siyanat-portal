@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
 import { Package, SplitSquareHorizontal, X, CheckCircle, XCircle, History, ListFilter } from 'lucide-react';
 import { useToast } from '../../hooks/useToast';
@@ -16,7 +16,7 @@ export default function StationeryDispatcher() {
   const [reviewBatch, setReviewBatch] = useState<WorkOrder | null>(null);
   const [itemDecisions, setItemDecisions] = useState<Record<string, { status: string; eta: number }>>({});
 
-  const fetchStationery = async () => {
+  const fetchStationery = useCallback(async () => {
     setLoading(true);
     
     const targetStates = viewMode === 'active' 
@@ -43,9 +43,18 @@ export default function StationeryDispatcher() {
       setBatches(data as WorkOrder[]);
     }
     setLoading(false);
-  };
+  }, [viewMode, showToast]);
 
-  useEffect(() => { fetchStationery(); }, [viewMode]);
+  useEffect(() => {
+    let isMounted = true;
+    const run = async () => {
+      if (isMounted) await fetchStationery();
+    };
+    run();
+    return () => {
+      isMounted = false;
+    };
+  }, [fetchStationery]);
 
   const openReviewModal = (batch: WorkOrder) => {
     setReviewBatch(batch);

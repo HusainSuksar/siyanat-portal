@@ -38,25 +38,24 @@ export default function NewComplaint() {
   const [description, setDescription] = useState('');
 
   useEffect(() => {
-    fetchUserProfile();
-  }, []);
-
-  const fetchUserProfile = async () => {
-    const { data: authData } = await supabase.auth.getUser();
-    if (authData.user) {
-      const { data: profile } = await supabase.from('profiles').select('role, zone').eq('id', authData.user.id).single();
-      if (profile) {
-        setUserRole(profile.role);
-        
-        if (profile.role === 'SUPERVISOR') {
-          setIsSupervisor(true);
-          if (profile.zone) {
-            setSelectedZone(profile.zone.split(',')[0].trim());
+    const fetchUserProfile = async () => {
+      const { data: authData } = await supabase.auth.getUser();
+      if (authData.user) {
+        const { data: profile } = await supabase.from('profiles').select('role, zone').eq('id', authData.user.id).single();
+        if (profile) {
+          setUserRole(profile.role);
+          
+          if (profile.role === 'SUPERVISOR') {
+            setIsSupervisor(true);
+            if (profile.zone) {
+              setSelectedZone(profile.zone.split(',')[0].trim());
+            }
           }
         }
       }
-    }
-  };
+    };
+    fetchUserProfile();
+  }, []);
 
   // --- DYNAMIC LOGIC ENGINE ---
   const activeVenues = selectedZone ? ZONE_FLOW_MAP[selectedZone] : [];

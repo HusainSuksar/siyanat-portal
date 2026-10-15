@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { ClipboardList, CheckCircle, XCircle, Image as ImageIcon, MapPin, SearchCheck, RefreshCcw, ShieldCheck, Mailbox, X, History } from 'lucide-react';
 
@@ -16,8 +16,7 @@ export default function SupervisorQueue() {
   const [targetComplaint, setTargetComplaint] = useState<any>(null);
   const [reasonText, setReasonText] = useState('');
 
-  const fetchQueue = async () => {
-    setLoading(true);
+  const fetchQueue = useCallback(async () => {
     const { data: authData } = await supabase.auth.getUser();
     
     if (authData.user) {
@@ -54,11 +53,18 @@ export default function SupervisorQueue() {
       }
     }
     setLoading(false);
-  };
+  }, []);
 
   useEffect(() => {
-    fetchQueue();
-  }, [activeTab]);
+    let isMounted = true;
+    const load = async () => {
+      if (isMounted) await fetchQueue();
+    };
+    load();
+    return () => {
+      isMounted = false;
+    };
+  }, [fetchQueue, activeTab]);
 
   const processComplaint = async (id: string, complaintIdName: string) => {
     if (!confirm('Forward this complaint to Siyanat Operations for maintenance scheduling?')) return;

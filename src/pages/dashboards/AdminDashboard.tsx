@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { Activity, Wrench, Package, Calendar, Clock, ArrowRight, Settings, LayoutDashboard } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import SystemConfigManager from '../../components/admin/SystemConfigManager';
+
+const SystemConfigManager = lazy(() => import('../../components/admin/SystemConfigManager'));
 
 export default function AdminDashboard() {
   const { role } = useAuth();
@@ -113,7 +114,9 @@ export default function AdminDashboard() {
 
       {/* Conditionally Render Settings or Overview */}
       {adminView === 'settings' ? (
-        <SystemConfigManager />
+        <Suspense fallback={<div className="p-8 text-center text-slate-500 font-bold animate-pulse">Loading System Settings...</div>}>
+          <SystemConfigManager />
+        </Suspense>
       ) : (
         <>
           {/* Light Mode KPI Cards */}

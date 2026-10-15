@@ -1,4 +1,30 @@
-export const generateDispatchSlip = (batch: any, userRole: string) => {
+export interface DispatchItem {
+  id?: string;
+  fulfillment_dept?: string;
+  inventory?: {
+    name?: string;
+    unit?: string;
+  } | null;
+  custom_item_name?: string | null;
+  item_type?: string;
+  status?: string;
+  requested_qty?: number;
+}
+
+export interface DispatchBatch {
+  id?: string;
+  batch_id?: string;
+  requester?: {
+    full_name?: string;
+    department?: string;
+  } | null;
+  department?: string | null;
+  location?: string | null;
+  urgency?: string | null;
+  items?: DispatchItem[];
+}
+
+export const generateDispatchSlip = (batch: DispatchBatch, userRole: string) => {
   const printWindow = window.open('', '_blank', 'width=800,height=900');
   if (!printWindow) return alert('Please allow popups to generate the dispatch slip.');
 
@@ -9,11 +35,11 @@ export const generateDispatchSlip = (batch: any, userRole: string) => {
       : 'SIYANAT UL MUMTALEKAAT';
 
   const myItems = (batch.items || []).filter(
-    (i: any) => userRole === 'SUPER_ADMIN' || userRole === 'ADMIN' || i.fulfillment_dept === userRole
+    (i: DispatchItem) => userRole === 'SUPER_ADMIN' || userRole === 'ADMIN' || i.fulfillment_dept === userRole
   );
 
-  const itemsHtml = myItems.map((item: any, idx: number) => {
-    const unitName = (item.inventory && (item.inventory as Record<string, any>).unit) || 'Pcs';
+  const itemsHtml = myItems.map((item: DispatchItem, idx: number) => {
+    const unitName = item.inventory?.unit || 'Pcs';
     const itemName = item.custom_item_name || item.inventory?.name || 'Item';
     const itemType = item.item_type || 'Catalog';
     const itemStatus = item.status || 'Allocated';

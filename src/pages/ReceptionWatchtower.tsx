@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { 
   Search, Wrench, Package, Calendar, Car, Clock, 
@@ -20,7 +20,7 @@ export default function ReceptionWatchtower() {
   // Selected Item Modal
   const [viewItem, setViewItem] = useState<any | null>(null);
 
-  const fetchOmniData = async () => {
+  const fetchOmniData = useCallback(async () => {
     setLoading(true);
 
     const query = searchQuery.trim();
@@ -62,7 +62,7 @@ export default function ReceptionWatchtower() {
     setFleet(fleetRes.data || []);
 
     setLoading(false);
-  };
+  }, [searchQuery, historyFilter]);
 
   // Debounced search logic (Triggers 400ms after user stops typing)
   useEffect(() => {
@@ -71,7 +71,7 @@ export default function ReceptionWatchtower() {
     }, 400);
 
     return () => clearTimeout(delayDebounceFn);
-  }, [searchQuery, historyFilter]);
+  }, [fetchOmniData]);
 
 
   // --- BOTTLENECK CALCULATORS ---

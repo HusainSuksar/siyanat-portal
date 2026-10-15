@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { 
   ShoppingCart, RefreshCw, Clock, AlertTriangle, Edit, 
@@ -21,7 +21,7 @@ export default function RequestToOrder() {
   // Direct PO Modal State
   const [isDirectPOOpen, setIsDirectPOOpen] = useState(false);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     
     const { data: authData } = await supabase.auth.getUser();
@@ -59,7 +59,7 @@ export default function RequestToOrder() {
     if (!error && data) {
       // Fetch requester names for batches
       const requesterIds = Array.from(new Set(data.map((i: any) => i.work_order?.requester_id).filter(Boolean)));
-      let profileMap: Record<string, string> = {};
+      const profileMap: Record<string, string> = {};
       
       if (requesterIds.length > 0) {
         const { data: profiles } = await supabase
@@ -83,11 +83,18 @@ export default function RequestToOrder() {
       setPendingItems(formatted);
     }
     setLoading(false);
-  };
+  }, []);
 
   useEffect(() => {
-    fetchData();
-  }, []);
+    let isMounted = true;
+    const run = async () => {
+      if (isMounted) await fetchData();
+    };
+    run();
+    return () => {
+      isMounted = false;
+    };
+  }, [fetchData]);
 
   // Actions
   const openEditModal = (item: any) => {

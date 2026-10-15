@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 
 export interface WorkloadCounts {
@@ -16,7 +16,7 @@ export function useWorkloadBadges(userId: string | null, userRole: string | null
     pendingPOs: 0,
   });
 
-  const fetchCounts = async () => {
+  const fetchCounts = useCallback(async () => {
     if (!userId || !userRole) return;
 
     try {
@@ -81,13 +81,20 @@ export function useWorkloadBadges(userId: string | null, userRole: string | null
     } catch (err) {
       console.warn('Error updating workload counts:', err);
     }
-  };
+  }, [userId, userRole]);
 
   useEffect(() => {
-    fetchCounts();
+    let isMounted = true;
+    const run = async () => {
+      if (isMounted) await fetchCounts();
+    };
+    run();
     const interval = setInterval(fetchCounts, 20000); // Auto-refresh every 20 seconds
-    return () => clearInterval(interval);
-  }, [userId, userRole]);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [fetchCounts]);
 
   return counts;
 }
