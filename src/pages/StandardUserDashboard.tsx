@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { 
   CheckSquare, RefreshCw, MessageSquare, Package, Wrench, Calendar, 
-  Car, Clock, XCircle, AlertTriangle, X, CheckCircle, Ban 
+  Car, Clock, XCircle, AlertTriangle, X, CheckCircle, Ban, Image as ImageIcon, FileText
 } from "lucide-react";
 import BatchDetailsModal from "../components/BatchDetailsModal";
 import VisualPipelineStepper from "../components/VisualPipelineStepper";
@@ -46,7 +46,7 @@ export default function StandardUserDashboard() {
       const isGodMode = role === "SUPER_ADMIN" || role === "ADMIN";
 
       let matQuery = supabase.from("work_orders").select("*, logs:work_order_logs(author_id, created_at, message), items:work_order_items(id, status, custom_item_name, requested_qty, inventory:inventory_items(name))").order("created_at", { ascending: false }).limit(30);
-      let compQuery = supabase.from("complaints").select("*").order("created_at", { ascending: false }).limit(30);
+      let compQuery = supabase.from("complaints").select("*, photos:complaint_photos(file_url)").order("created_at", { ascending: false }).limit(30);
       let evQuery = supabase.from("events").select("*, requirements:event_requirements(*)").order("event_date", { ascending: true }).limit(30);
       let fleetQuery = supabase.from("vehicle_requests").select("*").order("request_date", { ascending: true }).limit(30);
 
@@ -291,19 +291,53 @@ export default function StandardUserDashboard() {
                          )}
                        </div>
                        <h4 className="font-bold text-slate-800 text-sm mt-0.5">{c.category}</h4>
-                       <p className="text-[11px] text-slate-500 font-medium">{c.zone} - {c.venue} ({c.room_area})</p>
+                       <p className="text-xs text-slate-500 font-bold mt-0.5">
+                         {c.zone} - {c.venue} {c.floor && c.floor !== 'N/A' ? `• ${c.floor}` : ''} {c.room_area && c.room_area !== 'N/A' ? `(${c.room_area})` : ''}
+                       </p>
                      </div>
                      <span className="text-[10px] font-bold text-slate-400 uppercase">{new Date(c.created_at).toLocaleDateString()}</span>
                    </div>
-                   <p className="text-xs text-slate-600 font-medium mt-3 bg-slate-50 p-3 rounded-xl border border-slate-100 line-clamp-2">{c.description}</p>
+
+                   {/* HIGH-READABILITY REQUEST QUERY BOX */}
+                   <div className="mt-4 bg-slate-50 p-4 rounded-2xl border border-slate-200 border-l-4 border-l-brand-maroon shadow-sm">
+                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1.5 flex items-center gap-1.5">
+                       <FileText className="w-3.5 h-3.5 text-brand-maroon" /> Reported Issue / Query:
+                     </span>
+                     <p className="text-sm md:text-base text-slate-900 font-extrabold leading-relaxed whitespace-pre-wrap">
+                       {c.description}
+                     </p>
+                   </div>
 
                    {/* REJECTION REASON DISPLAY */}
                    {c.pipeline_state === 'REJECTED' && c.resolution_notes && (
-                     <div className="mt-3 bg-red-50 p-3 rounded-xl border border-red-100 flex items-start gap-2">
+                     <div className="mt-3 bg-red-50 p-3.5 rounded-xl border border-red-200 flex items-start gap-2.5">
                        <Ban className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
                        <div>
                          <span className="text-[10px] font-black text-red-600 uppercase tracking-widest block mb-0.5">Request Declined</span>
-                         <p className="text-xs font-semibold text-red-900">{c.resolution_notes}</p>
+                         <p className="text-xs md:text-sm font-bold text-red-900">{c.resolution_notes}</p>
+                       </div>
+                     </div>
+                   )}
+
+                   {/* UPLOADED IMAGE RENDERER */}
+                   {c.photos && c.photos.length > 0 && (
+                     <div className="mt-3 bg-slate-50/80 p-3.5 rounded-2xl border border-slate-100">
+                       <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2.5 flex items-center gap-1">
+                         <ImageIcon className="w-3.5 h-3.5" /> Attached Photos:
+                       </span>
+                       <div className="flex flex-wrap gap-2.5">
+                         {c.photos.map((photo: any, idx: number) => (
+                           <a 
+                             key={idx} 
+                             href={photo.file_url} 
+                             target="_blank" 
+                             rel="noopener noreferrer" 
+                             onClick={(e) => e.stopPropagation()}
+                             className="block w-24 h-24 rounded-xl overflow-hidden border border-slate-200 shadow-sm hover:opacity-80 transition cursor-zoom-in"
+                           >
+                             <img src={photo.file_url} alt={`Complaint Photo ${idx + 1}`} className="w-full h-full object-cover" />
+                           </a>
+                         ))}
                        </div>
                      </div>
                    )}
