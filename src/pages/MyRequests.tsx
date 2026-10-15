@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { 
   CheckSquare, RefreshCw, MessageSquare, Package, Wrench, 
-  Calendar, Car, Clock, XCircle, AlertTriangle, X, CheckCircle 
+  Calendar, Car, Clock, XCircle, AlertTriangle, X, CheckCircle,
+  Ban, Image as ImageIcon, FileText
 } from "lucide-react";
 import BatchDetailsModal from "../components/BatchDetailsModal";
 import VisualPipelineStepper from "../components/VisualPipelineStepper";
@@ -48,22 +49,40 @@ export default function MyRequests() {
       const [matRes, compRes, evRes, fleetRes] = await Promise.all([
         supabase
           .from("work_orders")
-          .select("*, logs:work_order_logs(author_id, created_at, message), items:work_order_items(custom_item_name, requested_qty, inventory:inventory_items(name))")
+          .select(`
+            *, 
+            logs:work_order_logs(author_id, created_at, message), 
+            items:work_order_items(
+              custom_item_name, 
+              requested_qty, 
+              status,
+              inventory:inventory_items(name)
+            )
+          `)
           .eq("requester_id", authData.user.id)
           .order("created_at", { ascending: false })
           .limit(30),
+          
         supabase
           .from("complaints")
-          .select("*")
+          .select(`
+            *,
+            photos:complaint_photos(file_url)
+          `)
           .eq("requester_id", authData.user.id)
           .order("created_at", { ascending: false })
           .limit(30),
+          
         supabase
           .from("events")
-          .select("*, requirements:event_requirements(*)")
+          .select(`
+            *, 
+            requirements:event_requirements(*)
+          `)
           .eq("requester_id", authData.user.id)
           .order("event_date", { ascending: true })
           .limit(30),
+          
         supabase
           .from("vehicle_requests")
           .select("*")
@@ -277,11 +296,15 @@ export default function MyRequests() {
               ) : materials.map((req) => {
                 const logs = req.logs || [];
                 const hasUnread = logs.length > 0 && logs[logs.length - 1].author_id !== currentUser?.id;
-                const itemsSummary = (req.items || []).map((i: any) => `${i.inventory?.name || i.custom_item_name} (x${i.requested_qty})`).join(', ');
+                
+                const allItems = req.items || [];
+                const providedItems = allItems.filter((i: any) => i.status !== 'Not Provided' && i.status !== 'Rejected');
+                const rejectedItems = allItems.filter((i: any) => i.status === 'Not Provided' || i.status === 'Rejected');
+                
                 const sla = getDeliverySlaMessage(req);
 
                 return (
-                  <div key={req.id} className="bg-white rounded-3xl p-5 md:p-6 shadow-sm border border-slate-200 flex flex-col justify-between gap-4 transition hover:shadow-md">
+                  <div key={req.id} className={`bg-white rounded-3xl p-5 md:p-6 shadow-sm border flex flex-col justify-between gap-4 transition hover:shadow-md ${req.pipeline_state === 'REJECTED' ? 'border-red-200 bg-red-50/10' : 'border-slate-200'}`}>
                      <div>
                        <div className="flex justify-between items-start">
                          <div>
@@ -323,12 +346,38 @@ export default function MyRequests() {
                          </div>
                        )}
 
-                       {itemsSummary && (
+                       {/* Provided Items */}
+                       {providedItems.length > 0 && (
                          <div className="mt-3 bg-slate-50 p-2.5 rounded-xl border border-slate-100 text-[11px] font-bold text-slate-600">
-                           <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 block mb-0.5">Items:</span>
-                           {itemsSummary}
+                           <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 block mb-1">Items in Requisition:</span>
+                           <div className="flex flex-wrap gap-1.5">
+                             {providedItems.map((i: any, idx: number) => (
+                               <span key={idx} className="bg-white px-2 py-1 rounded-lg border border-slate-200 text-slate-700 text-[11px]">
+                                 {i.inventory?.name || i.custom_item_name} <span className="text-brand-maroon font-black">(x{i.requested_qty})</span>
+                               </span>
+                             ))}
+                           </div>
                          </div>
                        )}
+
+                       {/* REJECTED / NOT PROVIDED ITEMS SECTION */}
+                       {rejectedItems.length > 0 && (
+                         <div className="mt-2.5 bg-red-50 p-3 rounded-xl border border-red-200">
+                           <div className="flex items-center gap-1.5 text-red-700 mb-1.5">
+                             <Ban className="w-3.5 h-3.5 text-red-600 shrink-0" />
+                             <span className="text-[10px] font-black uppercase tracking-wider">Items Not Provided / Rejected:</span>
+                           </div>
+                           <div className="flex flex-wrap gap-1.5">
+                             {rejectedItems.map((item: any, idx: number) => (
+                               <span key={idx} className="bg-white px-2.5 py-1 rounded-lg border border-red-200 text-red-600 text-[11px] font-bold flex items-center gap-1.5 shadow-sm">
+                                 <span className="line-through">{item.inventory?.name || item.custom_item_name} (x{item.requested_qty})</span>
+                                 <span className="text-[9px] bg-red-100 text-red-700 px-1 py-0.5 rounded font-black uppercase tracking-tight">Rejected</span>
+                               </span>
+                             ))}
+                           </div>
+                         </div>
+                       )}
+
                      </div>
                      <VisualPipelineStepper type="REQUISITION" pipelineState={req.pipeline_state} />
                   </div>
@@ -343,19 +392,73 @@ export default function MyRequests() {
                   No maintenance complaints registered.
                 </div>
               ) : complaints.map((c) => (
-                <div key={c.id} className="bg-white rounded-3xl p-5 md:p-6 shadow-sm border border-slate-200 flex flex-col justify-between gap-4 transition hover:shadow-md">
+                <div 
+                  key={c.id} 
+                  onClick={() => navigate(`/complaints/${c.complaint_id}`)}
+                  className={`bg-white rounded-3xl p-5 md:p-6 shadow-sm border flex flex-col justify-between gap-4 transition hover:shadow-md cursor-pointer ${c.pipeline_state === 'REJECTED' ? 'border-red-200 hover:border-red-300 bg-red-50/20' : 'border-slate-200 hover:border-slate-300'}`}
+                >
                    <div>
                      <div className="flex justify-between items-start">
                        <div>
-                         <span className="font-black text-brand-maroon text-base">{c.complaint_id}</span>
+                         <div className="flex items-center gap-2">
+                           <span className="font-black text-brand-maroon text-base">{c.complaint_id}</span>
+                           {c.pipeline_state === 'REJECTED' && (
+                             <span className="px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest bg-red-100 text-red-700 border border-red-200">
+                               Declined
+                             </span>
+                           )}
+                         </div>
                          <h4 className="font-bold text-slate-800 text-sm mt-0.5">{c.category}</h4>
-                         <p className="text-[11px] text-slate-500 font-medium">{c.zone} - {c.venue} ({c.room_area})</p>
+                         <p className="text-xs text-slate-500 font-bold mt-0.5">
+                           {c.zone} - {c.venue} {c.floor && c.floor !== 'N/A' ? `• ${c.floor}` : ''} {c.room_area && c.room_area !== 'N/A' ? `(${c.room_area})` : ''}
+                         </p>
                        </div>
                        <span className="text-[10px] font-bold text-slate-400 uppercase">{new Date(c.created_at).toLocaleDateString()}</span>
                      </div>
-                     <p className="text-xs text-slate-600 font-medium mt-3 bg-slate-50 p-3 rounded-xl border border-slate-100 line-clamp-2">
-                       {c.description}
-                     </p>
+
+                     {/* HIGH-READABILITY REQUEST QUERY BOX */}
+                     <div className="mt-4 bg-slate-50 p-4 rounded-2xl border border-slate-200 border-l-4 border-l-brand-maroon shadow-sm">
+                       <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1.5 flex items-center gap-1.5">
+                         <FileText className="w-3.5 h-3.5 text-brand-maroon" /> Reported Issue / Query:
+                       </span>
+                       <p className="text-sm md:text-base text-slate-900 font-extrabold leading-relaxed whitespace-pre-wrap">
+                         {c.description}
+                       </p>
+                     </div>
+
+                     {/* REJECTION REASON DISPLAY */}
+                     {c.pipeline_state === 'REJECTED' && c.resolution_notes && (
+                       <div className="mt-3 bg-red-50 p-3.5 rounded-xl border border-red-200 flex items-start gap-2.5">
+                         <Ban className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                         <div>
+                           <span className="text-[10px] font-black text-red-600 uppercase tracking-widest block mb-0.5">Request Declined</span>
+                           <p className="text-xs md:text-sm font-bold text-red-900">{c.resolution_notes}</p>
+                         </div>
+                       </div>
+                     )}
+
+                     {/* UPLOADED IMAGE RENDERER */}
+                     {c.photos && c.photos.length > 0 && (
+                       <div className="mt-3 bg-slate-50/80 p-3.5 rounded-2xl border border-slate-100">
+                         <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2.5 flex items-center gap-1">
+                           <ImageIcon className="w-3.5 h-3.5" /> Attached Photos:
+                         </span>
+                         <div className="flex flex-wrap gap-2.5">
+                           {c.photos.map((photo: any, idx: number) => (
+                             <a 
+                               key={idx} 
+                               href={photo.file_url} 
+                               target="_blank" 
+                               rel="noopener noreferrer" 
+                               onClick={(e) => e.stopPropagation()}
+                               className="block w-24 h-24 rounded-xl overflow-hidden border border-slate-200 shadow-sm hover:opacity-80 transition cursor-zoom-in"
+                             >
+                               <img src={photo.file_url} alt={`Complaint Photo ${idx + 1}`} className="w-full h-full object-cover" />
+                             </a>
+                           ))}
+                         </div>
+                       </div>
+                     )}
                    </div>
                    <VisualPipelineStepper type="COMPLAINT" pipelineState={c.pipeline_state} />
                 </div>
@@ -379,7 +482,7 @@ export default function MyRequests() {
                 const needsReturnReminder = e.pipeline_state === 'CLOSED' && pendingReturns.length > 0;
 
                 return (
-                  <div key={e.id} className={`bg-white rounded-3xl p-5 md:p-6 shadow-sm border flex flex-col justify-between gap-4 transition hover:shadow-md ${e.pipeline_state === 'REJECTED' ? 'border-red-200' : 'border-slate-200'}`}>
+                  <div key={e.id} className={`bg-white rounded-3xl p-5 md:p-6 shadow-sm border flex flex-col justify-between gap-4 transition hover:shadow-md ${e.pipeline_state === 'REJECTED' ? 'border-red-200 bg-red-50/10' : 'border-slate-200'}`}>
                     <div>
                       <div className="flex justify-between items-start">
                         <div>
@@ -395,7 +498,7 @@ export default function MyRequests() {
                           
                           {canCancel && (
                             <button 
-                              onClick={() => { setCancelModalEvent(e); setCancelReason(''); }}
+                              onClick={(eEvent) => { eEvent.stopPropagation(); setCancelModalEvent(e); setCancelReason(''); }}
                               disabled={processingId === e.id}
                               className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-[10px] font-black uppercase tracking-wider rounded-xl flex items-center gap-1.5 transition shadow-sm disabled:opacity-50"
                             >
@@ -468,7 +571,7 @@ export default function MyRequests() {
                   No fleet requests booked.
                 </div>
               ) : fleet.map((f) => (
-                <div key={f.id} className="bg-white rounded-3xl p-5 md:p-6 shadow-sm border border-slate-200 flex flex-col justify-between gap-4 transition hover:shadow-md">
+                <div key={f.id} className={`bg-white rounded-3xl p-5 md:p-6 shadow-sm border flex flex-col justify-between gap-4 transition hover:shadow-md ${f.pipeline_state === 'REJECTED' ? 'border-red-200 bg-red-50/10' : 'border-slate-200'}`}>
                    <div className="flex justify-between items-start">
                      <div>
                        <span className="font-black text-brand-maroon text-base">{f.destination}</span>

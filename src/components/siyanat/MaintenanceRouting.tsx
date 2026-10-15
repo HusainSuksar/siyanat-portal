@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../hooks/useToast';
-import { Wrench, UserPlus, X, ListFilter, History as HistoryIcon, MessageCircle, AlertCircle, MapPin, Calendar, FileText, XCircle, Printer } from 'lucide-react';
+import { Wrench, UserPlus, X, ListFilter, History as HistoryIcon, MessageCircle, AlertCircle, MapPin, Calendar, FileText, XCircle, Printer, Image as ImageIcon } from 'lucide-react';
 import { generateJobSheet } from '../../utils/printJobSheet';
 
 const CAMPUS_ZONES = [
@@ -47,7 +47,8 @@ export default function MaintenanceRouting({ userRole }: { userRole: string }) {
       .select(`
         *,
         requester:profiles(full_name, department),
-        assignments:technician_assignments(status, technician:profiles!technician_assignments_technician_id_fkey(id, full_name, trade, phone_number))
+        photos:complaint_photos(file_url),
+        assignments:technician_assignments(id, status, technician:profiles!technician_assignments_technician_id_fkey(id, full_name, trade, phone_number))
       `)
       .in('pipeline_state', targetStates)
       .order('created_at', { ascending: false });
@@ -78,20 +79,18 @@ export default function MaintenanceRouting({ userRole }: { userRole: string }) {
     setProcessingId(selectedComplaint.id);
 
     try {
-      const { error: assignError } = await supabase.from('technician_assignments').insert({ 
-        complaint_id: selectedComplaint.id, 
-        technician_id: selectedTechId, 
-        assigned_by: user?.id 
-      });
-      
-      if (assignError) throw assignError;
+      const isReassign = selectedComplaint.assignments && selectedComplaint.assignments.length > 0;
 
-      if (selectedComplaint.pipeline_state === 'AUTHORIZED' || selectedComplaint.pipeline_state === 'SUBMITTED') {
-         const { error: advanceError } = await supabase.rpc('advance_pipeline', { target_table: 'complaints', target_id: selectedComplaint.id });
-         if (advanceError) throw advanceError;
-      }
+      // Call the atomic RPC to prevent 409 conflicts
+      const { error } = await supabase.rpc('assign_or_reassign_technician', {
+        p_complaint_id: selectedComplaint.id,
+        p_technician_id: selectedTechId,
+        p_assigned_by: user?.id
+      });
+
+      if (error) throw error;
       
-      showToast("Technician Assigned successfully!", "success");
+      showToast(isReassign ? "Technician Reassigned successfully!" : "Technician Assigned successfully!", "success");
       setAssignModalOpen(false);
       setSelectedTechId('');
       fetchMaintenance();
@@ -320,6 +319,29 @@ export default function MaintenanceRouting({ userRole }: { userRole: string }) {
                       </p>
                     </div>
                   )}
+
+                  {/* UPLOADED IMAGE RENDERER */}
+                  {c.photos && c.photos.length > 0 && (
+                    <div className="mt-3 bg-slate-50/80 p-3 rounded-xl border border-slate-100">
+                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2 flex items-center gap-1">
+                        <ImageIcon className="w-3 h-3" /> Attached Photos:
+                      </span>
+                      <div className="flex flex-wrap gap-2">
+                        {c.photos.map((photo: any, idx: number) => (
+                          <a 
+                            key={idx} 
+                            href={photo.file_url} 
+                            target="_blank" 
+                            rel="noopener noreferrer" 
+                            onClick={(e) => e.stopPropagation()}
+                            className="block w-24 h-24 rounded-lg overflow-hidden border border-slate-200 shadow-sm hover:opacity-80 transition cursor-zoom-in"
+                          >
+                            <img src={photo.file_url} alt={`Complaint Photo ${idx + 1}`} className="w-full h-full object-cover" />
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   
                   {hasTechAssigned && (
                     <div className="flex items-center gap-2 pt-1">
@@ -333,7 +355,11 @@ export default function MaintenanceRouting({ userRole }: { userRole: string }) {
                 {viewMode === 'active' && (
                   <div className="flex flex-col gap-2 w-full md:w-48 justify-center border-t md:border-t-0 md:border-l border-slate-100 pt-3 md:pt-0 md:pl-4">
                     <button 
-                      onClick={() => { setSelectedComplaint(c); setAssignModalOpen(true); }} 
+                      onClick={() => { 
+                        setSelectedComplaint(c); 
+                        setSelectedTechId(tech?.id || '');
+                        setAssignModalOpen(true); 
+                      }} 
                       className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-xl text-[10px] uppercase tracking-wider flex items-center justify-center gap-1.5 transition shadow-sm"
                     >
                       <UserPlus className="w-3.5 h-3.5"/> {hasTechAssigned ? 'Reassign Tech' : 'Assign Tech'}
@@ -369,7 +395,9 @@ export default function MaintenanceRouting({ userRole }: { userRole: string }) {
         <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-white rounded-3xl w-full max-w-md overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
             <div className="bg-brand-maroon p-5 flex justify-between text-white items-center">
-              <h3 className="font-bold uppercase text-sm">Assign Technician</h3>
+              <h3 className="font-bold uppercase text-sm">
+                {selectedComplaint.assignments?.length > 0 ? 'Reassign Technician' : 'Assign Technician'}
+              </h3>
               <button onClick={() => setAssignModalOpen(false)} className="hover:text-red-200 transition"><X className="w-5 h-5"/></button>
             </div>
             <form onSubmit={handleAssign} className="p-6 space-y-5">
