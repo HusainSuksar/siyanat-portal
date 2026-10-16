@@ -22,6 +22,7 @@ import InstallAppButton from './components/InstallAppButton';
 import MyRequests from "./pages/MyRequests";
 import GlobalActionController from "./components/GlobalActionController";
 import { canBookFleet } from "./utils/roles";
+import { usePushNotificationSync } from "./hooks/usePushNotificationSync";
 
 // Heavy pages loaded lazily with Suspense boundaries to keep bundle chunks small
 const ReceptionWatchtower = lazy(() => import("./pages/ReceptionWatchtower"));
@@ -62,46 +63,6 @@ const performCleanLogout = async () => {
   }
 };
 
-// Auto-Sync Push Subscription on Login
-const usePushNotificationSync = (userId: string | null) => {
-  useEffect(() => {
-    if (!userId) return;
-
-    const syncDeviceSubscription = async () => {
-      if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
-
-      try {
-        const registration = await navigator.serviceWorker.ready;
-        const subscription = await registration.pushManager.getSubscription();
-
-        if (subscription) {
-          const rawSub = subscription.toJSON();
-          const endpoint = subscription.endpoint;
-          const p256dh = rawSub.keys?.p256dh || '';
-          const auth = rawSub.keys?.auth || '';
-
-          if (endpoint && p256dh && auth) {
-            await supabase.from('user_push_subscriptions').upsert(
-              {
-                user_id: userId,
-                endpoint: endpoint,
-                p256dh: p256dh,
-                auth: auth,
-                user_agent: navigator.userAgent,
-                updated_at: new Date().toISOString()
-              },
-              { onConflict: 'endpoint' }
-            );
-          }
-        }
-      } catch (err) {
-        console.warn("Push sync bypassed:", err);
-      }
-    };
-
-    syncDeviceSubscription();
-  }, [userId]);
-};
 
 // --- NOTIFICATION MANAGER WITH AUDIO RINGTONE ---
 const NotificationManager = ({ userId }: { userId: string | null; }) => {

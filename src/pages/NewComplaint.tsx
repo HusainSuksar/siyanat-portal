@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
 import imageCompression from 'browser-image-compression';
 import { Camera, Send, MapPin, Wrench, ImagePlus, Trash2, CheckCircle } from 'lucide-react';
 import { ZONE_FLOW_MAP, MASTER_ZONES } from '../constants/locations';
@@ -18,13 +19,13 @@ const PRIORITIES = [
 ];
 
 export default function NewComplaint() {
+  const { user, profile, role } = useAuth();
   const [loading, setLoading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string>('');
   const [photos, setPhotos] = useState<File[]>([]);
   const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
   const [successRef, setSuccessRef] = useState<string | null>(null);
   
-  const [, setUserRole] = useState('REQUESTER');
   const [isSupervisor, setIsSupervisor] = useState(false);
   
   // Refined State Form
@@ -38,24 +39,15 @@ export default function NewComplaint() {
   const [description, setDescription] = useState('');
 
   useEffect(() => {
-    const fetchUserProfile = async () => {
-      const { data: authData } = await supabase.auth.getUser();
-      if (authData.user) {
-        const { data: profile } = await supabase.from('profiles').select('role, zone').eq('id', authData.user.id).single();
-        if (profile) {
-          setUserRole(profile.role);
-          
-          if (profile.role === 'SUPERVISOR') {
-            setIsSupervisor(true);
-            if (profile.zone) {
-              setSelectedZone(profile.zone.split(',')[0].trim());
-            }
-          }
+    if (profile) {
+      if (role === 'SUPERVISOR') {
+        setIsSupervisor(true);
+        if (profile.zone) {
+          setSelectedZone(profile.zone.split(',')[0].trim());
         }
       }
-    };
-    fetchUserProfile();
-  }, []);
+    }
+  }, [profile, role]);
 
   // --- DYNAMIC LOGIC ENGINE ---
   const activeVenues = selectedZone ? ZONE_FLOW_MAP[selectedZone] : [];
@@ -105,13 +97,12 @@ export default function NewComplaint() {
     setUploadStatus('Registering ticket...');
 
     try {
-      const { data: authData } = await supabase.auth.getUser();
-      if (!authData.user) throw new Error("Authentication required.");
+      if (!user) throw new Error("Authentication required.");
 
       const { data: complaintData, error: complaintError } = await supabase
         .from('complaints')
         .insert({
-          requester_id: authData.user.id,
+          requester_id: user.id,
           zone: selectedZone,
           venue: selectedVenue,
           floor: selectedFloor,
@@ -126,7 +117,7 @@ export default function NewComplaint() {
 
       if (complaintError) throw complaintError;
 
-      // CLIENT-SIDE IMAGE COMPRESSION & UPLOAD ENGINE
+      // CLIENT-SIDE IMAGE COMPRESSION & PARALLEL UPLOAD ENGINE
       if (photos.length > 0) {
         const compressionOptions = {
           maxSizeMB: 0.15,          // Max size: ~150 KB (98% reduction from standard camera photos)
@@ -134,13 +125,11 @@ export default function NewComplaint() {
           useWebWorker: true,
         };
 
-        for (let i = 0; i < photos.length; i++) {
-          const originalFile = photos[i];
-          setUploadStatus(`Compressing & uploading photo ${i + 1} of ${photos.length}...`);
+        setUploadStatus(`Compressing & uploading ${photos.length} photo(s)...`);
 
+        const uploadPromises = photos.map(async (originalFile) => {
           let fileToUpload: File | Blob = originalFile;
           try {
-            // Compress in browser thread
             fileToUpload = await imageCompression(originalFile, compressionOptions);
           } catch (compErr) {
             console.warn("Compression fallback to original file:", compErr);
@@ -156,22 +145,30 @@ export default function NewComplaint() {
 
           if (uploadError) {
             console.error(`Storage upload failed for ${originalFile.name}:`, uploadError);
-            alert(`Failed to upload photo "${originalFile.name}": ${uploadError.message}`);
-          } else {
-            const { data: publicUrlData } = supabase.storage
-              .from('complaint_photos')
-              .getPublicUrl(filePath);
+            return null;
+          }
 
-            const { error: photoDbError } = await supabase.from('complaint_photos').insert({ 
-              complaint_id: complaintData.id, 
-              file_name: originalFile.name, 
-              file_url: publicUrlData.publicUrl 
-            });
+          const { data: publicUrlData } = supabase.storage
+            .from('complaint_photos')
+            .getPublicUrl(filePath);
 
-            if (photoDbError) {
-              console.error(`Failed to record photo attachment ${originalFile.name}:`, photoDbError);
-              alert(`Failed to save photo record for "${originalFile.name}": ${photoDbError.message}`);
-            }
+          return { 
+            complaint_id: complaintData.id, 
+            file_name: originalFile.name, 
+            file_url: publicUrlData.publicUrl 
+          };
+        });
+
+        const uploadResults = await Promise.all(uploadPromises);
+        const validPhotos = uploadResults.filter((p): p is NonNullable<typeof p> => p !== null);
+
+        if (validPhotos.length > 0) {
+          const { error: photoDbError } = await supabase
+            .from('complaint_photos')
+            .insert(validPhotos);
+
+          if (photoDbError) {
+            console.error('Failed to record photo attachments:', photoDbError);
           }
         }
       }
@@ -179,7 +176,7 @@ export default function NewComplaint() {
       const { error: logError } = await supabase.from('system_logs').insert({
         action_type: 'COMPLAINT_REGISTERED',
         description: `Registered structural complaint ${complaintData.complaint_id} in ${selectedZone}.`,
-        user_email: authData.user.email || 'Requester'
+        user_email: user.email || 'Requester'
       });
       if (logError) {
         console.warn('System log insert failed:', logError.message);

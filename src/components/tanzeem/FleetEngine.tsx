@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
-import { Car, MapPin, Calculator, XCircle, Send, X, Plus, History, ListFilter, Settings, AlertTriangle } from 'lucide-react';
+import { Car, MapPin, Calculator, XCircle, Send, X, Plus, History, ListFilter, Settings, AlertTriangle, CheckCircle } from 'lucide-react';
 import { useToast } from '../../hooks/useToast';
 
 export interface VehicleRequest {
@@ -67,8 +67,8 @@ export default function FleetEngine() {
   const fetchFleet = useCallback(async () => {
     setLoading(true);
     const targetStates = viewMode === 'active' 
-      ? ['AUTHORIZED'] 
-      : ['PROCESSING', 'ACTION_REQUIRED', 'CLOSED', 'REJECTED'];
+      ? ['AUTHORIZED', 'PROCESSING'] 
+      : ['CLOSED', 'REJECTED'];
 
     const [reqRes, invRes] = await Promise.all([
       supabase.from('vehicle_requests')
@@ -136,7 +136,7 @@ export default function FleetEngine() {
       v.id !== selectedReq.id && 
       v.request_date === selectedReq.request_date && 
       v.assigned_vehicles?.includes(plate) &&
-      ['PROCESSING', 'ACTION_REQUIRED', 'CLOSED'].includes(v.pipeline_state)
+      ['PROCESSING', 'ACTION_REQUIRED'].includes(v.pipeline_state)
     );
   };
 
@@ -209,6 +209,38 @@ export default function FleetEngine() {
     }
   };
 
+  const handleCompleteTrip = async (req: VehicleRequest) => {
+    if (!confirm(`Mark trip to "${req.destination}" as completed? This will conclude the booking and release assigned fleet.`)) return;
+    setProcessingId(req.id);
+    try {
+      const { error: pipeErr } = await supabase.rpc('advance_pipeline', { 
+        target_table: 'vehicle_requests', 
+        target_id: req.id 
+      });
+
+      const { error: updateErr } = await supabase
+        .from('vehicle_requests')
+        .update({ pipeline_state: 'CLOSED' })
+        .eq('id', req.id);
+
+      if (updateErr && pipeErr) throw (updateErr || pipeErr);
+
+      const { error: logErr } = await supabase.from('system_logs').insert({ 
+        action_type: 'FLEET_COMPLETED', 
+        description: `Trip to ${req.destination} marked as completed. Fleet released.`, 
+        user_email: user?.email || 'Admin' 
+      });
+      if (logErr) console.warn('Audit log insert failed:', logErr.message);
+
+      showToast('Trip marked as completed and closed!', 'success');
+      fetchFleet();
+    } catch (err: any) {
+      showToast('Error completing trip: ' + err.message, 'error');
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
   return (
     <div className="space-y-4">
       {/* Top Controls */}
@@ -245,9 +277,14 @@ export default function FleetEngine() {
                       <h3 className="font-black text-brand-maroon text-lg md:text-base leading-tight tracking-wide flex items-center gap-1.5">
                         <MapPin className="w-4 h-4" /> {v.destination}
                       </h3>
+                      {viewMode === 'active' && v.pipeline_state === 'PROCESSING' && (
+                        <span className="px-2.5 py-0.5 rounded text-[10px] font-black uppercase tracking-widest bg-emerald-100 text-emerald-800 border border-emerald-200">
+                          Dispatched (In Transit)
+                        </span>
+                      )}
                       {viewMode === 'history' && (
-                        <span className={`px-2.5 py-0.5 rounded text-[10px] font-black uppercase tracking-widest ${v.pipeline_state === 'REJECTED' ? 'bg-red-100 text-red-600' : 'bg-indigo-100 text-indigo-700'}`}>
-                          {v.pipeline_state === 'REJECTED' ? 'Rejected' : 'Dispatched'}
+                        <span className={`px-2.5 py-0.5 rounded text-[10px] font-black uppercase tracking-widest ${v.pipeline_state === 'REJECTED' ? 'bg-red-100 text-red-600' : 'bg-slate-100 text-slate-700'}`}>
+                          {v.pipeline_state === 'REJECTED' ? 'Rejected' : 'Completed'}
                         </span>
                       )}
                     </div>
@@ -275,7 +312,7 @@ export default function FleetEngine() {
                       <p className="text-xs font-semibold text-red-900">{v.rejection_reason}</p>
                     </div>
                   )}
-                  {viewMode === 'history' && v.pipeline_state !== 'REJECTED' && v.assigned_vehicles && (
+                  {(viewMode === 'history' || v.pipeline_state === 'PROCESSING') && v.pipeline_state !== 'REJECTED' && v.assigned_vehicles && (
                     <div className="bg-indigo-50 p-3 rounded-xl border border-indigo-100 mt-4">
                       <span className="text-[10px] font-black text-indigo-600 uppercase tracking-widest block mb-1">Assigned Fleet Setup</span>
                       <p className="text-xs font-semibold text-indigo-900">{v.assigned_vehicles}</p>
@@ -285,12 +322,24 @@ export default function FleetEngine() {
                
                {viewMode === 'active' && (
                  <div className="flex flex-row lg:flex-col gap-2 w-full lg:w-48 pt-4 lg:pt-0 border-t lg:border-t-0 lg:border-l border-slate-100 lg:pl-5">
-                    <button onClick={() => { setSelectedReq(v); setFleetModalOpen(true); }} className="flex-1 lg:w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase tracking-wider rounded-xl text-[10px] shadow-sm flex items-center justify-center gap-2 transition">
-                      <Calculator className="w-4 h-4" /> Calc & Assign
-                    </button>
-                    <button onClick={() => { setTargetReq(v); setRejectModalOpen(true); }} disabled={processingId === v.id} className="flex-1 lg:w-full py-3 bg-white hover:bg-red-50 text-red-600 font-black uppercase tracking-wider rounded-xl border border-red-200 text-[10px] shadow-sm flex items-center justify-center gap-2 disabled:opacity-50 transition">
-                      <XCircle className="w-4 h-4" /> Reject
-                    </button>
+                   {v.pipeline_state === 'PROCESSING' ? (
+                     <button 
+                       onClick={() => handleCompleteTrip(v)} 
+                       disabled={processingId === v.id} 
+                       className="flex-1 lg:w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black uppercase tracking-wider rounded-xl text-[10px] shadow-sm flex items-center justify-center gap-2 transition disabled:opacity-50"
+                     >
+                       <CheckCircle className="w-4 h-4" /> Complete Trip
+                     </button>
+                   ) : (
+                     <>
+                       <button onClick={() => { setSelectedReq(v); setFleetModalOpen(true); }} className="flex-1 lg:w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase tracking-wider rounded-xl text-[10px] shadow-sm flex items-center justify-center gap-2 transition">
+                         <Calculator className="w-4 h-4" /> Calc & Assign
+                       </button>
+                       <button onClick={() => { setTargetReq(v); setRejectModalOpen(true); }} disabled={processingId === v.id} className="flex-1 lg:w-full py-3 bg-white hover:bg-red-50 text-red-600 font-black uppercase tracking-wider rounded-xl border border-red-200 text-[10px] shadow-sm flex items-center justify-center gap-2 disabled:opacity-50 transition">
+                         <XCircle className="w-4 h-4" /> Reject
+                       </button>
+                     </>
+                   )}
                  </div>
                )}
             </div>

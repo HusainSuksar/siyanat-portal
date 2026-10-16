@@ -3,7 +3,7 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { 
   CheckCircle, XCircle, Users, X, Clock, MapPin, 
-  History, ListFilter, ClipboardCheck, PackageCheck 
+  History, ListFilter, ClipboardCheck, PackageCheck, AlertTriangle 
 } from 'lucide-react';
 import { useToast } from '../../hooks/useToast';
 import type { BaseEventData } from '../../types/eventBooking';
@@ -265,6 +265,18 @@ export default function EventsManager() {
   };
 
   const closeEvent = async (event: BaseEventData) => {
+    const hasUnreconciled = event.requirements?.some(r =>
+      r.status === 'Approved' && (
+        r.return_status === 'PENDING_RETURN' || 
+        r.return_status === 'PARTIALLY_RETURNED' ||
+        (Boolean(r.is_returnable) && ((r.returned_qty ?? 0) < (r.approved_qty || r.quantity || 1)))
+      )
+    );
+    if (hasUnreconciled) {
+      showToast('Cannot close event: returnable items must be reconciled first.', 'error');
+      return;
+    }
+
     setProcessingId(event.id);
     try {
       await supabase.from('events').update({ pipeline_state: 'CLOSED' }).eq('id', event.id);
@@ -301,7 +313,13 @@ export default function EventsManager() {
       ) : (
         <div className="grid grid-cols-1 gap-4">
           {events.map(e => {
-            const hasPendingReturns = e.requirements?.some(r => r.return_status === 'PENDING_RETURN' || r.return_status === 'PARTIALLY_RETURNED');
+            const hasPendingReturns = e.requirements?.some(r => 
+              r.status === 'Approved' && (
+                r.return_status === 'PENDING_RETURN' || 
+                r.return_status === 'PARTIALLY_RETURNED' ||
+                (Boolean(r.is_returnable) && ((r.returned_qty ?? 0) < (r.approved_qty || r.quantity || 1)))
+              )
+            );
             const isPassed = isEventPassed(e.event_date, e.time_slot);
             const isPendingReview = e.pipeline_state === 'SUBMITTED' || e.pipeline_state === 'AUTHORIZED';
             
@@ -397,16 +415,37 @@ export default function EventsManager() {
                       </button>
                     </>
                   )}
-                  {viewMode === 'active' && e.pipeline_state === 'PROCESSING' && !hasPendingReturns && (
-                    <button onClick={() => closeEvent(e)} disabled={!isPassed || processingId === e.id} className="flex-1 lg:flex-none py-4 px-2 bg-slate-800 hover:bg-slate-900 text-white font-black uppercase tracking-wider text-[10px] rounded-xl shadow-sm flex items-center justify-center gap-1.5 transition disabled:opacity-50">
-                      {isPassed ? <><CheckCircle className="w-4 h-4"/> Mark Concluded</> : <><Clock className="w-4 h-4"/> Pending Event</>}
-                    </button>
-                  )}
-                  
-                  {viewMode === 'active' && e.pipeline_state === 'PROCESSING' && hasPendingReturns && (
-                    <button onClick={() => openReconcileModal(e)} disabled={!isPassed || processingId === e.id} className={`flex-1 lg:flex-none py-4 px-2 bg-brand-maroon hover:bg-red-900 text-white font-black uppercase tracking-wider text-[10px] rounded-xl shadow-sm flex items-center justify-center gap-1.5 transition disabled:opacity-50 ${isPassed ? 'animate-pulse' : 'disabled:animate-none'}`}>
-                      {isPassed ? <><PackageCheck className="w-4 h-4"/> Reconcile Returns</> : <><Clock className="w-4 h-4"/> Pending Event</>}
-                    </button>
+                  {viewMode === 'active' && e.pipeline_state === 'PROCESSING' && (
+                    <>
+                      {hasPendingReturns ? (
+                        <>
+                          <button 
+                            onClick={() => openReconcileModal(e)} 
+                            disabled={!isPassed || processingId === e.id} 
+                            className={`flex-1 lg:flex-none py-3 px-2 bg-brand-maroon hover:bg-red-900 text-white font-black uppercase tracking-wider text-[10px] rounded-xl shadow-sm flex items-center justify-center gap-1.5 transition disabled:opacity-50 ${isPassed ? 'animate-pulse' : 'disabled:animate-none'}`}
+                          >
+                            {isPassed ? <><PackageCheck className="w-4 h-4"/> Reconcile Returns</> : <><Clock className="w-4 h-4"/> Pending Event</>}
+                          </button>
+                          {isPassed && (
+                            <button
+                              disabled
+                              title="Reconcile Returns First"
+                              className="flex-1 lg:flex-none py-3 px-2 bg-slate-100 text-slate-400 font-black uppercase tracking-wider text-[10px] rounded-xl border border-slate-200 cursor-not-allowed flex items-center justify-center gap-1.5"
+                            >
+                              <AlertTriangle className="w-3.5 h-3.5 text-amber-500" /> Reconcile Returns First
+                            </button>
+                          )}
+                        </>
+                      ) : (
+                        <button 
+                          onClick={() => closeEvent(e)} 
+                          disabled={!isPassed || processingId === e.id} 
+                          className="flex-1 lg:flex-none py-4 px-2 bg-slate-800 hover:bg-slate-900 text-white font-black uppercase tracking-wider text-[10px] rounded-xl shadow-sm flex items-center justify-center gap-1.5 transition disabled:opacity-50"
+                        >
+                          {isPassed ? <><CheckCircle className="w-4 h-4"/> Mark Concluded</> : <><Clock className="w-4 h-4"/> Pending Event</>}
+                        </button>
+                      )}
+                    </>
                   )}
                </div>
             </div>

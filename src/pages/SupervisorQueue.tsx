@@ -1,15 +1,17 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
 import { ClipboardList, CheckCircle, XCircle, Image as ImageIcon, MapPin, SearchCheck, RefreshCcw, ShieldCheck, Mailbox, X, History } from 'lucide-react';
 
 export default function SupervisorQueue() {
+  const { user, profile } = useAuth();
   const [activeTab, setActiveTab] = useState<'inbox' | 'verification' | 'history'>('inbox');
   const [complaints, setComplaints] = useState<any[]>([]);
   const [verifications, setVerifications] = useState<any[]>([]);
   const [historyLog, setHistoryLog] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState<string | null>(null);
-  const [userProfile, setUserProfile] = useState<any>(null);
+  const userProfile = profile ? { ...profile, email: user?.email } : null;
 
   const [reasonModalOpen, setReasonModalOpen] = useState(false);
   const [modalAction, setModalAction] = useState<'REJECT' | 'REOPEN'>('REJECT');
@@ -17,43 +19,34 @@ export default function SupervisorQueue() {
   const [reasonText, setReasonText] = useState('');
 
   const fetchQueue = useCallback(async () => {
-    const { data: authData } = await supabase.auth.getUser();
+    if (!user) return;
+    setLoading(true);
+
+    let baseQuery = supabase
+      .from('complaints')
+      .select(`
+        *,
+        requester:profiles(full_name, department),
+        photos:complaint_photos(file_url),
+        assignments:technician_assignments(status, technician:profiles!technician_assignments_technician_id_fkey(full_name, trade))
+      `)
+      .order('created_at', { ascending: false }); // Sort newest first for history
+
+    if (profile?.role === 'SUPERVISOR' && profile?.zone) {
+      const assignedZones = profile.zone.split(',').map((z: string) => z.trim());
+      baseQuery = baseQuery.in('zone', assignedZones);
+    }
+
+    const { data, error } = await baseQuery;
     
-    if (authData.user) {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('role, zone')
-        .eq('id', authData.user.id)
-        .single();
-      
-      setUserProfile({ ...profile, email: authData.user.email });
-
-      let baseQuery = supabase
-        .from('complaints')
-        .select(`
-          *,
-          requester:profiles(full_name, department),
-          photos:complaint_photos(file_url),
-          assignments:technician_assignments(status, technician:profiles!technician_assignments_technician_id_fkey(full_name, trade))
-        `)
-        .order('created_at', { ascending: false }); // Sort newest first for history
-
-      if (profile?.role === 'SUPERVISOR' && profile?.zone) {
-        const assignedZones = profile.zone.split(',').map((z: string) => z.trim());
-        baseQuery = baseQuery.in('zone', assignedZones);
-      }
-
-      const { data, error } = await baseQuery;
-      
-      if (data && !error) {
-        setComplaints(data.filter(c => c.pipeline_state === 'SUBMITTED'));
-        setVerifications(data.filter(c => c.pipeline_state === 'ACTION_REQUIRED'));
-        // History includes Approved (Processing), Verified (Closed), and Rejected
-        setHistoryLog(data.filter(c => ['PROCESSING', 'CLOSED', 'REJECTED'].includes(c.pipeline_state)));
-      }
+    if (data && !error) {
+      setComplaints(data.filter(c => c.pipeline_state === 'SUBMITTED'));
+      setVerifications(data.filter(c => c.pipeline_state === 'ACTION_REQUIRED'));
+      // History includes Approved (Processing), Verified (Closed), and Rejected
+      setHistoryLog(data.filter(c => ['PROCESSING', 'CLOSED', 'REJECTED'].includes(c.pipeline_state)));
     }
     setLoading(false);
-  }, []);
+  }, [user, profile]);
 
   useEffect(() => {
     let isMounted = true;

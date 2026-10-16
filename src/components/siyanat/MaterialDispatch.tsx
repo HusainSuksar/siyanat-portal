@@ -218,7 +218,7 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
 
   const handleReviewSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!reviewBatch) return;
+    if (!reviewBatch || processingId) return;
     setProcessingId(reviewBatch.id);
 
     try {
@@ -348,6 +348,17 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
           .eq('id', reviewBatch.id);
 
         showToast("All items marked for procurement. Batch sent to RTO queue.", "success");
+      } else if (availableIds.length === 0 && orderedIds.length === 0) {
+        // ALL items marked as Not Provided (Rejected)
+        await supabase
+          .from('work_orders')
+          .update({
+            pipeline_state: 'REJECTED',
+            dispatch_status: 'Rejected'
+          })
+          .eq('id', reviewBatch.id);
+
+        showToast("All items marked as Not Provided. Requisition has been rejected.", "warning");
       }
 
       setReviewBatch(null);
@@ -776,8 +787,14 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
                  disabled={!!processingId} 
                  className="w-full py-4 mt-4 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase tracking-widest rounded-xl shadow-lg transition disabled:opacity-50 flex items-center justify-center gap-2"
                >
-                 <span>Confirm Allocation & Complete Split</span>
-                 <ArrowRight className="w-4 h-4" />
+                 {processingId === reviewBatch.id ? (
+                   <span>Processing Allocation...</span>
+                 ) : (
+                   <>
+                     <span>Confirm Allocation & Complete Split</span>
+                     <ArrowRight className="w-4 h-4" />
+                   </>
+                 )}
                </button>
              </form>
            </div>

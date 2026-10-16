@@ -146,7 +146,7 @@ export default function StationeryDispatcher() {
 
   const handleReviewSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!reviewBatch) return;
+    if (!reviewBatch || processingId) return;
     setProcessingId(reviewBatch.id);
 
     try {
@@ -264,6 +264,17 @@ export default function StationeryDispatcher() {
           .eq('id', reviewBatch.id);
 
         showToast("Stationery items marked for procurement. Sent to RTO queue.", "success");
+      } else if (availableIds.length === 0 && orderedIds.length === 0) {
+        // ALL items marked as Not Provided (Rejected)
+        await supabase
+          .from('work_orders')
+          .update({
+            pipeline_state: 'REJECTED',
+            dispatch_status: 'Rejected'
+          })
+          .eq('id', reviewBatch.id);
+
+        showToast("All items marked as Not Provided. Stationery requisition has been rejected.", "warning");
       }
 
       setReviewBatch(null);
@@ -566,10 +577,10 @@ export default function StationeryDispatcher() {
 
               <button
                 type="submit"
-                disabled={processingId === reviewBatch.id}
-                className="w-full py-4 mt-6 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs uppercase tracking-wide rounded-xl shadow-lg transition disabled:opacity-50"
+                disabled={!!processingId}
+                className="w-full py-4 mt-6 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs uppercase tracking-wide rounded-xl shadow-lg transition disabled:opacity-50 flex items-center justify-center gap-2"
               >
-                Confirm Stationery Dispatch & Split
+                {processingId === reviewBatch.id ? 'Processing Allocation...' : 'Confirm Stationery Dispatch & Split'}
               </button>
             </form>
           </div>

@@ -4,11 +4,10 @@ import { useAuth } from '../contexts/AuthContext';
 import { Wrench, Printer, CheckCircle, MapPin, AlertCircle, PackageSearch, X, PlusCircle, Trash2, Send, PackageCheck, ListFilter, History as HistoryIcon } from 'lucide-react';
 
 export default function TechnicianPortal() {
-  const { user } = useAuth();
+  const { user, profile: userProfile } = useAuth();
   const [viewMode, setViewMode] = useState<'active' | 'history'>('active');
   const [assignments, setAssignments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [userProfile, setUserProfile] = useState<any>(null);
 
   // Material Request Modal State
   const [materialModalOpen, setMaterialModalOpen] = useState(false);
@@ -31,13 +30,6 @@ export default function TechnicianPortal() {
     }
 
     setLoading(true);
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', userId)
-      .single();
-    
-    setUserProfile(profile);
 
     const targetStates = viewMode === 'active' 
       ? ['PROCESSING', 'ACTION_REQUIRED'] 

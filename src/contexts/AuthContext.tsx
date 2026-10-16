@@ -10,6 +10,7 @@ type AuthContextType = {
   profile: any | null; // Holds their zone, department, trade, etc.
   role: UserRole;        // Single source of truth UserRole
   loading: boolean;
+  refreshProfile: () => Promise<void>;
 };
 
 // 2. Create the Context
@@ -23,6 +24,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [role, setRole] = useState<UserRole>('REQUESTER');
   const [loading, setLoading] = useState(true);
 
+  const fetchProfile = async (userId: string) => {
+    const { data } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', userId)
+      .single();
+      
+    setProfile(data);
+    const resolvedRole = (data?.role === 'STANDARD_USER' ? 'REQUESTER' : data?.role) as UserRole || 'REQUESTER';
+    setRole(resolvedRole);
+  };
+
+  const refreshProfile = async () => {
+    if (user?.id) {
+      await fetchProfile(user.id);
+    }
+  };
+
   useEffect(() => {
     let mounted = true;
 
@@ -35,15 +54,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         
         // Only fetch the profile from the database ONCE
         if (session?.user) {
-          const { data } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', session.user.id)
-            .single();
-            
-          setProfile(data);
-          const resolvedRole = (data?.role === 'STANDARD_USER' ? 'REQUESTER' : data?.role) as UserRole || 'REQUESTER';
-          setRole(resolvedRole);
+          await fetchProfile(session.user.id);
         }
         
         setLoading(false);
@@ -58,10 +69,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(session?.user ?? null);
       
       if (session?.user) {
-        const { data } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
-        setProfile(data);
-        const resolvedRole = (data?.role === 'STANDARD_USER' ? 'REQUESTER' : data?.role) as UserRole || 'REQUESTER';
-        setRole(resolvedRole);
+        await fetchProfile(session.user.id);
       } else {
         setProfile(null);
         setRole('REQUESTER');
@@ -77,7 +85,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Expose the state to the rest of the app
   return (
-    <AuthContext.Provider value={{ session, user, profile, role, loading }}>
+    <AuthContext.Provider value={{ session, user, profile, role, loading, refreshProfile }}>
       {children}
     </AuthContext.Provider>
   );

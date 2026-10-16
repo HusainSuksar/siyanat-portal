@@ -1,21 +1,12 @@
-import { useState, useEffect } from 'react';
-import { supabase } from '../lib/supabase';
+import { useState } from 'react';
+import { useAuth } from '../contexts/AuthContext';
 import { Truck, Package, Wrench } from 'lucide-react';
 import MaterialDispatch from '../components/siyanat/MaterialDispatch';
 import MaintenanceRouting from '../components/siyanat/MaintenanceRouting';
 
 export default function SiyanatOperations() {
+  const { role: userRole } = useAuth();
   const [activeTab, setActiveTab] = useState<'materials' | 'maintenance'>('materials');
-  const [userRole, setUserRole] = useState<string>('');
-
-  useEffect(() => {
-    supabase.auth.getUser().then(async ({ data: { user } }) => {
-      if (user) {
-        const { data } = await supabase.from('profiles').select('role').eq('id', user.id).single();
-        if (data) setUserRole(data.role);
-      }
-    });
-  }, []);
 
   return (
     <div className="space-y-6 pb-24 max-w-6xl mx-auto">

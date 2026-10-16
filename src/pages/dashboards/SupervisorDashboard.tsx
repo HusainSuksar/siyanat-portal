@@ -5,7 +5,7 @@ import { Wrench, CheckCircle, Clock, AlertTriangle, ArrowRight } from 'lucide-re
 import { useNavigate } from 'react-router-dom';
 
 export default function SupervisorDashboard() {
-  const { role } = useAuth();
+  const { role, profile } = useAuth();
   const navigate = useNavigate();
   const [metrics, setMetrics] = useState({ pending: 0, active: 0, completed: 0 });
   const [recentPending, setRecentPending] = useState<any[]>([]);
@@ -14,9 +14,6 @@ export default function SupervisorDashboard() {
   useEffect(() => {
     async function fetchSupervisorData() {
       setLoading(true);
-      
-      const { data: authData } = await supabase.auth.getUser();
-      const { data: profile } = await supabase.from('profiles').select('zone').eq('id', authData.user?.id).single();
       const zoneFilter = profile?.zone || '';
 
       // Base Queries
@@ -43,7 +40,7 @@ export default function SupervisorDashboard() {
       setLoading(false);
     }
     fetchSupervisorData();
-  }, []);
+  }, [profile?.zone]);
 
   return (
     <div className="space-y-6 pb-24 max-w-6xl mx-auto animate-in fade-in duration-500">

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
 import { 
   ShoppingCart, RefreshCw, Clock, AlertTriangle, Edit, 
   Trash2, CheckCircle, X, PackageSearch, FileText, ShoppingBag 
@@ -7,10 +8,9 @@ import {
 import DirectPOModal from '../components/inventory/DirectPOModal';
 
 export default function RequestToOrder() {
+  const { user: currentUser, role: userRole } = useAuth();
   const [pendingItems, setPendingItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [currentUser, setCurrentUser] = useState<any>(null);
-  const [userRole, setUserRole] = useState<string>('');
   const [processingId, setProcessingId] = useState<string | null>(null);
 
   // Edit ETA Modal State
@@ -23,16 +23,7 @@ export default function RequestToOrder() {
 
   const fetchData = useCallback(async () => {
     setLoading(true);
-    
-    const { data: authData } = await supabase.auth.getUser();
-    let currentRole = '';
-
-    if (authData.user) {
-      setCurrentUser(authData.user);
-      const { data: profile } = await supabase.from('profiles').select('role').eq('id', authData.user.id).single();
-      currentRole = profile?.role || '';
-      setUserRole(currentRole);
-    }
+    const currentRole = userRole || '';
     
     // Fetch items with complete PO lifecycle
     let query = supabase
@@ -83,7 +74,7 @@ export default function RequestToOrder() {
       setPendingItems(formatted);
     }
     setLoading(false);
-  }, []);
+  }, [userRole]);
 
   useEffect(() => {
     let isMounted = true;

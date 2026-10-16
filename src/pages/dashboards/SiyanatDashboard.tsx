@@ -14,11 +14,7 @@ export default function SiyanatDashboard() {
   useEffect(() => {
     async function fetchSiyanatData() {
       setLoading(true);
-      
-      const { data: authData } = await supabase.auth.getUser();
-      if (!authData.user) return;
-      const { data: profile } = await supabase.from('profiles').select('role').eq('id', authData.user.id).single();
-      const currentRole = profile?.role || 'SIYANAT_HEAD';
+      const currentRole = role || 'SIYANAT_HEAD';
 
       // 1. Fetch live counts for Siyanat KPIs
       let dispatchQuery = supabase.from('work_orders').select('*, items:work_order_items!inner(fulfillment_dept)', { count: 'exact', head: true }).eq('pipeline_state', 'AUTHORIZED');
@@ -43,7 +39,7 @@ export default function SiyanatDashboard() {
       setLoading(false);
     }
     fetchSiyanatData();
-  }, []);
+  }, [role]);
 
   return (
     <div className="space-y-6 pb-24 max-w-6xl mx-auto animate-in fade-in duration-500">

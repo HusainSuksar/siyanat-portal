@@ -87,17 +87,47 @@ export default function PendingPOsTab({ pendingPOs, role, onRefresh }: Props) {
         }
       }
 
-      if (poConfirmTarget.complaint_id) {
+      let targetComplaintId = poConfirmTarget.complaint_id;
+
+      // Fallback: If not directly on PO, resolve from batch_id / work_order_id if linked
+      if (!targetComplaintId && (poConfirmTarget.batch_id || poConfirmTarget.work_order_id)) {
+        const targetWoId = poConfirmTarget.work_order_id || poConfirmTarget.batch_id;
+        const { data: linkedWo } = await supabase
+          .from('work_orders')
+          .select('reason')
+          .eq('id', targetWoId)
+          .maybeSingle();
+
+        if (linkedWo?.reason) {
+          const match = linkedWo.reason.match(/Complaint:\s*([A-Za-z0-9_-]+)/i);
+          if (match && match[1]) {
+            const code = match[1].trim();
+            const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(code);
+            if (isUuid) {
+              targetComplaintId = code;
+            } else {
+              const { data: comp } = await supabase.from('complaints').select('id').eq('complaint_id', code).maybeSingle();
+              if (comp) targetComplaintId = comp.id;
+            }
+          }
+        }
+
+        if (targetComplaintId) {
+          await supabase.from('purchase_orders').update({ complaint_id: targetComplaintId }).eq('id', poConfirmTarget.id);
+        }
+      }
+
+      if (targetComplaintId) {
         const { error: assignErr } = await supabase
           .from('technician_assignments')
           .update({ status: 'Assigned' })
-          .eq('complaint_id', poConfirmTarget.complaint_id);
+          .eq('complaint_id', targetComplaintId);
         if (assignErr) throw assignErr;
 
         const { error: compErr } = await supabase
           .from('complaints')
           .update({ pipeline_state: 'PROCESSING' })
-          .eq('id', poConfirmTarget.complaint_id);
+          .eq('id', targetComplaintId);
         if (compErr) throw compErr;
       }
 

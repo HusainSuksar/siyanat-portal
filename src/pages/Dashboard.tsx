@@ -1,5 +1,5 @@
 import { useAuth } from '../contexts/AuthContext';
-import StandardUserDashboard from './StandardUserDashboard';
+import MyRequests from './MyRequests';
 import AdminDashboard from './dashboards/AdminDashboard';
 import SupervisorDashboard from './dashboards/SupervisorDashboard';
 import SiyanatDashboard from './dashboards/SiyanatDashboard';
@@ -35,6 +35,6 @@ export default function Dashboard() {
     case 'REQUESTER':
     case 'STANDARD_USER':
     default:
-      return <StandardUserDashboard />;
+      return <MyRequests />;
   }
 }

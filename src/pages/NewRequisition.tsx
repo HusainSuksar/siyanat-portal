@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { supabase, type InventoryItem } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
 import { 
   ShoppingBag, Send, PlusCircle, Trash2, CheckCircle, PackageSearch, 
   Search, Wrench, BookOpen, Monitor 
@@ -13,10 +14,10 @@ const DEPARTMENTS = [
 ];
 
 export default function NewRequisition() {
+  const { user, profile, role } = useAuth();
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [userRole, setUserRole] = useState('REQUESTER');
-  const [isSupervisor, setIsSupervisor] = useState(false);
+  const isSupervisor = role === 'SUPERVISOR';
   const [successBatch, setSuccessBatch] = useState<string | null>(null);
   
   // Department Locking State (Single Dept per Requisition)
@@ -43,21 +44,14 @@ export default function NewRequisition() {
   const [customQty, setCustomQty] = useState(1);
 
   useEffect(() => {
+    if (isSupervisor && profile?.zone && !selectedZone) {
+      setSelectedZone(profile.zone.split(',')[0].trim());
+    }
+  }, [isSupervisor, profile?.zone, selectedZone]);
+
+  useEffect(() => {
     const fetchCatalog = async () => {
       setLoading(true);
-      const { data: authData } = await supabase.auth.getUser();
-      if (authData.user) {
-        const { data: profile } = await supabase.from('profiles').select('role, zone').eq('id', authData.user.id).single();
-        if (profile) {
-          setUserRole(profile.role);
-          
-          if (profile.role === 'SUPERVISOR') {
-            setIsSupervisor(true);
-            if (profile.zone) setSelectedZone(profile.zone.split(',')[0].trim());
-          }
-        }
-      }
-
       const { data, error } = await supabase.from('inventory_items').select('*').order('name');
       if (data && !error) setCatalog(data);
       setLoading(false);
@@ -150,8 +144,7 @@ export default function NewRequisition() {
     setSubmitting(true);
 
     try {
-      const { data: userData } = await supabase.auth.getUser();
-      if (!userData.user) throw new Error("Not authenticated");
+      if (!user) throw new Error("Not authenticated");
 
       const fullLocation = [selectedZone, selectedVenue, selectedFloor, selectedRoom].filter(Boolean).join(' - ');
 
@@ -159,8 +152,8 @@ export default function NewRequisition() {
       const { data: orderData, error: orderError } = await supabase
         .from('work_orders')
         .insert({
-          requester_id: userData.user.id,
-          department: userRole === 'REQUESTER' ? 'General Staff' : 'Maintenance', 
+          requester_id: user.id,
+          department: role === 'REQUESTER' ? 'General Staff' : 'Maintenance', 
           location: fullLocation,
           urgency,
           reason
@@ -196,7 +189,7 @@ export default function NewRequisition() {
       await supabase.from('system_logs').insert({
         action_type: 'REQUISITION_SUBMITTED',
         description: `Submitted ${selectedDept.replace('_HEAD', '')} material requisition ${orderData.batch_id || orderData.id} for ${fullLocation}.`,
-        user_email: userData.user.email || 'Requester'
+        user_email: user?.email || 'Requester'
       });
 
       setSuccessBatch(orderData.batch_id || orderData.id);
@@ -216,7 +209,7 @@ export default function NewRequisition() {
   };
 
   const totalSelected = Object.keys(cart).length + customItems.length;
-  const isStandardUser = userRole === 'REQUESTER';
+  const isStandardUser = role === 'REQUESTER';
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto pb-24">
@@ -359,7 +352,7 @@ export default function NewRequisition() {
               const available = Math.max(0, item.physical_stock - item.freezed_stock);
               const isOutOfStock = available <= 0;
               const currentQty = cart[item.id]?.qty || 0;
-              const canSeeStock = ['SUPER_ADMIN', 'SUPERVISOR', 'SIYANAT_HEAD', 'TANZEEM_HEAD', 'AVIT_HEAD'].includes(userRole);
+              const canSeeStock = ['SUPER_ADMIN', 'SUPERVISOR', 'SIYANAT_HEAD', 'TANZEEM_HEAD', 'AVIT_HEAD'].includes(role);
 
               return (
                 <div key={item.id} className={`rounded-2xl p-4 border flex flex-col justify-between transition-all ${currentQty > 0 ? 'border-brand-maroon bg-brand-maroon/5 shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300'}`}>

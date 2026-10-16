@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { supabase } from "../lib/supabase";
+import { useAuth } from "../contexts/AuthContext";
 import { 
   CheckSquare, RefreshCw, MessageSquare, Package, Wrench, 
   Calendar, Car, Clock, XCircle, AlertTriangle, X, CheckCircle,
@@ -9,7 +10,6 @@ import BatchDetailsModal from "../components/BatchDetailsModal";
 import VisualPipelineStepper from "../components/VisualPipelineStepper";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "../hooks/useToast";
-import type { User } from "@supabase/supabase-js";
 import type { BaseEventData } from "../types/eventBooking";
 import type { WorkOrder } from "../types";
 
@@ -70,9 +70,8 @@ interface FleetBooking {
 export default function MyRequests() {
   const { showToast, toasts, removeToast } = useToast();
   const [activeTab, setActiveTab] = useState<'materials' | 'maintenance' | 'events' | 'fleet'>('materials');
+  const { user: currentUser, role: userRole } = useAuth();
   const [loading, setLoading] = useState(true);
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [userRole, setUserRole] = useState<string>('REQUESTER');
   const [processingId, setProcessingId] = useState<string | null>(null);
   const navigate = useNavigate();
 
@@ -91,76 +90,68 @@ export default function MyRequests() {
   const [isChatOpen, setIsChatOpen] = useState(false);
 
   const fetchDashboardData = useCallback(async () => {
+    if (!currentUser) return;
     setLoading(true);
-    const { data: authData } = await supabase.auth.getUser();
 
-    if (authData.user) {
-      setCurrentUser(authData.user);
+    // STRICT USER ISOLATION: Fetch only requests created by this logged-in account
+    const [matRes, compRes, evRes, fleetRes] = await Promise.all([
+      supabase
+        .from("work_orders")
+        .select(`
+          *, 
+          logs:work_order_logs(author_id, created_at, message), 
+          items:work_order_items(
+            custom_item_name, 
+            requested_qty, 
+            status,
+            inventory:inventory_items(name)
+          )
+        `)
+        .eq("requester_id", currentUser.id)
+        .order("created_at", { ascending: false })
+        .limit(30),
+        
+      supabase
+        .from("complaints")
+        .select(`
+          *,
+          photos:complaint_photos(file_url)
+        `)
+        .eq("requester_id", currentUser.id)
+        .order("created_at", { ascending: false })
+        .limit(30),
+        
+      supabase
+        .from("events")
+        .select(`
+          *, 
+          requirements:event_requirements(*)
+        `)
+        .eq("requester_id", currentUser.id)
+        .order("event_date", { ascending: true })
+        .limit(30),
+        
+      supabase
+        .from("vehicle_requests")
+        .select("*")
+        .eq("requester_id", currentUser.id)
+        .order("request_date", { ascending: true })
+        .limit(30)
+    ]);
 
-      const { data: profile } = await supabase.from("profiles").select("role").eq("id", authData.user.id).single();
-      const role = profile?.role || 'REQUESTER';
-      setUserRole(role);
+    if (matRes.data) setMaterials(matRes.data);
+    if (compRes.data) setComplaints(compRes.data);
+    if (evRes.data) setEvents(evRes.data as BaseEventData[]);
+    if (fleetRes.data) setFleet(fleetRes.data);
 
-      // STRICT USER ISOLATION: Fetch only requests created by this logged-in account
-      const [matRes, compRes, evRes, fleetRes] = await Promise.all([
-        supabase
-          .from("work_orders")
-          .select(`
-            *, 
-            logs:work_order_logs(author_id, created_at, message), 
-            items:work_order_items(
-              custom_item_name, 
-              requested_qty, 
-              status,
-              inventory:inventory_items(name)
-            )
-          `)
-          .eq("requester_id", authData.user.id)
-          .order("created_at", { ascending: false })
-          .limit(30),
-          
-        supabase
-          .from("complaints")
-          .select(`
-            *,
-            photos:complaint_photos(file_url)
-          `)
-          .eq("requester_id", authData.user.id)
-          .order("created_at", { ascending: false })
-          .limit(30),
-          
-        supabase
-          .from("events")
-          .select(`
-            *, 
-            requirements:event_requirements(*)
-          `)
-          .eq("requester_id", authData.user.id)
-          .order("event_date", { ascending: true })
-          .limit(30),
-          
-        supabase
-          .from("vehicle_requests")
-          .select("*")
-          .eq("requester_id", authData.user.id)
-          .order("request_date", { ascending: true })
-          .limit(30)
-      ]);
-
-      if (matRes.data) setMaterials(matRes.data);
-      if (compRes.data) setComplaints(compRes.data);
-      if (evRes.data) setEvents(evRes.data as BaseEventData[]);
-      if (fleetRes.data) setFleet(fleetRes.data);
-
-      setStats({
-        materialsActive: matRes.data?.filter((w) => !['CLOSED', 'REJECTED'].includes(w.pipeline_state)).length || 0,
-        complaintsActive: compRes.data?.filter((c) => !['CLOSED', 'REJECTED'].includes(c.pipeline_state)).length || 0,
-        eventsActive: evRes.data?.filter((e) => !['CLOSED', 'REJECTED'].includes(e.pipeline_state)).length || 0,
-        fleetActive: fleetRes.data?.filter((f) => !['CLOSED', 'REJECTED'].includes(f.pipeline_state)).length || 0,
-      });
-    }
+    setStats({
+      materialsActive: matRes.data?.filter((w) => !['CLOSED', 'REJECTED'].includes(w.pipeline_state)).length || 0,
+      complaintsActive: compRes.data?.filter((c) => !['CLOSED', 'REJECTED'].includes(c.pipeline_state)).length || 0,
+      eventsActive: evRes.data?.filter((e) => !['CLOSED', 'REJECTED'].includes(e.pipeline_state)).length || 0,
+      fleetActive: fleetRes.data?.filter((f) => !['CLOSED', 'REJECTED'].includes(f.pipeline_state)).length || 0,
+    });
     setLoading(false);
-  }, []);
+  }, [currentUser]);
 
   useEffect(() => { 
     let isMounted = true;
@@ -246,12 +237,16 @@ export default function MyRequests() {
         <div className="absolute top-0 right-0 w-64 h-64 bg-brand-gold opacity-5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/3"></div>
         <div className="relative z-10">
           <div className="flex items-center gap-3">
-            <h2 className="text-2xl md:text-3xl font-black text-brand-gold tracking-tight">My Requests Tracker</h2>
-            <span className="px-3 py-1 bg-brand-gold/20 text-brand-gold text-[9px] font-black uppercase tracking-widest rounded-lg border border-brand-gold/50 shadow-sm">
-              {userRole.replace('_', ' ')}
-            </span>
+            <h2 className="text-2xl md:text-3xl font-black text-brand-gold tracking-tight">
+              {isStandardUser ? 'My Dashboard' : 'My Requests Tracker'}
+            </h2>
+            {!isStandardUser && (
+              <span className="px-3 py-1 bg-brand-gold/20 text-brand-gold text-[9px] font-black uppercase tracking-widest rounded-lg border border-brand-gold/50 shadow-sm">
+                {userRole.replace('_', ' ')}
+              </span>
+            )}
           </div>
-          <p className="text-sm text-slate-200 mt-2 font-medium">Live status and interactive controls for all your submitted tickets.</p>
+          <p className="text-sm text-slate-200 mt-2 font-medium">Track your materials, maintenance, and event requests in real-time.</p>
         </div>
         <div className="flex gap-3 relative z-10 w-full md:w-auto">
           <button onClick={() => navigate("/new-requisition")} className="flex-1 md:w-auto px-5 py-3.5 bg-brand-gold hover:bg-amber-500 text-brand-dark font-black text-xs uppercase tracking-widest rounded-xl shadow-lg transition flex justify-center items-center gap-1.5">

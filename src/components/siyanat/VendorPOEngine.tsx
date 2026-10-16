@@ -155,6 +155,26 @@ export default function VendorPOEngine({ batch, userEmail, onClose, onSuccess }:
         vendorGroups[vId].push(item);
       });
 
+      // Resolve linked complaint UUID if this batch was initiated from a complaint
+      let resolvedComplaintId: string | null = (batch as any).complaint_id || null;
+      if (!resolvedComplaintId && batch.reason) {
+        const match = batch.reason.match(/Complaint:\s*([A-Za-z0-9_-]+)/i);
+        if (match && match[1]) {
+          const complaintCode = match[1].trim();
+          const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(complaintCode);
+          if (isUuid) {
+            resolvedComplaintId = complaintCode;
+          } else {
+            const { data: comp } = await supabase
+              .from('complaints')
+              .select('id')
+              .eq('complaint_id', complaintCode)
+              .maybeSingle();
+            if (comp) resolvedComplaintId = comp.id;
+          }
+        }
+      }
+
       const generatedPoNumbers: string[] = [];
 
       for (const [vendorId, items] of Object.entries(vendorGroups)) {
@@ -183,7 +203,15 @@ export default function VendorPOEngine({ batch, userEmail, onClose, onSuccess }:
         const { data: poNumber, error } = await supabase.rpc('generate_vendor_po', rpcPayload);
 
         if (error) throw error;
-        if (poNumber) generatedPoNumbers.push(poNumber);
+        if (poNumber) {
+          generatedPoNumbers.push(poNumber);
+          if (resolvedComplaintId) {
+            await supabase
+              .from('purchase_orders')
+              .update({ complaint_id: resolvedComplaintId })
+              .eq('po_number', poNumber);
+          }
+        }
       }
 
       showToast(`Successfully created ${generatedPoNumbers.length} PO(s): ${generatedPoNumbers.join(', ')}`, 'success');

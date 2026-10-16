@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../../hooks/useToast';
 import { Plus, Trash2, Users, Wrench, FolderTree, KeyRound, Store } from 'lucide-react';
+import { invalidateSystemConfigCache } from '../../hooks/useSystemConfig';
 
 export default function SystemConfigManager() {
   const { showToast } = useToast();
@@ -84,6 +85,7 @@ export default function SystemConfigManager() {
     if (!error) {
       showToast('Class added successfully', 'success');
       setNewClass({ name: '', male: 0, female: 0 });
+      invalidateSystemConfigCache();
       fetchData();
     } else {
       showToast(error.message, 'error');
@@ -93,6 +95,7 @@ export default function SystemConfigManager() {
   const deleteClass = async (id: string) => {
     if (!confirm('Delete this class?')) return;
     await supabase.from('academic_classes').delete().eq('id', id);
+    invalidateSystemConfigCache();
     fetchData();
   };
 
@@ -103,6 +106,7 @@ export default function SystemConfigManager() {
     if (!error) {
       showToast('Trade added successfully', 'success');
       setNewTrade('');
+      invalidateSystemConfigCache();
       fetchData();
     } else {
       showToast(error.message, 'error');
@@ -112,6 +116,7 @@ export default function SystemConfigManager() {
   const deleteTrade = async (id: string) => {
     if (!confirm('Delete this trade?')) return;
     await supabase.from('technician_trades').delete().eq('id', id);
+    invalidateSystemConfigCache();
     fetchData();
   };
 
@@ -125,6 +130,7 @@ export default function SystemConfigManager() {
     if (!error) {
       showToast('Category created', 'success');
       setNewCat({ name: '', dept: 'SIYANAT_HEAD' });
+      invalidateSystemConfigCache();
       fetchData();
     } else {
       showToast(error.message, 'error');
@@ -134,6 +140,7 @@ export default function SystemConfigManager() {
   const deleteCategory = async (id: string) => {
     if (!confirm('Delete this category?')) return;
     await supabase.from('inventory_categories').delete().eq('id', id);
+    invalidateSystemConfigCache();
     fetchData();
   };
 
@@ -146,6 +153,7 @@ export default function SystemConfigManager() {
       description: 'Default onboarding password'
     });
     if (!error) {
+      invalidateSystemConfigCache();
       showToast('Default onboarding password updated!', 'success');
     } else {
       showToast(error.message, 'error');

@@ -157,6 +157,9 @@ export default function VendorDirectoryTab({ vendors, onRefresh }: Props) {
         const { data: invItems } = await supabase.from('inventory_items').select('id, name');
         const invMap = new Map((invItems || []).map(i => [i.name.trim().toLowerCase(), i.id]));
 
+        const recordsToUpsert: any[] = [];
+        const nowIso = new Date().toISOString();
+
         for (let idx = 0; idx < rows.length; idx++) {
           const row = rows[idx];
           const itemName = (row.item_name || '').trim();
@@ -173,7 +176,7 @@ export default function VendorDirectoryTab({ vendors, onRefresh }: Props) {
 
           const matchedInvId = invMap.get(itemName.toLowerCase()) || null;
 
-          const { error } = await supabase.from('vendor_price_agreements').upsert({
+          recordsToUpsert.push({
             vendor_id: catalogModalVendor.id,
             inventory_id: matchedInvId,
             item_name: itemName,
@@ -181,16 +184,26 @@ export default function VendorDirectoryTab({ vendors, onRefresh }: Props) {
             unit: unit,
             unit_price: rate,
             tax_rate: tax,
-            updated_at: new Date().toISOString()
-          }, { onConflict: 'vendor_id,item_name' });
+            updated_at: nowIso
+          });
+        }
 
-          if (error) {
-            errors.push(`Row ${idx + 1} (${itemName}): ${error.message}`);
-          } else {
-            successCount++;
+        if (recordsToUpsert.length > 0) {
+          // Batch in chunks of 100 for safety against network payload limits
+          const chunkSize = 100;
+          for (let i = 0; i < recordsToUpsert.length; i += chunkSize) {
+            const chunk = recordsToUpsert.slice(i, i + chunkSize);
+            const { error } = await supabase
+              .from('vendor_price_agreements')
+              .upsert(chunk, { onConflict: 'vendor_id,item_name' });
+
+            if (error) {
+              errors.push(`Batch upload error (items ${i + 1}-${i + chunk.length}): ${error.message}`);
+            } else {
+              successCount += chunk.length;
+            }
+            setSingleProgress({ total: rows.length, current: Math.min(i + chunk.length, rows.length) });
           }
-
-          setSingleProgress({ total: rows.length, current: idx + 1 });
         }
 
         setIsSingleUploading(false);

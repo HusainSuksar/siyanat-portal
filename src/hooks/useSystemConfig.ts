@@ -43,56 +43,111 @@ const FALLBACK_CATEGORIES = [
   { id: '13', name: "IT & Networking Hardware", department: "AVIT_HEAD" }
 ];
 
-export function useSystemConfig() {
-  const [classes, setClasses] = useState<Record<string, ClassHeadcount>>(FALLBACK_CLASSES);
-  const [trades, setTrades] = useState<string[]>(FALLBACK_TRADES);
-  const [zones, setZones] = useState<string[]>(FALLBACK_ZONES);
-  const [defaultPassword, setDefaultPassword] = useState<string>('786110');
-  const [categories, setCategories] = useState<InventoryCategoryItem[]>(FALLBACK_CATEGORIES);
-  const [loading, setLoading] = useState(true);
+interface CachedConfig {
+  classes: Record<string, ClassHeadcount>;
+  trades: string[];
+  zones: string[];
+  defaultPassword: string;
+  categories: InventoryCategoryItem[];
+  timestamp: number;
+}
 
-  const fetchConfig = useCallback(async () => {
+let cachedConfig: CachedConfig | null = null;
+let activeFetchPromise: Promise<CachedConfig> | null = null;
+
+export const invalidateSystemConfigCache = () => {
+  cachedConfig = null;
+  activeFetchPromise = null;
+};
+
+export function useSystemConfig() {
+  const [classes, setClasses] = useState<Record<string, ClassHeadcount>>(() => cachedConfig?.classes || FALLBACK_CLASSES);
+  const [trades, setTrades] = useState<string[]>(() => cachedConfig?.trades || FALLBACK_TRADES);
+  const [zones, setZones] = useState<string[]>(() => cachedConfig?.zones || FALLBACK_ZONES);
+  const [defaultPassword, setDefaultPassword] = useState<string>(() => cachedConfig?.defaultPassword || '786110');
+  const [categories, setCategories] = useState<InventoryCategoryItem[]>(() => cachedConfig?.categories || FALLBACK_CATEGORIES);
+  const [loading, setLoading] = useState(!cachedConfig);
+
+  const fetchConfig = useCallback(async (force = false) => {
+    if (!force && cachedConfig) {
+      setClasses(cachedConfig.classes);
+      setTrades(cachedConfig.trades);
+      setZones(cachedConfig.zones);
+      setDefaultPassword(cachedConfig.defaultPassword);
+      setCategories(cachedConfig.categories);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     try {
-      const [clsRes, trdRes, catRes, setRes] = await Promise.all([
-        supabase.from('academic_classes').select('*').eq('is_active', true).order('class_name'),
-        supabase.from('technician_trades').select('*').eq('is_active', true).order('trade_name'),
-        supabase.from('inventory_categories').select('*').eq('is_active', true).order('name'),
-        supabase.from('system_settings').select('*')
-      ]);
+      if (!activeFetchPromise || force) {
+        activeFetchPromise = (async () => {
+          const [clsRes, trdRes, catRes, setRes] = await Promise.all([
+            supabase.from('academic_classes').select('*').eq('is_active', true).order('class_name'),
+            supabase.from('technician_trades').select('*').eq('is_active', true).order('trade_name'),
+            supabase.from('inventory_categories').select('*').eq('is_active', true).order('name'),
+            supabase.from('system_settings').select('*')
+          ]);
 
-      if (clsRes.data && clsRes.data.length > 0) {
-        const classMap: Record<string, ClassHeadcount> = {};
-        clsRes.data.forEach((c: any) => {
-          classMap[c.class_name] = { male: Number(c.male_count) || 0, female: Number(c.female_count) || 0 };
-        });
-        if (!classMap['Others (Custom)']) {
-          classMap['Others (Custom)'] = { male: 0, female: 0 };
-        }
-        setClasses(classMap);
+          let nextClasses = FALLBACK_CLASSES;
+          if (clsRes.data && clsRes.data.length > 0) {
+            const classMap: Record<string, ClassHeadcount> = {};
+            clsRes.data.forEach((c: any) => {
+              classMap[c.class_name] = { male: Number(c.male_count) || 0, female: Number(c.female_count) || 0 };
+            });
+            if (!classMap['Others (Custom)']) {
+              classMap['Others (Custom)'] = { male: 0, female: 0 };
+            }
+            nextClasses = classMap;
+          }
+
+          let nextTrades = FALLBACK_TRADES;
+          if (trdRes.data && trdRes.data.length > 0) {
+            nextTrades = trdRes.data.map((t: any) => t.trade_name);
+          }
+
+          let nextCategories = FALLBACK_CATEGORIES;
+          if (catRes.data && catRes.data.length > 0) {
+            nextCategories = catRes.data;
+          }
+
+          let nextPwd = '786110';
+          let nextZones = FALLBACK_ZONES;
+          if (setRes.data && setRes.data.length > 0) {
+            const pwdSetting = setRes.data.find((s: any) => s.key === 'default_user_password');
+            if (pwdSetting && pwdSetting.value) {
+              nextPwd = typeof pwdSetting.value === 'string' ? pwdSetting.value : String(pwdSetting.value);
+            }
+            const zonesSetting = setRes.data.find((s: any) => s.key === 'campus_pickup_zones');
+            if (zonesSetting && Array.isArray(zonesSetting.value) && zonesSetting.value.length > 0) {
+              nextZones = zonesSetting.value;
+            }
+          }
+
+          const result: CachedConfig = {
+            classes: nextClasses,
+            trades: nextTrades,
+            zones: nextZones,
+            defaultPassword: nextPwd,
+            categories: nextCategories,
+            timestamp: Date.now()
+          };
+          cachedConfig = result;
+          return result;
+        })();
       }
 
-      if (trdRes.data && trdRes.data.length > 0) {
-        setTrades(trdRes.data.map((t: any) => t.trade_name));
-      }
-
-      if (catRes.data && catRes.data.length > 0) {
-        setCategories(catRes.data);
-      }
-
-      if (setRes.data && setRes.data.length > 0) {
-        const pwdSetting = setRes.data.find((s: any) => s.key === 'default_user_password');
-        if (pwdSetting && pwdSetting.value) {
-          setDefaultPassword(typeof pwdSetting.value === 'string' ? pwdSetting.value : String(pwdSetting.value));
-        }
-        const zonesSetting = setRes.data.find((s: any) => s.key === 'campus_pickup_zones');
-        if (zonesSetting && Array.isArray(zonesSetting.value) && zonesSetting.value.length > 0) {
-          setZones(zonesSetting.value);
-        }
-      }
+      const result = await activeFetchPromise;
+      setClasses(result.classes);
+      setTrades(result.trades);
+      setZones(result.zones);
+      setDefaultPassword(result.defaultPassword);
+      setCategories(result.categories);
     } catch (err) {
       console.warn('Could not load dynamic system configurations, using fallbacks:', err);
     } finally {
+      activeFetchPromise = null;
       setLoading(false);
     }
   }, []);
@@ -100,7 +155,7 @@ export function useSystemConfig() {
   useEffect(() => {
     let isMounted = true;
     const run = async () => {
-      if (isMounted) await fetchConfig();
+      if (isMounted) await fetchConfig(false);
     };
     run();
     return () => {
@@ -108,5 +163,7 @@ export function useSystemConfig() {
     };
   }, [fetchConfig]);
 
-  return { classes, trades, zones, categories, defaultPassword, loading, refreshConfig: fetchConfig };
+  const refreshConfig = useCallback(() => fetchConfig(true), [fetchConfig]);
+
+  return { classes, trades, zones, categories, defaultPassword, loading, refreshConfig };
 }

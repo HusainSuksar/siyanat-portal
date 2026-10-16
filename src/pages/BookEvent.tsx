@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../hooks/useToast';
 import { Calendar, Send, AlertTriangle, CheckCircle, XCircle } from 'lucide-react';
 import BookingForm from '../components/events/BookingForm';
@@ -21,9 +22,9 @@ const INITIAL_FORM: EventFormData = {
 };
 
 export default function BookEvent() {
+  const { user: authUser, role: userRole } = useAuth();
   const { showToast, toasts, removeToast } = useToast();
-  const [currentUser, setCurrentUser] = useState<{ id: string; email: string } | null>(null);
-  const [userRole, setUserRole] = useState('REQUESTER');
+  const currentUser = authUser ? { id: authUser.id, email: authUser.email || '' } : null;
   
   const [formData, setFormData] = useState<EventFormData>(INITIAL_FORM);
   const [inventory, setInventory] = useState<InventoryAsset[]>([]);
@@ -33,13 +34,6 @@ export default function BookEvent() {
 
   useEffect(() => {
     const init = async () => {
-      const { data: authData } = await supabase.auth.getUser();
-      if (!authData.user) return;
-      setCurrentUser({ id: authData.user.id, email: authData.user.email || '' });
-      
-      const { data: profile } = await supabase.from('profiles').select('role').eq('id', authData.user.id).single();
-      setUserRole(profile?.role || 'REQUESTER');
-
       const [invRes, stdRes] = await Promise.all([
         supabase.from('inventory_items').select('*').order('name'),
         supabase.from('standard_event_assets').select('*').eq('is_active', true)
