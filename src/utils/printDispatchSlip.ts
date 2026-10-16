@@ -24,7 +24,15 @@ export interface DispatchBatch {
   items?: DispatchItem[];
 }
 
-export const generateDispatchSlip = (batch: DispatchBatch, userRole: string) => {
+export interface DispatchSlipOptions {
+  onlyAvailable?: boolean;
+}
+
+export const generateDispatchSlip = (
+  batch: DispatchBatch, 
+  userRole: string,
+  options: DispatchSlipOptions = { onlyAvailable: true }
+) => {
   const printWindow = window.open('', '_blank', 'width=800,height=900');
   if (!printWindow) return alert('Please allow popups to generate the dispatch slip.');
 
@@ -34,22 +42,37 @@ export const generateDispatchSlip = (batch: DispatchBatch, userRole: string) => 
       ? 'TANZEEM UL MUMTALEKAAT' 
       : 'SIYANAT UL MUMTALEKAAT';
 
-  const myItems = (batch.items || []).filter(
+  // Filter items matching user role
+  const roleFilteredItems = (batch.items || []).filter(
     (i: DispatchItem) => userRole === 'SUPER_ADMIN' || userRole === 'ADMIN' || i.fulfillment_dept === userRole
   );
 
-  const itemsHtml = myItems.map((item: DispatchItem, idx: number) => {
+  // If onlyAvailable is requested, filter to available or stock injected items
+  const myItems = options.onlyAvailable
+    ? roleFilteredItems.filter(i => i.status === 'Available' || i.status === 'Stock Injected')
+    : roleFilteredItems;
+
+  const hasOrderedItems = roleFilteredItems.some(i => i.status === 'Ordered' || i.status === 'Pending');
+  const isPartial = hasOrderedItems && options.onlyAvailable;
+
+  const itemsHtml = myItems.length === 0 
+    ? `<tr><td colspan="4" style="padding: 16px; text-align: center; color: #64748b; font-style: italic;">No in-stock items ready for dispatch at this time.</td></tr>`
+    : myItems.map((item: DispatchItem, idx: number) => {
     const unitName = item.inventory?.unit || 'Pcs';
     const itemName = item.custom_item_name || item.inventory?.name || 'Item';
     const itemType = item.item_type || 'Catalog';
     const itemStatus = item.status || 'Allocated';
+    const isSubstituted = itemName.includes('[Alt for:') || (item.item_type === 'Catalog' && !!item.custom_item_name);
 
     return `
       <tr>
         <td style="padding: 10px; border: 1px solid #e2e8f0; text-align: center; font-weight: bold;">${idx + 1}</td>
         <td style="padding: 10px; border: 1px solid #e2e8f0;">
           <strong>${itemName}</strong>
-          <div style="font-size: 11px; color: #64748b;">Type: ${itemType}</div>
+          <div style="font-size: 11px; color: #64748b; margin-top: 2px;">
+            Type: ${itemType}
+            ${isSubstituted ? `<span style="margin-left: 6px; background: #e0e7ff; color: #3730a3; padding: 2px 6px; border-radius: 4px; font-weight: bold; font-size: 10px;">SUBSTITUTED</span>` : ''}
+          </div>
         </td>
         <td style="padding: 10px; border: 1px solid #e2e8f0; text-align: center; font-weight: bold; color: #701a28;">
           ${item.requested_qty} ${unitName}
@@ -74,6 +97,7 @@ export const generateDispatchSlip = (batch: DispatchBatch, userRole: string) => 
           .header { border-bottom: 2px solid #e2e8f0; padding-bottom: 16px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
           .institution { font-size: 18px; font-weight: 900; color: #701a28; letter-spacing: 0.5px; text-transform: uppercase; }
           .dept { font-size: 11px; font-weight: 800; color: #c5a059; text-transform: uppercase; margin-top: 2px; }
+          .partial-banner { background: #fef3c7; border: 1px solid #f59e0b; color: #92400e; font-size: 11px; font-weight: 800; padding: 6px 12px; border-radius: 6px; margin-bottom: 16px; text-transform: uppercase; text-align: center; }
           .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-bottom: 20px; font-size: 12px; }
           .meta-item { display: flex; flex-direction: column; }
           .meta-label { font-size: 10px; font-weight: 800; color: #64748b; text-transform: uppercase; }
@@ -99,6 +123,12 @@ export const generateDispatchSlip = (batch: DispatchBatch, userRole: string) => 
               <div style="font-size: 10px; color: #64748b; font-weight: bold;">DATE: ${new Date().toLocaleDateString()}</div>
             </div>
           </div>
+
+          ${isPartial ? `
+            <div class="partial-banner">
+              ⚠️ Partial Fulfillment Dispatch Slip — Only In-Stock Items Listed. (Remaining items are under procurement)
+            </div>
+          ` : ''}
 
           <div class="meta-grid">
             <div class="meta-item">

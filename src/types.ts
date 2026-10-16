@@ -20,7 +20,7 @@ export interface WorkOrderItem {
   requested_qty: number;
   item_type: 'Catalog' | 'Custom';
   custom_item_name: string | null;
-  status: 'Pending' | 'Ordered' | 'Available' | 'Not Provided';
+  status: 'Pending' | 'Ordered' | 'Available' | 'Not Provided' | 'Stock Injected' | 'PO Issued';
   eta_days: number;
   fulfillment_dept: string;
   inventory_id: string | null;
@@ -33,6 +33,8 @@ export interface WorkOrder {
   batch_id: string;
   location: string;
   pipeline_state: string;
+  dispatch_status?: string | null;
+  requester_id?: string | null;
   reason?: string | null;      // <-- Added this
   department?: string | null;  // <-- Added this
   requester?: Profile;

@@ -8,29 +8,85 @@ import BatchDetailsModal from "../components/BatchDetailsModal";
 import VisualPipelineStepper from "../components/VisualPipelineStepper";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "../hooks/useToast";
+import type { User } from "@supabase/supabase-js";
 import type { BaseEventData } from "../types/eventBooking";
+import type { WorkOrder } from "../types";
+
+interface WorkOrderLog {
+  author_id?: string;
+  message?: string;
+  created_at: string;
+}
+
+interface ReqItem {
+  id?: string;
+  inventory?: { name?: string };
+  custom_item_name?: string | null;
+  status?: string;
+  requested_qty?: number;
+}
+
+interface MaterialReq {
+  id: string;
+  batch_id: string;
+  location?: string;
+  pipeline_state: string;
+  logs?: WorkOrderLog[];
+  items?: ReqItem[];
+  created_at?: string;
+}
+
+interface ComplaintPhoto {
+  file_url: string;
+}
+
+interface ComplaintRecord {
+  id: string;
+  complaint_id: string;
+  category: string;
+  zone: string;
+  venue: string;
+  floor?: string;
+  room_area?: string;
+  created_at: string;
+  description: string;
+  pipeline_state: string;
+  resolution_notes?: string;
+  photos?: ComplaintPhoto[];
+}
+
+interface FleetBooking {
+  id: string;
+  destination?: string;
+  purpose?: string;
+  request_date: string;
+  arrival_time?: string;
+  assigned_vehicles?: string;
+  departure_time?: string;
+  pipeline_state: string;
+}
 
 export default function StandardUserDashboard() {
   const { showToast, toasts, removeToast } = useToast();
   const [activeTab, setActiveTab] = useState<'materials' | 'maintenance' | 'events' | 'fleet'>('materials');
   const [loading, setLoading] = useState(true);
-  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [userRole, setUserRole] = useState<string>('REQUESTER');
   const [processingId, setProcessingId] = useState<string | null>(null);
   const navigate = useNavigate();
 
   // Cancel Modal State
-  const [cancelModalEvent, setCancelModalEvent] = useState<any | null>(null);
+  const [cancelModalEvent, setCancelModalEvent] = useState<BaseEventData | null>(null);
   const [cancelReason, setCancelReason] = useState<string>('');
 
   const [stats, setStats] = useState({ materialsActive: 0, complaintsActive: 0, eventsActive: 0, fleetActive: 0 });
 
-  const [materials, setMaterials] = useState<any[]>([]);
-  const [complaints, setComplaints] = useState<any[]>([]);
+  const [materials, setMaterials] = useState<MaterialReq[]>([]);
+  const [complaints, setComplaints] = useState<ComplaintRecord[]>([]);
   const [events, setEvents] = useState<BaseEventData[]>([]);
-  const [fleet, setFleet] = useState<any[]>([]);
+  const [fleet, setFleet] = useState<FleetBooking[]>([]);
 
-  const [activeBatch, setActiveBatch] = useState<any>(null);
+  const [activeBatch, setActiveBatch] = useState<WorkOrder | null>(null);
   const [isChatOpen, setIsChatOpen] = useState(false);
 
   const fetchDashboardData = useCallback(async () => {
@@ -85,7 +141,7 @@ export default function StandardUserDashboard() {
     };
   }, [fetchDashboardData]);
 
-  const confirmReceipt = async (batch: any) => {
+  const confirmReceipt = async (batch: { id: string; batch_id: string }) => {
     setProcessingId(batch.id);
     try {
       const { error } = await supabase.rpc('receive_work_order', { target_id: batch.id });
@@ -99,8 +155,8 @@ export default function StandardUserDashboard() {
 
       showToast("Receipt confirmed! Request completed.", "success");
       fetchDashboardData();
-    } catch (err: any) {
-      showToast("Error confirming receipt: " + err.message, "error");
+    } catch (err: unknown) {
+      showToast("Error confirming receipt: " + (err instanceof Error ? err.message : 'Error'), "error");
     } finally {
       setProcessingId(null);
     }
@@ -125,22 +181,22 @@ export default function StandardUserDashboard() {
       setCancelModalEvent(null);
       setCancelReason('');
       fetchDashboardData();
-    } catch (err: any) {
-      showToast("Error cancelling event: " + err.message, "error");
+    } catch (err: unknown) {
+      showToast("Error cancelling event: " + (err instanceof Error ? err.message : 'Error'), "error");
     } finally {
       setProcessingId(null);
     }
   };
 
-  const openChat = (batch: any) => {
-    setActiveBatch(batch);
+  const openChat = (batch: MaterialReq) => {
+    setActiveBatch(batch as unknown as WorkOrder);
     setIsChatOpen(true);
   };
 
-  const getDeliverySlaMessage = (req: any) => {
+  const getDeliverySlaMessage = (req: MaterialReq) => {
     if (req.pipeline_state !== 'PROCESSING' && req.pipeline_state !== 'ACTION_REQUIRED') return null;
-    const headActionLog = req.logs?.slice().reverse().find((l: any) => l.message?.includes('processed') || l.message?.includes('split') || l.message?.includes('approved') || l.message?.includes('Stock'));
-    const approvalTimestamp = headActionLog ? new Date(headActionLog.created_at) : (req.logs && req.logs.length > 0 ? new Date(req.logs[req.logs.length - 1].created_at) : new Date(req.created_at));
+    const headActionLog = req.logs?.slice().reverse().find(l => l.message?.includes('processed') || l.message?.includes('split') || l.message?.includes('approved') || l.message?.includes('Stock'));
+    const approvalTimestamp = headActionLog ? new Date(headActionLog.created_at) : (req.logs && req.logs.length > 0 ? new Date(req.logs[req.logs.length - 1].created_at) : new Date(req.created_at || 0));
     if (approvalTimestamp.getHours() < 15) {
       return { type: 'same_day', text: 'You will get the requested material today.', badgeClass: 'bg-emerald-50 text-emerald-800 border-emerald-200' };
     } else {
@@ -222,14 +278,23 @@ export default function StandardUserDashboard() {
               const hasUnread = logs.length > 0 && logs[logs.length - 1].author_id !== currentUser?.id;
               
               const allItems = req.items || [];
-              const providedItems = allItems.filter((i: any) => i.status !== 'Not Provided' && i.status !== 'Rejected');
-              const rejectedItems = allItems.filter((i: any) => i.status === 'Not Provided' || i.status === 'Rejected');
+              const providedItems = allItems.filter((i: ReqItem) => i.status !== 'Not Provided' && i.status !== 'Rejected');
+              const rejectedItems = allItems.filter((i: ReqItem) => i.status === 'Not Provided' || i.status === 'Rejected');
               
               const sla = getDeliverySlaMessage(req);
+
+              const isSplitPOBatch = req.batch_id?.includes('-PO');
 
               return (
                 <div key={req.id} className={`bg-white rounded-3xl p-5 md:p-6 shadow-sm border flex flex-col justify-between gap-4 transition hover:shadow-md ${req.pipeline_state === 'REJECTED' ? 'border-red-200 bg-red-50/10' : 'border-slate-200'}`}>
                    <div>
+                     {isSplitPOBatch && (
+                       <div className="mb-3 px-3 py-1.5 bg-purple-50 border border-purple-200 rounded-xl text-purple-800 text-[11px] font-bold flex items-center justify-between">
+                         <span>📋 Procurement Backlog (Split from original requisition)</span>
+                         <span className="text-[9px] uppercase font-black bg-purple-200 px-1.5 py-0.5 rounded">PO in progress</span>
+                       </div>
+                     )}
+
                      <div className="flex justify-between items-start">
                        <div>
                          <span className="font-black text-brand-maroon text-base">{req.batch_id}</span>
@@ -246,13 +311,44 @@ export default function StandardUserDashboard() {
                      {/* Provided Items */}
                      {providedItems.length > 0 && (
                        <div className="mt-3 bg-slate-50 p-2.5 rounded-xl border border-slate-100 text-[11px] font-bold text-slate-600">
-                         <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 block mb-1">Items in Requisition:</span>
-                         <div className="flex flex-wrap gap-1.5">
-                           {providedItems.map((i: any, idx: number) => (
-                             <span key={idx} className="bg-white px-2 py-1 rounded-lg border border-slate-200 text-slate-700 text-[11px]">
-                               {i.inventory?.name || i.custom_item_name} <span className="text-brand-maroon font-black">(x{i.requested_qty})</span>
-                             </span>
-                           ))}
+                         <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 block mb-1.5">Items in Requisition:</span>
+                         <div className="flex flex-wrap gap-2">
+                           {providedItems.map((i: ReqItem, idx: number) => {
+                             const isSubstituted = i.custom_item_name?.includes('[Alt for:');
+                             const isReady = i.status === 'Available' || i.status === 'Stock Injected';
+                             const isOrdered = i.status === 'Ordered' || i.status === 'PO Issued';
+
+                             return (
+                               <div 
+                                 key={idx} 
+                                 className={`px-3 py-1.5 rounded-xl border text-[11px] font-bold flex items-center gap-2 shadow-sm ${
+                                   isReady 
+                                     ? 'bg-emerald-50 border-emerald-200 text-emerald-800' 
+                                     : isOrdered 
+                                     ? 'bg-purple-50 border-purple-200 text-purple-800' 
+                                     : 'bg-white border-slate-200 text-slate-700'
+                                 }`}
+                               >
+                                 <span>{i.inventory?.name || i.custom_item_name}</span>
+                                 <span className="font-black text-brand-maroon">(x{i.requested_qty})</span>
+                                 {isReady && (
+                                   <span className="text-[9px] font-black uppercase bg-emerald-200/80 text-emerald-900 px-1.5 py-0.5 rounded">
+                                     Ready for Pickup
+                                   </span>
+                                 )}
+                                 {isOrdered && (
+                                   <span className="text-[9px] font-black uppercase bg-purple-200/80 text-purple-900 px-1.5 py-0.5 rounded">
+                                     In Procurement
+                                   </span>
+                                 )}
+                                 {isSubstituted && (
+                                   <span className="text-[9px] font-black uppercase bg-indigo-200/80 text-indigo-900 px-1.5 py-0.5 rounded">
+                                     Substituted
+                                   </span>
+                                 )}
+                               </div>
+                             );
+                           })}
                          </div>
                        </div>
                      )}
@@ -265,7 +361,7 @@ export default function StandardUserDashboard() {
                            <span className="text-[10px] font-black uppercase tracking-wider">Items Not Provided / Rejected:</span>
                          </div>
                          <div className="flex flex-wrap gap-1.5">
-                           {rejectedItems.map((item: any, idx: number) => (
+                           {rejectedItems.map((item: ReqItem, idx: number) => (
                              <span key={idx} className="bg-white px-2.5 py-1 rounded-lg border border-red-200 text-red-600 text-[11px] font-bold flex items-center gap-1.5 shadow-sm">
                                <span className="line-through">{item.inventory?.name || item.custom_item_name} (x{item.requested_qty})</span>
                                <span className="text-[9px] bg-red-100 text-red-700 px-1 py-0.5 rounded font-black uppercase tracking-tight">Rejected</span>
@@ -335,7 +431,7 @@ export default function StandardUserDashboard() {
                          <ImageIcon className="w-3.5 h-3.5" /> Attached Photos:
                        </span>
                        <div className="flex flex-wrap gap-2.5">
-                         {c.photos.map((photo: any, idx: number) => (
+                         {c.photos.map((photo: ComplaintPhoto, idx: number) => (
                            <a 
                              key={idx} 
                              href={photo.file_url} 
