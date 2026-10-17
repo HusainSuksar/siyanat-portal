@@ -39,7 +39,7 @@ export default function TechnicianPortal() {
       .from('technician_assignments')
       .select(`
         *,
-        complaint:complaints(*)
+        complaint:complaints!inner(*)
       `)
       .eq('technician_id', userId)
       .in('complaint.pipeline_state', targetStates)

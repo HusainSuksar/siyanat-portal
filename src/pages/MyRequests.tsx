@@ -52,6 +52,8 @@ interface ComplaintRecord {
   created_at: string;
   description: string;
   pipeline_state: string;
+  status?: string;
+  rejection_reason?: string;
   resolution_notes?: string;
   photos?: ComplaintPhoto[];
 }
@@ -492,7 +494,7 @@ export default function MyRequests() {
               ) : complaints.map((c) => (
                 <div 
                   key={c.id} 
-                  onClick={() => navigate(`/complaints/${c.complaint_id}`)}
+                  onClick={() => navigate(`/?action_ticket=${c.complaint_id}`)}
                   className={`bg-white rounded-3xl p-5 md:p-6 shadow-sm border flex flex-col justify-between gap-4 transition hover:shadow-md cursor-pointer ${c.pipeline_state === 'REJECTED' ? 'border-red-200 hover:border-red-300 bg-red-50/20' : 'border-slate-200 hover:border-slate-300'}`}
                 >
                    <div>
@@ -525,12 +527,14 @@ export default function MyRequests() {
                      </div>
 
                      {/* REJECTION REASON DISPLAY */}
-                     {c.pipeline_state === 'REJECTED' && c.resolution_notes && (
+                     {c.pipeline_state === 'REJECTED' && (c.rejection_reason || c.resolution_notes || (c.status && c.status.startsWith('Rejected: '))) && (
                        <div className="mt-3 bg-red-50 p-3.5 rounded-xl border border-red-200 flex items-start gap-2.5">
                          <Ban className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
                          <div>
                            <span className="text-[10px] font-black text-red-600 uppercase tracking-widest block mb-0.5">Request Declined</span>
-                           <p className="text-xs md:text-sm font-bold text-red-900">{c.resolution_notes}</p>
+                           <p className="text-xs md:text-sm font-bold text-red-900">
+                             {c.rejection_reason || c.resolution_notes || c.status?.replace('Rejected: ', '') || ''}
+                           </p>
                          </div>
                        </div>
                      )}

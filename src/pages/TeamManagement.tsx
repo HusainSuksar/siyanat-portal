@@ -243,7 +243,8 @@ export default function TeamManagement() {
                   trade: cleanRole === 'EXECUTOR' ? tradeFormatted : null,
                 };
 
-                await supabase.from('profiles').upsert(payload);
+                const { error: profileErr } = await supabase.from('profiles').upsert(payload);
+                if (profileErr) throw profileErr;
                 successCount++;
                 registered = true;
               }

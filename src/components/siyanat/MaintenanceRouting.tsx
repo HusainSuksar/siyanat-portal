@@ -58,7 +58,7 @@ export default function MaintenanceRouting({ userRole }: { userRole: string }) {
 
     const [compRes, techRes] = await Promise.all([
       query, 
-      supabase.from('profiles').select('id, full_name, trade, phone_number').eq('role', 'EXECUTOR')
+      supabase.from('profiles').select('id, full_name, trade, phone_number').in('role', ['EXECUTOR', 'TECHNICIAN'])
     ]);
 
     if (compRes.data) setComplaints(compRes.data);
@@ -116,10 +116,20 @@ export default function MaintenanceRouting({ userRole }: { userRole: string }) {
     setProcessingId(selectedComplaint.id);
 
     try {
-      const { error } = await supabase.from('complaints').update({ 
+      let { error } = await supabase.from('complaints').update({ 
         pipeline_state: 'REJECTED',
-        resolution_notes: 'Rejected by Ops: ' + rejectionReason 
+        status: 'Rejected',
+        rejection_reason: rejectionReason 
       }).eq('id', selectedComplaint.id);
+
+      // Safe fallback if rejection_reason column is not yet in schema cache
+      if (error && (error.message?.includes('rejection_reason') || error.message?.includes('column') || error.message?.includes('resolution_notes'))) {
+        const fallbackRes = await supabase.from('complaints').update({ 
+          pipeline_state: 'REJECTED',
+          status: 'Rejected: ' + rejectionReason 
+        }).eq('id', selectedComplaint.id);
+        error = fallbackRes.error;
+      }
       
       if (error) throw error;
 

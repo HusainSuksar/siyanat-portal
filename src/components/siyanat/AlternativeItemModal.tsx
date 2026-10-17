@@ -59,7 +59,11 @@ export default function AlternativeItemModal({
           .order('name');
 
         if (fulfillmentDept) {
-          query = query.eq('fulfillment_dept', fulfillmentDept);
+          const depts = fulfillmentDept.includes('SIYANAT') ? ['SIYANAT', 'SIYANAT_HEAD']
+            : fulfillmentDept.includes('TANZEEM') ? ['TANZEEM', 'TANZEEM_HEAD']
+            : fulfillmentDept.includes('AVIT') ? ['AVIT', 'AVIT_HEAD']
+            : [fulfillmentDept];
+          query = query.in('fulfillment_dept', depts);
         }
 
         const { data, error } = await query;

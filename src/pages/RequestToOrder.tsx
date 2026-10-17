@@ -253,8 +253,8 @@ export default function RequestToOrder() {
 
   // Metrics Calculations
   const totalItems = pendingItems.length;
-  const totalPending = pendingItems.filter(i => i.status === 'Pending').length;
-  const totalInFlight = pendingItems.filter(i => i.status === 'Ordered' || i.status === 'PO Issued').length;
+  const totalPending = pendingItems.filter(i => i.status === 'Pending' || i.status === 'Ordered').length;
+  const totalInFlight = pendingItems.filter(i => i.status === 'PO Issued').length;
   const customItems = pendingItems.filter(i => i.item_type === 'Custom').length;
 
   return (

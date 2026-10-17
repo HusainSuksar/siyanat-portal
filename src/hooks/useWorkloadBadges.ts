@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
 
 export interface WorkloadCounts {
   supervisorReview: number;
@@ -9,6 +10,8 @@ export interface WorkloadCounts {
 }
 
 export function useWorkloadBadges(userId: string | null, userRole: string | null) {
+  const { profile } = useAuth();
+  const supervisorZone = profile?.zone;
   const [counts, setCounts] = useState<WorkloadCounts>({
     supervisorReview: 0,
     materialDispatch: 0,
@@ -23,10 +26,17 @@ export function useWorkloadBadges(userId: string | null, userRole: string | null
       // 1. Supervisor Pending Approvals
       let supervisorCount = 0;
       if (userRole === 'SUPERVISOR' || userRole === 'SUPER_ADMIN' || userRole === 'ADMIN') {
-        const { count } = await supabase
+        let compQuery = supabase
           .from('complaints')
           .select('id', { count: 'exact', head: true })
           .eq('pipeline_state', 'SUBMITTED');
+
+        if (userRole === 'SUPERVISOR' && supervisorZone) {
+          const assignedZones = supervisorZone.split(',').map((z: string) => z.trim());
+          compQuery = compQuery.in('zone', assignedZones);
+        }
+
+        const { count } = await compQuery;
         supervisorCount = count || 0;
       }
 
@@ -63,10 +73,14 @@ export function useWorkloadBadges(userId: string | null, userRole: string | null
         let query = supabase
           .from('work_order_items')
           .select('id', { count: 'exact', head: true })
-          .eq('status', 'Ordered');
+          .in('status', ['Ordered', 'Pending']);
 
         if (userRole !== 'SUPER_ADMIN' && userRole !== 'ADMIN') {
-          query = query.eq('fulfillment_dept', userRole);
+          const depts = userRole === 'SIYANAT_HEAD' ? ['SIYANAT_HEAD', 'SIYANAT']
+            : userRole === 'TANZEEM_HEAD' ? ['TANZEEM_HEAD', 'TANZEEM']
+            : userRole === 'AVIT_HEAD' ? ['AVIT_HEAD', 'AVIT']
+            : [userRole];
+          query = query.in('fulfillment_dept', depts);
         }
         const { count } = await query;
         poCount = count || 0;
@@ -81,7 +95,7 @@ export function useWorkloadBadges(userId: string | null, userRole: string | null
     } catch (err) {
       console.warn('Error updating workload counts:', err);
     }
-  }, [userId, userRole]);
+  }, [userId, userRole, supervisorZone]);
 
   useEffect(() => {
     let isMounted = true;

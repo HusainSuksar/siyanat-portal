@@ -105,11 +105,12 @@ export default function ReceptionWatchtower() {
   };
 
   const getFleetBottleneck = (f: any) => {
+    if (f.pipeline_state === 'CLOSED') return { text: 'Trip Completed', icon: CheckCircle, color: 'text-slate-500', bg: 'bg-slate-100' };
+    if (f.pipeline_state === 'REJECTED') return { text: 'Request Declined', icon: AlertCircle, color: 'text-red-500', bg: 'bg-red-100' };
     if ((f.pipeline_state === 'SUBMITTED' || f.pipeline_state === 'AUTHORIZED') && !f.assigned_vehicles) {
       return { text: 'Awaiting Fleet Allocation', icon: Clock, color: 'text-amber-600', bg: 'bg-amber-100' };
     }
     if (f.assigned_vehicles) return { text: `Assigned: ${f.assigned_vehicles}`, icon: Car, color: 'text-emerald-600', bg: 'bg-emerald-100' };
-    if (f.pipeline_state === 'CLOSED') return { text: 'Trip Completed', icon: CheckCircle, color: 'text-slate-500', bg: 'bg-slate-100' };
     return { text: f.pipeline_state, icon: AlertCircle, color: 'text-slate-500', bg: 'bg-slate-100' };
   };
 

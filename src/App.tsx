@@ -183,7 +183,7 @@ const DesktopNavigation = ({ userRole, badges }: { userRole: string; badges: any
 
         {isTanzeemHead && !isSiyanatHead && (
           <>
-            <Link to="/siyanat-operations" className={getTabClass("/siyanat-operations")}>
+            <Link to="/tanzeem?tab=stationery" className={getTabClass("/tanzeem")}>
               <Package className="w-4 h-4" />
               <span>Stationery Queue</span>
               {badges.materialDispatch > 0 && <span className="bg-brand-gold text-brand-dark px-1.5 py-0.2 rounded-full text-[10px] font-black">{badges.materialDispatch}</span>}
@@ -314,7 +314,7 @@ const MobileDrawerNavigation = ({ userRole, isOpen, setIsOpen, badges }: { userR
             <>
               <div className="pt-4 pb-2 text-[10px] font-black uppercase text-slate-400 tracking-wider">Tanzeem Head Controls</div>
               {navItem("/tanzeem", CalendarCheck, "Tanzeem Command Center")}
-              {navItem("/siyanat-operations", Package, "Stationery Queue", badges.materialDispatch)}
+              {navItem("/tanzeem?tab=stationery", Package, "Stationery Queue", badges.materialDispatch)}
               {navItem("/restock", Warehouse, "Catalog")}
               {navItem("/rto", ShoppingCart, "RTO Queue", badges.pendingPOs)}
             </>

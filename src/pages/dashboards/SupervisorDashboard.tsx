@@ -76,7 +76,7 @@ export default function SupervisorDashboard() {
         </div>
 
         <div 
-          onClick={() => navigate('/siyanat-operations')}
+          onClick={() => navigate('/supervisor-queue')}
           className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex items-center justify-between hover:border-indigo-300 transition cursor-pointer group"
           title="View Active Technician Routing"
         >

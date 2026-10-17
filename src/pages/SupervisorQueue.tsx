@@ -42,8 +42,8 @@ export default function SupervisorQueue() {
     if (data && !error) {
       setComplaints(data.filter(c => c.pipeline_state === 'SUBMITTED'));
       setVerifications(data.filter(c => c.pipeline_state === 'ACTION_REQUIRED'));
-      // History includes Approved (Processing), Verified (Closed), and Rejected
-      setHistoryLog(data.filter(c => ['PROCESSING', 'CLOSED', 'REJECTED'].includes(c.pipeline_state)));
+      // History includes Authorized (Awaiting Ops Dispatch), Approved (Processing), Verified (Closed), and Rejected
+      setHistoryLog(data.filter(c => ['AUTHORIZED', 'PROCESSING', 'CLOSED', 'REJECTED'].includes(c.pipeline_state)));
     }
     setLoading(false);
   }, [user, profile]);
@@ -92,7 +92,21 @@ export default function SupervisorQueue() {
     setProcessingId(targetComplaint.id);
 
     if (modalAction === 'REJECT') {
-      const { error } = await supabase.from('complaints').update({ pipeline_state: 'REJECTED', rejection_reason: reasonText }).eq('id', targetComplaint.id);
+      let { error } = await supabase.from('complaints').update({
+        pipeline_state: 'REJECTED',
+        status: 'Rejected',
+        rejection_reason: reasonText
+      }).eq('id', targetComplaint.id);
+
+      // Safe fallback if rejection_reason column is not yet in schema cache
+      if (error && (error.message?.includes('rejection_reason') || error.message?.includes('column'))) {
+        const fallbackRes = await supabase.from('complaints').update({
+          pipeline_state: 'REJECTED',
+          status: 'Rejected: ' + reasonText
+        }).eq('id', targetComplaint.id);
+        error = fallbackRes.error;
+      }
+
       if (!error) {
         const { error: logErr } = await supabase.from('system_logs').insert({
           action_type: 'SUPERVISOR_REJECTED',
@@ -358,11 +372,13 @@ export default function SupervisorQueue() {
                           <div className="font-bold text-slate-800 text-lg mt-0.5 leading-tight">{c.category}</div>
                         </div>
                         <span className={`px-2.5 py-1 rounded text-[9px] font-black uppercase tracking-widest ${
+                          c.pipeline_state === 'AUTHORIZED' ? 'bg-amber-100 text-amber-800' :
                           c.pipeline_state === 'CLOSED' ? 'bg-emerald-100 text-emerald-800' : 
                           c.pipeline_state === 'REJECTED' ? 'bg-red-100 text-red-700' : 
                           'bg-indigo-100 text-indigo-800'
                         }`}>
-                          {c.pipeline_state === 'PROCESSING' ? 'Approved (In Progress)' : 
+                          {c.pipeline_state === 'AUTHORIZED' ? 'Approved • Awaiting Ops Dispatch' :
+                           c.pipeline_state === 'PROCESSING' ? 'Approved (In Progress)' : 
                            c.pipeline_state === 'CLOSED' ? 'Verified & Closed' : 'Rejected'}
                         </span>
                       </div>
@@ -383,10 +399,12 @@ export default function SupervisorQueue() {
                         </div>
                       </div>
 
-                      {c.pipeline_state === 'REJECTED' && c.rejection_reason && (
+                      {c.pipeline_state === 'REJECTED' && (c.rejection_reason || (c.status && c.status.startsWith('Rejected: '))) && (
                         <div className="bg-red-50 p-3 rounded-xl border border-red-100">
                           <span className="text-[10px] font-black text-red-600 uppercase tracking-widest block mb-1">Rejection Reason</span>
-                          <p className="text-xs font-semibold text-red-900">{c.rejection_reason}</p>
+                          <p className="text-xs font-semibold text-red-900">
+                            {c.rejection_reason || c.status.replace('Rejected: ', '')}
+                          </p>
                         </div>
                       )}
                     </div>

@@ -94,9 +94,14 @@ export default function SystemConfigManager() {
 
   const deleteClass = async (id: string) => {
     if (!confirm('Delete this class?')) return;
-    await supabase.from('academic_classes').delete().eq('id', id);
-    invalidateSystemConfigCache();
-    fetchData();
+    const { error } = await supabase.from('academic_classes').delete().eq('id', id);
+    if (error) {
+      showToast(`Cannot delete class: ${error.message}`, 'error');
+    } else {
+      showToast('Class deleted successfully', 'success');
+      invalidateSystemConfigCache();
+      fetchData();
+    }
   };
 
   const addTrade = async (e: React.FormEvent) => {
@@ -115,9 +120,14 @@ export default function SystemConfigManager() {
 
   const deleteTrade = async (id: string) => {
     if (!confirm('Delete this trade?')) return;
-    await supabase.from('technician_trades').delete().eq('id', id);
-    invalidateSystemConfigCache();
-    fetchData();
+    const { error } = await supabase.from('technician_trades').delete().eq('id', id);
+    if (error) {
+      showToast(`Cannot delete trade: ${error.message}`, 'error');
+    } else {
+      showToast('Trade deleted successfully', 'success');
+      invalidateSystemConfigCache();
+      fetchData();
+    }
   };
 
   const addCategory = async (e: React.FormEvent) => {
@@ -139,9 +149,14 @@ export default function SystemConfigManager() {
 
   const deleteCategory = async (id: string) => {
     if (!confirm('Delete this category?')) return;
-    await supabase.from('inventory_categories').delete().eq('id', id);
-    invalidateSystemConfigCache();
-    fetchData();
+    const { error } = await supabase.from('inventory_categories').delete().eq('id', id);
+    if (error) {
+      showToast(`Cannot delete category: ${error.message}`, 'error');
+    } else {
+      showToast('Category deleted successfully', 'success');
+      invalidateSystemConfigCache();
+      fetchData();
+    }
   };
 
   const updatePassword = async (e: React.FormEvent) => {

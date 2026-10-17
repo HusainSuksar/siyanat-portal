@@ -361,7 +361,8 @@ export default function EventsManager() {
 
     setProcessingId(event.id);
     try {
-      await supabase.from('events').update({ pipeline_state: 'CLOSED' }).eq('id', event.id);
+      const { error } = await supabase.from('events').update({ pipeline_state: 'CLOSED' }).eq('id', event.id);
+      if (error) throw error;
       showToast('Event marked as concluded.', 'success');
       fetchEvents();
     } catch (err: any) {

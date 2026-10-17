@@ -64,26 +64,32 @@ export default function AssetRegister() {
     e.preventDefault();
     if (!activeAsset) return;
 
-    const { data: userData } = await supabase.auth.getUser();
-    
-    // 1. Insert Log
-    await supabase.from('asset_maintenance_logs').insert({
-      asset_id: activeAsset.id,
-      technician_id: userData.user?.id,
-      description: serviceLog.desc
-    });
+    try {
+      const { data: userData } = await supabase.auth.getUser();
+      
+      // 1. Insert Log
+      const { error: logErr } = await supabase.from('asset_maintenance_logs').insert({
+        asset_id: activeAsset.id,
+        technician_id: userData.user?.id,
+        description: serviceLog.desc
+      });
+      if (logErr) throw logErr;
 
-    // 2. Update Asset Status & Dates
-    await supabase.from('fixed_assets').update({
-      status: serviceLog.status,
-      last_maintenance: new Date().toISOString().split('T')[0],
-      next_maintenance: serviceLog.nextDate
-    }).eq('id', activeAsset.id);
+      // 2. Update Asset Status & Dates
+      const { error: assetErr } = await supabase.from('fixed_assets').update({
+        status: serviceLog.status,
+        last_maintenance: new Date().toISOString().split('T')[0],
+        next_maintenance: serviceLog.nextDate
+      }).eq('id', activeAsset.id);
+      if (assetErr) throw assetErr;
 
-    alert("Service logged successfully!");
-    setIsServiceOpen(false);
-    setServiceLog({ desc: '', nextDate: '', status: 'Operational' });
-    fetchAssets();
+      alert("Service logged successfully!");
+      setIsServiceOpen(false);
+      setServiceLog({ desc: '', nextDate: '', status: 'Operational' });
+      fetchAssets();
+    } catch (err: unknown) {
+      alert("Error logging service: " + (err instanceof Error ? err.message : String(err)));
+    }
   };
 
   const filteredAssets = assets.filter(a => 
