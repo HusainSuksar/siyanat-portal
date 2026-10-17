@@ -1,14 +1,22 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
-import { ShoppingCart, Truck, Clock, AlertTriangle, SplitSquareHorizontal } from 'lucide-react';
+import { ShoppingCart, Truck, Clock, AlertTriangle, SplitSquareHorizontal, Calendar } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+
+interface ActionBatch {
+  batch_id: string;
+  department: string;
+  location: string;
+  created_at: string;
+  items?: { fulfillment_dept: string }[];
+}
 
 export default function SiyanatDashboard() {
   const { role } = useAuth();
   const navigate = useNavigate();
-  const [metrics, setMetrics] = useState({ pendingDispatch: 0, pendingRTO: 0, activePOs: 0 });
-  const [actionBatches, setActionBatches] = useState<any[]>([]);
+  const [metrics, setMetrics] = useState({ pendingDispatch: 0, pendingRTO: 0, activePOs: 0, pendingEventSetups: 0 });
+  const [actionBatches, setActionBatches] = useState<ActionBatch[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -26,7 +34,32 @@ export default function SiyanatDashboard() {
       const { count: rtoCount } = await supabase.from('work_order_items').select('*', { count: 'exact', head: true }).eq('status', 'Pending');
       const { count: poCount } = await supabase.from('purchase_orders').select('*', { count: 'exact', head: true }).eq('status', 'PO Issued');
 
-      setMetrics({ pendingDispatch: dispatchCount || 0, pendingRTO: rtoCount || 0, activePOs: poCount || 0 });
+      // Fetch active event setups pending this department's acknowledgment
+      const { data: eventData } = await supabase
+        .from('events')
+        .select('siyanat_status, avit_status')
+        .in('pipeline_state', ['PROCESSING', 'AUTHORIZED']);
+
+      let eventSetupsCount = 0;
+      if (eventData) {
+        eventSetupsCount = eventData.filter(e => {
+          if (currentRole === 'SIYANAT_HEAD') {
+            return e.siyanat_status && e.siyanat_status !== 'Acknowledged' && e.siyanat_status !== 'Not Required';
+          }
+          if (currentRole === 'AVIT_HEAD') {
+            return e.avit_status && e.avit_status !== 'Acknowledged' && e.avit_status !== 'Not Required';
+          }
+          return (e.siyanat_status && e.siyanat_status !== 'Acknowledged' && e.siyanat_status !== 'Not Required') ||
+                 (e.avit_status && e.avit_status !== 'Acknowledged' && e.avit_status !== 'Not Required');
+        }).length;
+      }
+
+      setMetrics({ 
+        pendingDispatch: dispatchCount || 0, 
+        pendingRTO: rtoCount || 0, 
+        activePOs: poCount || 0,
+        pendingEventSetups: eventSetupsCount
+      });
 
       // 2. Fetch action required batches
       let actionQuery = supabase.from('work_orders').select('batch_id, department, location, created_at, items:work_order_items!inner(fulfillment_dept)').eq('pipeline_state', 'AUTHORIZED').order('created_at', { ascending: true }).limit(5);
@@ -58,13 +91,20 @@ export default function SiyanatDashboard() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex items-center justify-between hover:border-emerald-300 transition cursor-pointer" onClick={() => navigate('/siyanat-operations')}>
           <div>
             <span className="text-[10px] font-extrabold uppercase text-emerald-600 tracking-wider">Pending Batches</span>
             <div className="text-3xl font-black text-emerald-600 mt-1">{loading ? '-' : metrics.pendingDispatch}</div>
           </div>
           <div className="w-12 h-12 bg-emerald-50 rounded-full flex items-center justify-center"><Truck className="w-6 h-6 text-emerald-500" /></div>
+        </div>
+        <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex items-center justify-between hover:border-purple-300 transition cursor-pointer" onClick={() => navigate('/siyanat-operations?tab=event_setups')}>
+          <div>
+            <span className="text-[10px] font-extrabold uppercase text-purple-600 tracking-wider">Event Setups</span>
+            <div className="text-3xl font-black text-purple-600 mt-1">{loading ? '-' : metrics.pendingEventSetups}</div>
+          </div>
+          <div className="w-12 h-12 bg-purple-50 rounded-full flex items-center justify-center"><Calendar className="w-6 h-6 text-purple-500" /></div>
         </div>
         <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 flex items-center justify-between hover:border-amber-300 transition cursor-pointer" onClick={() => navigate('/rto')}>
           <div>

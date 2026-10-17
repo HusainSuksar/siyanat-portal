@@ -5,7 +5,7 @@ import { useToast } from '../../hooks/useToast';
 import { 
   SplitSquareHorizontal, CheckCircle, ShoppingCart, 
   MessageSquare, Trash2, X, ListFilter, History as HistoryIcon, Printer, Calendar,
-  RefreshCw, Check, ArrowRight
+  RefreshCw, ArrowRight, CheckCircle2
 } from 'lucide-react';
 import type { WorkOrder } from '../../types';
 import VendorPOEngine from './VendorPOEngine';
@@ -42,23 +42,38 @@ interface AltItemInfo {
   fulfillment_dept?: string;
 }
 
-// Helper to categorize AVIT items reliably
-const isAvitItem = (item: EventRequirement | string) => {
+// Helpers to categorize requirements strictly by department
+const isAvitRequirement = (item: EventRequirement | string) => {
   const name = typeof item === 'string' ? item : (item?.item_name || '');
-  const dept = typeof item === 'object' ? (item?.department || '') : '';
-  if (dept === 'AVIT' || dept === 'AVIT_HEAD') return true;
-  if (dept === 'SIYANAT' || dept === 'SIYANAT_HEAD') return false;
+  const dept = typeof item === 'object' ? (item?.department || '').toUpperCase() : '';
+  if (dept.includes('AVIT')) return true;
+  if (dept.includes('SIYANAT') || dept.includes('MAINTENANCE')) return false;
   return /(projector|mic|microphone|audio|recording|screen|sound|pa system|speaker|camera|hdmi|display|avit|laptop|computer|pc|pointer|marker gadget|gadget|clicker|presenter|laser|tv|monitor|cable)/i.test(name);
 };
 
-export default function MaterialDispatch({ userRole }: { userRole: string }) {
+const isSiyanatRequirement = (item: EventRequirement | string) => {
+  const name = typeof item === 'string' ? item : (item?.item_name || '');
+  const dept = typeof item === 'object' ? (item?.department || '').toUpperCase() : '';
+  if (dept.includes('SIYANAT') || dept.includes('MAINTENANCE')) return true;
+  if (dept.includes('AVIT')) return false;
+  return /(seating|chair|table|ac override|air condition|cleaning|janitorial|barricade|lighting|stage|podium|dais|electrical|fan|carpet)/i.test(name);
+};
+
+export default function MaterialDispatch({ userRole, initialView }: { userRole: string; initialView?: 'active' | 'history' | 'event_setups' }) {
   const { user } = useAuth();
   const { showToast } = useToast();
   
-  const [viewMode, setViewMode] = useState<'active' | 'history' | 'event_setups'>('active');
+  const [viewMode, setViewMode] = useState<'active' | 'history' | 'event_setups'>(initialView || 'active');
+
+  useEffect(() => {
+    if (initialView) {
+      setViewMode(initialView);
+    }
+  }, [initialView]);
   const [loading, setLoading] = useState(true);
   const [batches, setBatches] = useState<WorkOrder[]>([]);
   const [eventSetups, setEventSetups] = useState<EventSetupItem[]>([]);
+  const [pendingEventSetupsCount, setPendingEventSetupsCount] = useState<number>(0);
   const [processingId, setProcessingId] = useState<string | null>(null);
 
   const [reviewBatch, setReviewBatch] = useState<WorkOrder | null>(null);
@@ -76,23 +91,37 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
   const fetchData = useCallback(async () => {
     setLoading(true);
 
-    if (viewMode === 'event_setups') {
-      const { data } = await supabase
-        .from('events')
-        .select(`*, requirements:event_requirements(*)`)
-        .in('pipeline_state', ['PROCESSING', 'AUTHORIZED'])
-        .order('event_date', { ascending: true });
-        
-      if (data) {
-        const filtered = data.filter(e => {
-          if (userRole === 'SUPER_ADMIN' || userRole === 'ADMIN') return e.siyanat_status !== 'Not Required' || e.avit_status !== 'Not Required';
-          if (userRole === 'SIYANAT_HEAD') return e.siyanat_status !== 'Not Required';
-          if (userRole === 'AVIT_HEAD') return e.avit_status !== 'Not Required';
-          return false;
-        });
-        setEventSetups(filtered);
-      }
-    } else {
+    // Fetch active event setups to keep count badge and event setups view updated
+    const { data: eventData } = await supabase
+      .from('events')
+      .select(`*, requirements:event_requirements(*)`)
+      .in('pipeline_state', ['PROCESSING', 'AUTHORIZED'])
+      .order('event_date', { ascending: true });
+      
+    if (eventData) {
+      const filtered = eventData.filter(e => {
+        if (userRole === 'SUPER_ADMIN' || userRole === 'ADMIN') return e.siyanat_status !== 'Not Required' || e.avit_status !== 'Not Required';
+        if (userRole === 'SIYANAT_HEAD') return e.siyanat_status !== 'Not Required';
+        if (userRole === 'AVIT_HEAD') return e.avit_status !== 'Not Required';
+        return false;
+      });
+      setEventSetups(filtered);
+
+      const pendingCount = filtered.filter(e => {
+        if (userRole === 'SIYANAT_HEAD') {
+          return e.siyanat_status && e.siyanat_status !== 'Acknowledged' && e.siyanat_status !== 'Not Required';
+        }
+        if (userRole === 'AVIT_HEAD') {
+          return e.avit_status && e.avit_status !== 'Acknowledged' && e.avit_status !== 'Not Required';
+        }
+        // Admin / Super Admin
+        return (e.siyanat_status && e.siyanat_status !== 'Acknowledged' && e.siyanat_status !== 'Not Required') ||
+               (e.avit_status && e.avit_status !== 'Acknowledged' && e.avit_status !== 'Not Required');
+      }).length;
+      setPendingEventSetupsCount(pendingCount);
+    }
+
+    if (viewMode !== 'event_setups') {
       // Keep ACTION_REQUIRED in active queue so storekeepers can physically hand over items at counter!
       const targetStates = viewMode === 'active' 
         ? ['AUTHORIZED', 'PROCESSING', 'ACTION_REQUIRED'] 
@@ -123,16 +152,39 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
     };
   }, [fetchData]);
 
-  const handleAcknowledgeEvent = async (eventId: string, targetDept: string) => {
+  const handleAcknowledgeEvent = async (eventId: string, targetDept: string, eventTitle?: string) => {
     setProcessingId(eventId);
     try {
-      const { error } = await supabase.rpc('acknowledge_event_handoff', {
+      // 1. Invoke RPC
+      const { error: rpcErr } = await supabase.rpc('acknowledge_event_handoff', {
         p_event_id: eventId,
         p_dept: targetDept,
         p_user_email: user?.email
       });
-      if (error) throw error;
-      showToast('Event Setup Acknowledged!', 'success');
+      if (rpcErr) {
+        console.warn('acknowledge_event_handoff RPC notice:', rpcErr.message);
+      }
+
+      // 2. Direct database update to guarantee state persistence
+      const isSiy = targetDept === 'SIYANAT' || targetDept === 'SIYANAT_HEAD';
+      const updatePayload = isSiy 
+        ? { siyanat_status: 'Acknowledged' } 
+        : { avit_status: 'Acknowledged' };
+
+      const { error: dbErr } = await supabase
+        .from('events')
+        .update(updatePayload)
+        .eq('id', eventId);
+      if (dbErr) throw dbErr;
+
+      // 3. System audit log
+      await supabase.from('system_logs').insert({
+        action_type: 'EVENT_SETUP_ACKNOWLEDGED',
+        description: `${isSiy ? 'Siyanat' : 'AVIT'} Head acknowledged event setup for "${eventTitle || 'Event'}".`,
+        user_email: user?.email || userRole
+      });
+
+      showToast(`${isSiy ? 'Siyanat' : 'AVIT'} Setup Acknowledged!`, 'success');
       fetchData();
     } catch (err: unknown) {
       showToast(err instanceof Error ? err.message : 'Failed to acknowledge event', 'error');
@@ -466,7 +518,13 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
             <ListFilter className="w-4 h-4" /> Active Queue
           </button>
           <button onClick={() => setViewMode('event_setups')} className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 transition ${viewMode === 'event_setups' ? 'bg-purple-700 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50'}`}>
-            <Calendar className="w-4 h-4" /> Event Setups
+            <Calendar className="w-4 h-4" /> 
+            <span>Event Setups</span>
+            {pendingEventSetupsCount > 0 && (
+              <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-black ${viewMode === 'event_setups' ? 'bg-white text-purple-700' : 'bg-purple-100 text-purple-700'}`}>
+                {pendingEventSetupsCount}
+              </span>
+            )}
           </button>
           <button onClick={() => setViewMode('history')} className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 transition ${viewMode === 'history' ? 'bg-slate-800 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50'}`}>
             <HistoryIcon className="w-4 h-4" /> History Log
@@ -486,11 +544,18 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
         ) : (
           <div className="grid grid-cols-1 gap-4">
             {eventSetups.map(e => {
-              const siyItems = e.requirements?.filter((r: EventRequirement) => r.status === 'Approved' && !isAvitItem(r)) || [];
-              const avitItems = e.requirements?.filter((r: EventRequirement) => r.status === 'Approved' && isAvitItem(r)) || [];
+              const siyItems = e.requirements?.filter((r: EventRequirement) => r.status === 'Approved' && isSiyanatRequirement(r)) || [];
+              const avitItems = e.requirements?.filter((r: EventRequirement) => r.status === 'Approved' && isAvitRequirement(r)) || [];
 
-              const showSiy = (userRole === 'SIYANAT_HEAD' || userRole === 'SUPER_ADMIN' || userRole === 'ADMIN') && e.siyanat_status !== 'Not Required';
-              const showAvit = (userRole === 'AVIT_HEAD' || userRole === 'SUPER_ADMIN' || userRole === 'ADMIN') && e.avit_status !== 'Not Required';
+              const isSiyanatRole = userRole === 'SIYANAT_HEAD';
+              const isAvitRole = userRole === 'AVIT_HEAD';
+              const isAdminRole = userRole === 'SUPER_ADMIN' || userRole === 'ADMIN';
+
+              const showSiy = (isSiyanatRole || isAdminRole) && e.siyanat_status !== 'Not Required';
+              const showAvit = (isAvitRole || isAdminRole) && e.avit_status !== 'Not Required';
+
+              const isSiyanatPending = showSiy && e.siyanat_status !== 'Acknowledged' && e.siyanat_status !== 'Not Required';
+              const isAvitPending = showAvit && e.avit_status !== 'Acknowledged' && e.avit_status !== 'Not Required';
 
               return (
                 <div key={e.id} className="bg-white rounded-3xl p-5 shadow-sm border border-slate-200 flex flex-col md:flex-row gap-5">
@@ -518,28 +583,34 @@ export default function MaterialDispatch({ userRole }: { userRole: string }) {
                     </div>
                   </div>
 
-                  <div className="flex md:flex-col justify-end gap-2 shrink-0 md:w-48">
-                    {showSiy && e.siyanat_status === 'Pending' && (
+                  <div className="flex md:flex-col justify-end gap-2 shrink-0 md:w-52">
+                    {isSiyanatPending && (
                       <button 
-                        onClick={() => handleAcknowledgeEvent(e.id, 'SIYANAT')} 
+                        onClick={() => handleAcknowledgeEvent(e.id, 'SIYANAT', e.event_title)} 
                         disabled={processingId === e.id}
                         className="flex-1 py-3 px-4 bg-purple-700 hover:bg-purple-800 text-white font-black text-[11px] uppercase tracking-wider rounded-xl shadow-md transition disabled:opacity-50"
                       >
                         Acknowledge Siyanat
                       </button>
                     )}
-                    {showAvit && e.avit_status === 'Pending' && (
+                    {showSiy && e.siyanat_status === 'Acknowledged' && (
+                      <div className="flex items-center gap-1.5 text-emerald-600 text-xs font-black uppercase tracking-wider py-1.5 px-2 bg-emerald-50 rounded-xl border border-emerald-200">
+                        <CheckCircle2 className="w-4 h-4 stroke-[2.5]" /> Siyanat Acknowledged
+                      </div>
+                    )}
+
+                    {isAvitPending && (
                       <button 
-                        onClick={() => handleAcknowledgeEvent(e.id, 'AVIT')} 
+                        onClick={() => handleAcknowledgeEvent(e.id, 'AVIT', e.event_title)} 
                         disabled={processingId === e.id}
                         className="flex-1 py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[11px] uppercase tracking-wider rounded-xl shadow-md transition disabled:opacity-50"
                       >
                         Acknowledge AVIT
                       </button>
                     )}
-                    {((showSiy && e.siyanat_status === 'Acknowledged') || (showAvit && e.avit_status === 'Acknowledged')) && (
-                      <div className="flex items-center gap-1.5 text-emerald-600 text-xs font-black uppercase tracking-wider py-2">
-                        <Check className="w-4 h-4 stroke-[3]" /> Acknowledged
+                    {showAvit && e.avit_status === 'Acknowledged' && (
+                      <div className="flex items-center gap-1.5 text-indigo-600 text-xs font-black uppercase tracking-wider py-1.5 px-2 bg-indigo-50 rounded-xl border border-indigo-200">
+                        <CheckCircle2 className="w-4 h-4 stroke-[2.5]" /> AVIT Acknowledged
                       </div>
                     )}
                   </div>

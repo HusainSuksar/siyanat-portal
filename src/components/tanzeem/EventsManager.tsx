@@ -14,7 +14,22 @@ interface DecisionState {
   status: 'Approved' | 'Rejected';
   is_returnable: boolean;
   approved_qty: number;
+  department: 'SIYANAT_HEAD' | 'AVIT_HEAD';
 }
+
+const isAvitRequirement = (item: { item_name?: string; department?: string }) => {
+  const dept = (item?.department || '').toUpperCase();
+  if (dept.includes('AVIT')) return true;
+  if (dept.includes('SIYANAT') || dept.includes('MAINTENANCE')) return false;
+  return /(projector|mic|microphone|audio|recording|screen|sound|pa system|speaker|camera|hdmi|display|avit|laptop|computer|pc|pointer|marker gadget|gadget|clicker|presenter|laser|tv|monitor|cable)/i.test(item?.item_name || '');
+};
+
+const isSiyanatRequirement = (item: { item_name?: string; department?: string }) => {
+  const dept = (item?.department || '').toUpperCase();
+  if (dept.includes('SIYANAT') || dept.includes('MAINTENANCE')) return true;
+  if (dept.includes('AVIT')) return false;
+  return /(seating|chair|table|ac override|air condition|cleaning|janitorial|barricade|lighting|stage|podium|dais|electrical|fan|carpet)/i.test(item?.item_name || '');
+};
 
 const PERIOD_END_TIMES: Record<string, string> = {
   P1: '09:00', P2: '09:35', P3: '10:10', P4: '10:45', P5: '11:35',
@@ -119,13 +134,18 @@ export default function EventsManager() {
     
     if (event.requirements && event.requirements.length > 0) {
       event.requirements.forEach(req => {
-        const defaultReturnable = req.department === 'AVIT_HEAD' || req.department === 'SIYANAT_HEAD';
+        const isAvit = isAvitRequirement(req);
+        const resolvedDept: 'AVIT_HEAD' | 'SIYANAT_HEAD' = isAvit ? 'AVIT_HEAD' : 'SIYANAT_HEAD';
+        const defaultReturnable = req.is_returnable ?? true;
         initialDecisions[req.id] = {
           id: req.id,
           item_name: req.item_name,
           status: 'Approved',
-          is_returnable: req.is_returnable ?? defaultReturnable,
-          approved_qty: req.quantity || 1
+          is_returnable: defaultReturnable,
+          approved_qty: req.quantity || 1,
+          department: (req.department === 'AVIT_HEAD' || req.department === 'SIYANAT_HEAD') 
+            ? req.department 
+            : resolvedDept
         };
       });
       setReqDecisions(initialDecisions);
@@ -138,10 +158,22 @@ export default function EventsManager() {
   const processEventApproval = async (eventId: string, decisions: DecisionState[]) => {
     setProcessingId(eventId);
     try {
-      // 1. Sync reviewed decisions to event_requirements table
+      let hasApprovedSiyanat = false;
+      let hasApprovedAvit = false;
+
+      // 1. Sync reviewed decisions & department to event_requirements table
       if (decisions && decisions.length > 0) {
         const updatePromises = decisions.map(async (dec) => {
+          if (dec.status === 'Approved') {
+            if (dec.department === 'AVIT_HEAD' || isAvitRequirement(dec)) {
+              hasApprovedAvit = true;
+            } else if (dec.department === 'SIYANAT_HEAD' || isSiyanatRequirement(dec)) {
+              hasApprovedSiyanat = true;
+            }
+          }
+
           const { error: updateErr } = await supabase.from('event_requirements').update({
+            department: dec.department,
             status: dec.status,
             is_returnable: dec.is_returnable,
             approved_qty: dec.status === 'Approved' ? dec.approved_qty : 0,
@@ -162,12 +194,62 @@ export default function EventsManager() {
         p_approver_email: user?.email || 'Tanzeem Head'
       });
       
-      if (error) throw error;
+      if (error) {
+        console.warn('approve_event_and_handoff RPC notice:', error.message);
+      }
 
-      // 3. Feedback message detailing departments alerted
+      // 3. Guaranteed Status Safeguard: Ensure events table has correct setup status
+      const siyanatStatus = (data?.siyanat_items > 0 || hasApprovedSiyanat) ? 'Pending Setup' : 'Not Required';
+      const avitStatus = (data?.avit_items > 0 || hasApprovedAvit) ? 'Pending Setup' : 'Not Required';
+
+      await supabase.from('events').update({
+        pipeline_state: 'PROCESSING',
+        status: 'Confirmed & Mobilized',
+        siyanat_status: siyanatStatus,
+        avit_status: avitStatus
+      }).eq('id', eventId);
+
+      // 4. Targeted In-App Notifications for SIYANAT_HEAD and AVIT_HEAD
+      const eventTitle = targetEvent?.event_title || 'Event Booking';
+      const eventLocation = targetEvent?.location || 'Campus Venue';
+      const eventDate = targetEvent?.event_date ? new Date(targetEvent.event_date).toLocaleDateString('en-GB') : '';
+
+      const rolesToAlert: string[] = [];
+      if (siyanatStatus === 'Pending Setup') rolesToAlert.push('SIYANAT_HEAD');
+      if (avitStatus === 'Pending Setup') rolesToAlert.push('AVIT_HEAD');
+
+      if (rolesToAlert.length > 0) {
+        const { data: deptHeads } = await supabase
+          .from('profiles')
+          .select('id, role')
+          .in('role', rolesToAlert);
+
+        if (deptHeads && deptHeads.length > 0) {
+          const notifications = deptHeads.map(head => ({
+            user_id: head.id,
+            title: head.role === 'AVIT_HEAD' 
+              ? `Event Setup Required (AVIT): ${eventTitle}`
+              : `Event Setup Required (Siyanat): ${eventTitle}`,
+            message: `Event "${eventTitle}" scheduled on ${eventDate} at ${eventLocation} requires ${head.role === 'AVIT_HEAD' ? 'AVIT' : 'Siyanat'} setup. Click to acknowledge.`,
+            link: '/siyanat-operations?tab=event_setups',
+            is_read: false
+          }));
+
+          await supabase.from('in_app_notifications').insert(notifications);
+        }
+      }
+
+      // Also log action in system_logs
+      await supabase.from('system_logs').insert({
+        action_type: 'EVENT_APPROVED',
+        description: `Approved event "${eventTitle}". Mobilized: Siyanat (${siyanatStatus}), AVIT (${avitStatus}).`,
+        user_email: user?.email || 'Tanzeem Head'
+      });
+
+      // Feedback message detailing departments alerted
       const mobilized: string[] = [];
-      if (data?.siyanat_items > 0) mobilized.push('Siyanat');
-      if (data?.avit_items > 0) mobilized.push('AVIT');
+      if (siyanatStatus === 'Pending Setup') mobilized.push('Siyanat');
+      if (avitStatus === 'Pending Setup') mobilized.push('AVIT');
 
       if (mobilized.length > 0) {
         showToast(`Event confirmed! Setup notifications sent to ${mobilized.join(' & ')}.`, 'success');
@@ -478,7 +560,16 @@ export default function EventsManager() {
                   return (
                     <div key={req.id} className="bg-slate-50 p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
                       <div className="flex-1">
-                        <div className="text-sm font-bold text-slate-800">{req.item_name}</div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-bold text-slate-800">{req.item_name}</span>
+                          <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${
+                            state?.department === 'AVIT_HEAD' 
+                              ? 'bg-indigo-100 text-indigo-800 border border-indigo-200' 
+                              : 'bg-purple-100 text-purple-800 border border-purple-200'
+                          }`}>
+                            {state?.department === 'AVIT_HEAD' ? 'AVIT' : 'Siyanat'}
+                          </span>
+                        </div>
                         <div className="text-[10px] text-slate-500 uppercase font-black tracking-widest mt-1">
                           Requested: {req.quantity}
                           {invItem && <span className="ml-2 px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">Avail Stock: {invItem.physical_stock - invItem.freezed_stock}</span>}

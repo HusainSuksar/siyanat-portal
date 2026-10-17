@@ -81,6 +81,40 @@ export default function AssetRequester({
     });
   }, [inventory, searchQuery, selectedDeptFilter]);
 
+  // Helper to determine department for Standard Assets
+  const detectStandardAssetDept = (asset: StandardAsset): 'AVIT_HEAD' | 'SIYANAT_HEAD' => {
+    const rawCat = (asset.category || (asset as any).dept || (asset as any).department || '').toUpperCase();
+    if (rawCat.includes('AVIT')) return 'AVIT_HEAD';
+    if (rawCat.includes('SIYANAT') || rawCat.includes('MAINTENANCE')) return 'SIYANAT_HEAD';
+    
+    const rawName = getAssetName(asset).toLowerCase();
+    const isSiyanatItem = rawName.includes('seating') || 
+                          rawName.includes('chair') || 
+                          rawName.includes('table') || 
+                          rawName.includes('ac override') || 
+                          rawName.includes('barricade') || 
+                          rawName.includes('cleaning') || 
+                          rawName.includes('janitorial') ||
+                          rawName.includes('lighting') ||
+                          rawName.includes('electrical');
+    return isSiyanatItem ? 'SIYANAT_HEAD' : 'AVIT_HEAD';
+  };
+
+  // Helper to determine department for Inventory Catalog Items
+  const detectInventoryDept = (item: InventoryAsset): 'AVIT_HEAD' | 'SIYANAT_HEAD' | 'TANZEEM_HEAD' => {
+    const fulfillment = (item.fulfillment_dept || '').toUpperCase();
+    if (fulfillment.includes('AVIT')) return 'AVIT_HEAD';
+    if (fulfillment.includes('SIYANAT')) return 'SIYANAT_HEAD';
+    if (fulfillment.includes('TANZEEM')) return 'TANZEEM_HEAD';
+
+    const cat = (item.category || '').toLowerCase();
+    const name = (item.name || '').toLowerCase();
+    if (cat.includes('it & networking') || cat.includes('electronic') || /(projector|mic|speaker|screen|hdmi|laptop|computer|display|cable|camera|audio|avit)/i.test(name)) {
+      return 'AVIT_HEAD';
+    }
+    return 'SIYANAT_HEAD';
+  };
+
   // Standard Checkbox Toggle
   const toggleStandardAsset = (asset: StandardAsset) => {
     const assetName = getAssetName(asset);
@@ -94,10 +128,12 @@ export default function AssetRequester({
         requirements: prev.requirements.filter(r => !(r.asset_type === 'STANDARD' && r.item_name === assetName))
       }));
     } else {
+      const dept = detectStandardAssetDept(asset);
       const newReq: EventRequirement = {
         item_name: assetName,
         quantity: 1,
         asset_type: 'STANDARD',
+        department: dept,
         is_returnable: asset.is_returnable ?? true
       };
       setFormData(prev => ({
@@ -111,6 +147,7 @@ export default function AssetRequester({
   const handleAddCatalogItem = () => {
     if (!selectedInventoryItem) return;
 
+    const dept = detectInventoryDept(selectedInventoryItem);
     const existingIndex = formData.requirements.findIndex(
       r => r.asset_type === 'CATALOG' && r.inventory_id === selectedInventoryItem.id
     );
@@ -118,6 +155,9 @@ export default function AssetRequester({
     if (existingIndex >= 0) {
       const updated = [...formData.requirements];
       updated[existingIndex].quantity += catalogQty;
+      if (!updated[existingIndex].department) {
+        updated[existingIndex].department = dept;
+      }
       setFormData(prev => ({ ...prev, requirements: updated }));
     } else {
       const newReq: EventRequirement = {
@@ -125,6 +165,7 @@ export default function AssetRequester({
         item_name: selectedInventoryItem.name,
         quantity: catalogQty,
         asset_type: 'CATALOG',
+        department: dept,
         is_returnable: true
       };
       setFormData(prev => ({ ...prev, requirements: [...prev.requirements, newReq] }));
@@ -309,7 +350,12 @@ export default function AssetRequester({
             {formData.requirements.map((req, idx) => (
               <div key={idx} className="flex justify-between items-center bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs">
                 <div>
-                  <span className="font-bold text-slate-800">{req.item_name}</span>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="font-bold text-slate-800">{req.item_name}</span>
+                    <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider ${req.department === 'AVIT_HEAD' ? 'bg-indigo-100 text-indigo-800' : 'bg-purple-100 text-purple-800'}`}>
+                      {req.department === 'AVIT_HEAD' ? 'AVIT' : 'Siyanat'}
+                    </span>
+                  </div>
                   <span className="text-[9px] font-black uppercase text-slate-400 block mt-0.5">
                     {req.asset_type === 'STANDARD' ? 'Standard Checklist' : 'Catalog Request'}
                   </span>

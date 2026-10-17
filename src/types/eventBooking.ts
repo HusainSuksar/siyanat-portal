@@ -26,6 +26,7 @@ export interface EventRequirement {
   asset_type: 'STANDARD' | 'CATALOG';
   is_returnable?: boolean;
   inventory_id?: string;
+  department?: 'SIYANAT_HEAD' | 'AVIT_HEAD' | 'TANZEEM_HEAD' | string;
 }
 
 export interface EventFormData {
@@ -74,6 +75,8 @@ export interface BaseEventData {
   created_at: string;
   total_count: number;
   rejection_reason?: string;
+  siyanat_status?: string;
+  avit_status?: string;
   requirements?: EventRequirementDB[];
   requester?: {
     full_name: string;

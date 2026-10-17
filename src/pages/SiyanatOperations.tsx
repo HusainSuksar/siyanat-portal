@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Truck, Package, Wrench } from 'lucide-react';
 import MaterialDispatch from '../components/siyanat/MaterialDispatch';
@@ -6,6 +7,8 @@ import MaintenanceRouting from '../components/siyanat/MaintenanceRouting';
 
 export default function SiyanatOperations() {
   const { role: userRole } = useAuth();
+  const [searchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab');
   const [activeTab, setActiveTab] = useState<'materials' | 'maintenance'>('materials');
 
   return (
@@ -29,7 +32,12 @@ export default function SiyanatOperations() {
         </button>
       </div>
 
-      {activeTab === 'materials' && <MaterialDispatch userRole={userRole} />}
+      {activeTab === 'materials' && (
+        <MaterialDispatch 
+          userRole={userRole} 
+          initialView={tabParam === 'event_setups' ? 'event_setups' : undefined} 
+        />
+      )}
       {activeTab === 'maintenance' && <MaintenanceRouting userRole={userRole} />}
     </div>
   );

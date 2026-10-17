@@ -87,21 +87,27 @@ export default function NotificationBell() {
 
     const fullText = `${notif.link || ''} ${notif.redirect_url || ''} ${notif.title || ''} ${notif.message || ''}`;
 
-    // A. Detect Complaint ID
+    // A. Detect Event Setup notifications
+    if (fullText.includes('Event Setup') || fullText.includes('event_setups') || notif.link?.includes('event_setups')) {
+      navigate('/siyanat-operations?tab=event_setups');
+      return;
+    }
+
+    // B. Detect Complaint ID
     const compMatch = fullText.match(/CMP-[A-Za-z0-9_-]+/i);
     if (compMatch) {
       navigate(`/?action_ticket=${compMatch[0]}`);
       return;
     }
 
-    // B. Detect Material Batch ID
+    // C. Detect Material Batch ID
     const batchMatch = fullText.match(/BATCH-[A-Za-z0-9_-]+/i);
     if (batchMatch) {
       navigate(`/?action_ticket=${batchMatch[0]}`);
       return;
     }
 
-    // C. Default fallback
+    // D. Default fallback
     const directLink = notif.link || notif.redirect_url;
     if (directLink && directLink !== '/') {
       navigate(directLink);
