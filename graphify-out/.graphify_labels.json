@@ -1,12 +1,1 @@
-{
-  "0": "supabase.ts",
-  "2": "package.json",
-  "6": "BookEvent.tsx",
-  "7": "compilerOptions",
-  "8": "devDependencies",
-  "9": "compilerOptions",
-  "10": "manifest.json",
-  "14": "tsconfig.json",
-  "15": "vercel.json",
-  "16": "sw.js"
-}
+{"0": "App Shell & Core Navigation", "1": "System Configuration & Bulk Inventory", "2": "Project Dependencies & Tooling", "3": "Routing, Auth Guards & Global Actions", "4": "Events Approvals & Department Handoff", "5": "Material Requisitions & Direct PO Modals", "6": "Campus Locations, Zones & Landmarks", "7": "Request Pipeline Visualizer & Tracking", "8": "Event Asset Requester & Time Slots", "9": "TypeScript App Compiler Configuration", "10": "Developer Tooling & Build Plugins", "11": "TypeScript Node & Vite Config", "12": "PWA Web App Manifest", "13": "Siyanat Operations & Maintenance Routing", "14": "TypeScript Root Project References", "15": "Vercel Hosting & Deployment Rewrites", "16": "Service Worker PWA Offline Cache"}
