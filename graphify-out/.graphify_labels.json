@@ -1,1 +1,13 @@
-{"0": "supabase.ts", "1": "react", "2": "package.json", "3": "App.tsx", "4": "supabase", "5": "BookVehicle.tsx", "6": "BookEvent.tsx", "7": "compilerOptions", "8": "devDependencies", "9": "compilerOptions", "10": "manifest.json", "11": "lucide-react", "12": "MaintenanceRouting.tsx", "13": "roles.ts", "14": "tsconfig.json", "15": "vercel.json", "16": "sw.js"}
+{
+  "0": "supabase.ts",
+  "2": "package.json",
+  "6": "BookEvent.tsx",
+  "7": "compilerOptions",
+  "8": "devDependencies",
+  "9": "compilerOptions",
+  "10": "manifest.json",
+  "12": "MaintenanceRouting.tsx",
+  "14": "tsconfig.json",
+  "15": "vercel.json",
+  "16": "sw.js"
+}

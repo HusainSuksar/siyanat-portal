@@ -1,15 +1,17 @@
-# Graph Report - siyanat-portal  (2026-10-15)
+# Graph Report - siyanat-portal  (2026-10-17)
 
 ## Corpus Check
-- cluster-only mode — file stats not available
+- 75 files · ~316,735 words
+- Verdict: corpus is large enough that graph structure adds value.
+- Unclassified: 5 file(s) not represented in the graph (top: .css 2, (none) 1, .csv 1)
 
 ## Summary
-- 348 nodes · 878 edges · 17 communities (14 shown, 3 thin omitted)
-- Extraction: 100% EXTRACTED · 0% INFERRED · 0% AMBIGUOUS
+- 420 nodes · 1026 edges · 18 communities (15 shown, 3 thin omitted)
+- Extraction: 96% EXTRACTED · 4% INFERRED · 0% AMBIGUOUS · INFERRED: 45 edges (avg confidence: 0.95)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `035b60d5`
+- Built from commit: `c215dade`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -17,72 +19,73 @@
 - supabase.ts
 - react
 - package.json
+- EventsManager.tsx
 - App.tsx
-- supabase
 - BookVehicle.tsx
 - BookEvent.tsx
 - compilerOptions
 - devDependencies
 - compilerOptions
 - manifest.json
-- lucide-react
+- End-to-End Business Logic, Workflow Duplication, and Optimization Audit Report
 - MaintenanceRouting.tsx
-- roles.ts
+- React + TypeScript + Vite
 - tsconfig.json
 - vercel.json
+- MyRequests.tsx
 
 ## God Nodes (most connected - your core abstractions)
-1. `react` - 53 edges
-2. `lucide-react` - 47 edges
-3. `supabase` - 47 edges
-4. `useAuth()` - 43 edges
-5. `useToast()` - 39 edges
+1. `useAuth()` - 63 edges
+2. `react` - 53 edges
+3. `lucide-react` - 47 edges
+4. `supabase` - 46 edges
+5. `useToast()` - 37 edges
 6. `App()` - 28 edges
 7. `compilerOptions` - 17 edges
 8. `compilerOptions` - 15 edges
-9. `useSystemConfig()` - 11 edges
-10. `react-router-dom` - 11 edges
+9. `useSystemConfig()` - 13 edges
+10. `MaterialDispatch()` - 12 edges
 
 ## Surprising Connections (you probably didn't know these)
-- `SystemConfigManager()` --calls--> `useToast()`  [EXTRACTED]
-  src/components/admin/SystemConfigManager.tsx → src/hooks/useToast.ts
-- `VendorPOEngineProps` --references--> `WorkOrder`  [EXTRACTED]
-  src/components/siyanat/VendorPOEngine.tsx → src/types.ts
-- `Profile` --references--> `UserRole`  [EXTRACTED]
-  src/types.ts → src/utils/roles.ts
-- `BulkRestockTab()` --calls--> `useAuth()`  [EXTRACTED]
-  src/components/inventory/BulkRestockTab.tsx → src/contexts/AuthContext.tsx
-- `BulkRestockTab()` --calls--> `useToast()`  [EXTRACTED]
-  src/components/inventory/BulkRestockTab.tsx → src/hooks/useToast.ts
+- `2.3 Pipeline 3: Procurement & Vendor PO Lifecycle` --references--> `PendingPOsTab()`  [INFERRED]
+  LOGIC_OPTIMIZATION_REPORT.md → src/components/inventory/PendingPOsTab.tsx
+- `Priority 1: High-Yield Code Deduplication & File Deletions (Quick Wins)` --references--> `MaterialDispatch()`  [INFERRED]
+  LOGIC_OPTIMIZATION_REPORT.md → src/components/siyanat/MaterialDispatch.tsx
+- `Priority 2: Performance & Network Optimization` --references--> `useAuth()`  [INFERRED]
+  LOGIC_OPTIMIZATION_REPORT.md → src/contexts/AuthContext.tsx
+- `2.5 Pipeline 5: Fleet & Supporting Operations` --references--> `SystemConfigManager()`  [INFERRED]
+  LOGIC_OPTIMIZATION_REPORT.md → src/components/admin/SystemConfigManager.tsx
+- `2.1 Pipeline 1: Maintenance & Complaint Lifecycle` --references--> `VendorPOEngine()`  [INFERRED]
+  LOGIC_OPTIMIZATION_REPORT.md → src/components/siyanat/VendorPOEngine.tsx
 
 ## Import Cycles
 - None detected.
 
-## Communities (17 total, 3 thin omitted)
+## Communities (18 total, 3 thin omitted)
 
 ### Community 0 - "supabase.ts"
-Cohesion: 0.07
-Nodes (35): papaparse, @supabase/supabase-js, TeamManagement, BulkRestockTab(), CatalogTab(), Props, DirectItem, DirectPOModal() (+27 more)
+Cohesion: 0.08
+Nodes (36): 3.4 Module 4: Inventory & Procurement, 3.2 Redundant Network Fetching & Missing State Caching, papaparse, SystemConfigManager(), BulkRestockTab(), Props, RestockRow, CatalogTab() (+28 more)
 
 ### Community 1 - "react"
-Cohesion: 0.10
-Nodes (32): react, Props, RestockRow, isAvitItem(), MaterialDispatch(), getDefaultDeliveryDate(), Vendor, VendorPOEngine() (+24 more)
+Cohesion: 0.11
+Nodes (27): lucide-react, react, @supabase/supabase-js, BatchDetailsModal(), urlBase64ToUint8Array(), DirectItem, Props, AlternativeItemModal() (+19 more)
 
 ### Community 2 - "package.json"
 Cohesion: 0.06
-Nodes (34): dependencies, browser-image-compression, lucide-react, papaparse, react, react-dom, react-router-dom, @supabase/supabase-js (+26 more)
+Nodes (35): dependencies, browser-image-compression, lucide-react, papaparse, react, react-dom, react-router-dom, @supabase/supabase-js (+27 more)
 
-### Community 3 - "App.tsx"
-Cohesion: 0.10
-Nodes (22): react-dom, App(), AssetRegister, DesktopNavigation(), MobileDrawerNavigation(), NotificationManager(), PortalLayout(), ReceptionWatchtower (+14 more)
+### Community 3 - "EventsManager.tsx"
+Cohesion: 0.22
+Nodes (12): 3.5 Module 5: Tanzeem, Events & Fleet, DecisionState, EventsManager(), PERIOD_END_TIMES, Assignment, FleetEngine(), FleetInventory, VehicleRequest (+4 more)
 
-### Community 4 - "supabase"
-Cohesion: 0.16
-Nodes (17): react-router-dom, ForcePasswordChange(), GlobalActionController(), InstallAppButton(), urlBase64ToUint8Array(), RoleAwareActionModal(), AuthContext, AuthContextType (+9 more)
+### Community 4 - "App.tsx"
+Cohesion: 0.08
+Nodes (41): react-router-dom, App(), AssetRegister, DesktopNavigation(), MobileDrawerNavigation(), NotificationManager(), PortalLayout(), ReceptionWatchtower (+33 more)
 
 ### Community 5 - "BookVehicle.tsx"
-Cohesion: 0.12
-Nodes (20): browser-image-compression, LOCAL_LANDMARKS, MAINTENANCE_ZONES, MASTER_ZONES, MAZAR_LOCATIONS, SubLocationConfig, SubLocationType, VenueConfig (+12 more)
+Cohesion: 0.05
+Nodes (51): 1. Executive Summary & Build Status, 2.1 Supabase Tables Catalog (28 Tables), 2.2 Postgres RPC Stored Procedures Catalog (11 RPCs), 2.3 Storage Buckets & Realtime Channels, 2.4 Hook Layer & Utility Inspection, 2. Backend & Hook Layer Architecture Inventory, 3.1 Module 1: Core & Auth, 3.2 Module 2: Role Dashboards (+43 more)
 
 ### Community 6 - "BookEvent.tsx"
 Cohesion: 0.20
@@ -104,37 +107,41 @@ Nodes (16): compilerOptions, allowImportingTsExtensions, erasableSyntaxOnly, lib
 Cohesion: 0.15
 Nodes (12): background_color, categories, description, display, icons, id, name, orientation (+4 more)
 
-### Community 11 - "lucide-react"
-Cohesion: 0.36
-Nodes (8): lucide-react, BatchDetailsModal(), PERIOD_END_TIMES, StepperProps, VisualPipelineStepper(), MyRequests(), StandardUserDashboard(), BaseEventData
+### Community 11 - "End-to-End Business Logic, Workflow Duplication, and Optimization Audit Report"
+Cohesion: 0.08
+Nodes (28): Phase 3: Medium (P2) — Performance & Code Cleanliness, 1.1 Unused Database Objects (Dead Schema Weight), 1.2 Client-Side Work Doing Database Jobs, 1.3 Type & Default Drift, 2.2 Pipeline 2: Material Requisition & Split Dispatch Lifecycle, 2.3 Pipeline 3: Procurement & Vendor PO Lifecycle, 2.4 Pipeline 4: Event Booking & Asset Reconciliation Lifecycle, 2.5 Pipeline 5: Fleet & Supporting Operations (+20 more)
 
 ### Community 12 - "MaintenanceRouting.tsx"
-Cohesion: 0.29
-Nodes (7): SiyanatOperations, CAMPUS_ZONES, MaintenanceRouting(), SiyanatOperations(), generateJobSheet(), JobSheetComplaint, JobSheetTechnician
+Cohesion: 0.20
+Nodes (12): 3.3 Module 3: Siyanat & Maintenance, 2.1 Pipeline 1: Maintenance & Complaint Lifecycle, CAMPUS_ZONES, MaintenanceRouting(), isAvitItem(), MaterialDispatch(), getDefaultDeliveryDate(), VendorPOEngine() (+4 more)
 
-### Community 13 - "roles.ts"
-Cohesion: 0.25
-Nodes (3): Profile, ELEVATED_REQUESTER_ROLES, UserRole
+### Community 13 - "React + TypeScript + Vite"
+Cohesion: 0.50
+Nodes (3): Expanding the ESLint configuration, React Compiler, React + TypeScript + Vite
+
+### Community 17 - "MyRequests.tsx"
+Cohesion: 0.20
+Nodes (9): PERIOD_END_TIMES, StepperProps, VisualPipelineStepper(), ComplaintPhoto, ComplaintRecord, FleetBooking, MaterialReq, ReqItem (+1 more)
 
 ## Knowledge Gaps
-- **8 isolated node(s):** `autoprefixer`, `postcss`, `tailwindcss`, `@types/node`, `@types/papaparse` (+3 more)
-  These have ≤1 connection - possible missing edges. (Counts symbols only; 161 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+- **8 isolated node(s):** `@types/node`, `@types/papaparse`, `@types/react`, `@types/react-dom`, `autoprefixer` (+3 more)
+  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 192 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
 - **3 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `react` connect `react` to `supabase.ts`, `package.json`, `App.tsx`, `supabase`, `BookVehicle.tsx`, `BookEvent.tsx`, `lucide-react`, `MaintenanceRouting.tsx`?**
-  _High betweenness centrality (0.162) - this node is a cross-community bridge._
-- **What connects `autoprefixer`, `postcss`, `tailwindcss` to the rest of the system?**
+- **Why does `react` connect `react` to `supabase.ts`, `package.json`, `EventsManager.tsx`, `App.tsx`, `BookVehicle.tsx`, `BookEvent.tsx`, `MaintenanceRouting.tsx`, `MyRequests.tsx`?**
+  _High betweenness centrality (0.131) - this node is a cross-community bridge._
+- **Are the 4 inferred relationships involving `useAuth()` (e.g. with `3.2 Module 2: Role Dashboards` and `3.2 Redundant Network Fetching & Missing State Caching`) actually correct?**
+  _`useAuth()` has 4 INFERRED edges - model-reasoned connections that need verification._
+- **What connects `@types/node`, `@types/papaparse`, `@types/react` to the rest of the system?**
   _8 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `supabase.ts` be split into smaller, more focused modules?**
-  _Cohesion score 0.06914893617021277 - nodes in this community are weakly interconnected._
-- **Why does `lucide-react` connect `lucide-react` to `supabase.ts`, `react`, `package.json`, `App.tsx`, `supabase`, `BookVehicle.tsx`, `BookEvent.tsx`, `MaintenanceRouting.tsx`?**
-  _High betweenness centrality (0.134) - this node is a cross-community bridge._
+  _Cohesion score 0.08115942028985507 - nodes in this community are weakly interconnected._
+- **Why does `useAuth()` connect `App.tsx` to `supabase.ts`, `react`, `EventsManager.tsx`, `BookVehicle.tsx`, `BookEvent.tsx`, `End-to-End Business Logic, Workflow Duplication, and Optimization Audit Report`, `MaintenanceRouting.tsx`, `MyRequests.tsx`?**
+  _High betweenness centrality (0.131) - this node is a cross-community bridge._
 - **Should `react` be split into smaller, more focused modules?**
-  _Cohesion score 0.09797979797979799 - nodes in this community are weakly interconnected._
-- **Why does `devDependencies` connect `devDependencies` to `package.json`?**
-  _High betweenness centrality (0.080) - this node is a cross-community bridge._
-- **Should `package.json` be split into smaller, more focused modules?**
-  _Cohesion score 0.06258890469416785 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.10726950354609929 - nodes in this community are weakly interconnected._
+- **Why does `lucide-react` connect `react` to `supabase.ts`, `package.json`, `EventsManager.tsx`, `App.tsx`, `BookVehicle.tsx`, `BookEvent.tsx`, `MaintenanceRouting.tsx`, `MyRequests.tsx`?**
+  _High betweenness centrality (0.112) - this node is a cross-community bridge._

@@ -6,6 +6,7 @@ import {
   Trash2, CheckCircle, X, PackageSearch, FileText, ShoppingBag 
 } from 'lucide-react';
 import DirectPOModal from '../components/inventory/DirectPOModal';
+import AlternativeItemModal, { InventoryItem } from '../components/siyanat/AlternativeItemModal';
 
 export default function RequestToOrder() {
   const { user: currentUser, role: userRole } = useAuth();
@@ -21,6 +22,9 @@ export default function RequestToOrder() {
   // Direct PO Modal State
   const [isDirectPOOpen, setIsDirectPOOpen] = useState(false);
 
+  // Swap / Substitute Modal State
+  const [swapModalTarget, setSwapModalTarget] = useState<{ item: any; name: string; qty: number; dept: string } | null>(null);
+
   const fetchData = useCallback(async () => {
     setLoading(true);
     const currentRole = userRole || '';
@@ -30,7 +34,7 @@ export default function RequestToOrder() {
       .from('work_order_items')
       .select(`
         *,
-        work_order:work_orders(batch_id, department, location, created_at, requester_id),
+        work_order:work_orders(id, batch_id, department, location, created_at, requester_id),
         inventory:inventory_items(name, physical_stock)
       `)
       .in('status', ['Pending', 'Ordered', 'PO Issued'])
@@ -111,6 +115,91 @@ export default function RequestToOrder() {
     setEditModalOpen(false);
     fetchData();
     setProcessingId(null);
+  };
+
+  // Editable Order Quantity handler
+  const handleUpdateItemQty = async (item: any, newQtyVal: number) => {
+    try {
+      setProcessingId(item.id);
+      const clampedQty = Math.max(1, newQtyVal);
+
+      await supabase
+        .from('work_order_items')
+        .update({ requested_qty: clampedQty })
+        .eq('id', item.id);
+
+      const targetWoId = item.work_order?.id || item.work_order_id;
+      if (targetWoId) {
+        await supabase.from('work_order_logs').insert({
+          work_order_id: targetWoId,
+          author_id: currentUser?.id,
+          message: `📝 Adjusted order qty for "${item.custom_item_name || item.inventory?.name || 'Item'}" from ${item.requested_qty} to ${clampedQty}.`
+        });
+      }
+
+      await supabase.from('system_logs').insert({
+        action_type: 'ORDER_QTY_UPDATED',
+        description: `Admin updated order qty for item in batch ${item.work_order?.batch_id} to ${clampedQty}.`,
+        user_email: currentUser?.email || 'Admin'
+      });
+
+      fetchData();
+    } catch (err: any) {
+      console.error('Failed to update qty:', err);
+      alert('Error updating quantity: ' + err.message);
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  // Swap / Substitute Item handler
+  const handleSwapAlternative = async (newAltItem: InventoryItem, subQty: number) => {
+    if (!swapModalTarget) return;
+    const targetItem = swapModalTarget.item;
+    const oldName = targetItem.custom_item_name || targetItem.inventory?.name || 'Item';
+    const newCustomName = `[Alt for: ${oldName}] ${newAltItem.name}`;
+
+    try {
+      setProcessingId(targetItem.id);
+
+      // 1. Update work_order_items in Supabase
+      const { error: updateErr } = await supabase
+        .from('work_order_items')
+        .update({
+          inventory_id: newAltItem.id || null,
+          custom_item_name: newCustomName,
+          requested_qty: subQty,
+          item_type: newAltItem.id ? 'Catalog' : 'Custom'
+        })
+        .eq('id', targetItem.id);
+
+      if (updateErr) throw updateErr;
+
+      // 2. Log in work_order_logs
+      const targetWoId = targetItem.work_order?.id || targetItem.work_order_id;
+      if (targetWoId) {
+        await supabase.from('work_order_logs').insert({
+          work_order_id: targetWoId,
+          author_id: currentUser?.id,
+          message: `🔄 Substituted RTO item: "${oldName}" replaced with "${newAltItem.name}" (Qty: ${subQty}).`
+        });
+      }
+
+      await supabase.from('system_logs').insert({
+        action_type: 'RTO_ITEM_SUBSTITUTED',
+        description: `Substituted "${oldName}" with "${newAltItem.name}" (Qty: ${subQty}) in batch ${targetItem.work_order?.batch_id || 'N/A'}.`,
+        user_email: currentUser?.email || 'Admin'
+      });
+
+      alert(`Substituted "${oldName}" with "${newAltItem.name}" successfully!`);
+      fetchData();
+    } catch (err: any) {
+      console.error('Swap failed:', err);
+      alert('Failed to swap item: ' + err.message);
+    } finally {
+      setProcessingId(null);
+      setSwapModalTarget(null);
+    }
   };
 
   const markAsOrdered = async (id: string, batchId: string) => {
@@ -244,28 +333,64 @@ export default function RequestToOrder() {
               pendingItems.map(item => {
                 const itemName = item.item_type === 'Catalog' ? item.inventory?.name : item.custom_item_name;
                 const isCustom = item.item_type === 'Custom';
+                const isSubstituted = item.custom_item_name?.includes('[Alt for:');
                 
                 return (
                   <tr key={item.id} className="hover:bg-slate-50">
                     <td className="p-3">
                       <div className="font-bold text-slate-800 text-sm">{itemName}</div>
-                      <div className="mt-1">
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5">
                         {isCustom ? (
                           <span className="px-1.5 py-0.5 bg-slate-200 text-slate-700 rounded text-[9px] font-bold uppercase">Custom Item</span>
                         ) : (
                           <span className="px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded text-[9px] font-bold uppercase">Catalog</span>
                         )}
-                        <span className="ml-2 px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded text-[9px] font-bold uppercase">{item.fulfillment_dept ? item.fulfillment_dept.replace('_HEAD', '') : 'GENERAL'}</span>
+                        {isSubstituted && (
+                          <span className="px-1.5 py-0.5 bg-indigo-100 text-indigo-800 rounded text-[9px] font-black uppercase">Substituted</span>
+                        )}
+                        <span className="px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded text-[9px] font-bold uppercase">{item.fulfillment_dept ? item.fulfillment_dept.replace('_HEAD', '') : 'GENERAL'}</span>
                       </div>
+
+                      {/* Swap / Substitute Item Button */}
+                      <button
+                        type="button"
+                        onClick={() => setSwapModalTarget({
+                          item,
+                          name: itemName || 'Item',
+                          qty: item.requested_qty,
+                          dept: item.fulfillment_dept || ''
+                        })}
+                        className="mt-1.5 text-[10px] font-black uppercase text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-2 py-0.5 rounded-lg flex items-center gap-1 transition"
+                      >
+                        <RefreshCw className="w-3 h-3" />
+                        <span>Swap / Substitute Item</span>
+                      </button>
                     </td>
+
                     <td className="p-3">
                       <div className="font-bold text-brand-maroon">{item.work_order?.batch_id || 'N/A'}</div>
                       <div className="text-[10px] text-slate-500 font-semibold">{item.work_order?.requester_name} • {item.work_order?.department || 'General'}</div>
                       <div className="text-[10px] text-slate-400">{item.work_order?.created_at ? new Date(item.work_order.created_at).toLocaleDateString() : ''}</div>
                     </td>
+
                     <td className="p-3">
-                      <div className="font-black text-slate-800">Qty Needed: {item.requested_qty}</div>
-                      <div className="flex items-center gap-1.5 mt-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-bold text-slate-500">Order Qty:</span>
+                        <input
+                          type="number"
+                          min={1}
+                          defaultValue={item.requested_qty}
+                          key={`${item.id}-${item.requested_qty}`}
+                          onBlur={async (e) => {
+                            const val = Math.max(1, parseInt(e.target.value) || 1);
+                            if (val !== item.requested_qty) {
+                              await handleUpdateItemQty(item, val);
+                            }
+                          }}
+                          className="w-16 p-1 bg-white border border-slate-300 rounded-md text-xs font-black text-center focus:ring-2 focus:ring-brand-maroon outline-none"
+                        />
+                      </div>
+                      <div className="flex items-center gap-1.5 mt-1.5">
                         <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                           item.status === 'PO Issued' ? 'bg-indigo-100 text-indigo-800 flex items-center gap-1' :
                           item.status === 'Ordered' ? 'bg-purple-100 text-purple-800' : 
@@ -277,6 +402,7 @@ export default function RequestToOrder() {
                         <span className="text-[10px] text-slate-500 font-bold flex items-center gap-0.5"><Clock className="w-3 h-3"/> {item.eta_days || 0} Days</span>
                       </div>
                     </td>
+
                     <td className="p-3 text-right">
                       <div className="flex items-center justify-end gap-1.5">
                         {item.status === 'Pending' && (
@@ -344,6 +470,18 @@ export default function RequestToOrder() {
             </form>
           </div>
         </div>
+      )}
+
+      {/* Alternative Item Substitution Modal */}
+      {swapModalTarget && (
+        <AlternativeItemModal
+          isOpen={!!swapModalTarget}
+          onClose={() => setSwapModalTarget(null)}
+          requestedItemName={swapModalTarget.name}
+          requestedQty={swapModalTarget.qty}
+          fulfillmentDept={swapModalTarget.dept}
+          onConfirmAlternative={handleSwapAlternative}
+        />
       )}
 
       {/* Standalone Direct PO Modal */}

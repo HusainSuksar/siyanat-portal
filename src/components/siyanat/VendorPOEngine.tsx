@@ -1,8 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../../lib/supabase';
-import { ShoppingCart, X, FileText, PackagePlus, Building2, Calendar, CreditCard, IndianRupee } from 'lucide-react';
+import { ShoppingCart, X, FileText, PackagePlus, Building2, Calendar, CreditCard, IndianRupee, RefreshCw } from 'lucide-react';
 import { useToast } from '../../hooks/useToast';
 import type { WorkOrder } from '../../types';
+import AlternativeItemModal, { InventoryItem } from './AlternativeItemModal';
 
 interface Vendor { id: string; name: string; category: string; }
 
@@ -23,21 +24,26 @@ export default function VendorPOEngine({ batch, userEmail, onClose, onSuccess }:
   const [isProcessing, setIsProcessing] = useState(false);
 
   // Per-item state mappings
+  const [itemsList, setItemsList] = useState<any[]>(() =>
+    (batch.items || []).filter(i =>
+      !['Stock Injected', 'Fulfilled & Received', 'Cancelled'].includes(i.status)
+    )
+  );
   const [itemVendors, setItemVendors] = useState<Record<string, string>>({});
   const [orderQuantities, setOrderQuantities] = useState<Record<string, number>>({});
   const [unitPrices, setUnitPrices] = useState<Record<string, number>>({});
+
+  // Item swap modal state
+  const [swapModalTarget, setSwapModalTarget] = useState<{ item: any; name: string; qty: number } | null>(null);
 
   // Global order-level terms
   const [paymentTerms, setPaymentTerms] = useState<string>('Immediate / COD');
   const [expectedDeliveryDate, setExpectedDeliveryDate] = useState<string>(() => getDefaultDeliveryDate());
   const [taxRate, setTaxRate] = useState<number>(18.0);
 
-  // Accept any non-fulfilled items
   const pendingItems = useMemo(() => {
-    return (batch.items || []).filter(i =>
-      !['Stock Injected', 'Fulfilled & Received', 'Cancelled'].includes(i.status)
-    );
-  }, [batch.items]);
+    return itemsList;
+  }, [itemsList]);
 
   useEffect(() => {
     const fetchVendorsAndInitialPrices = async () => {
@@ -113,6 +119,80 @@ export default function VendorPOEngine({ batch, userEmail, onClose, onSuccess }:
     }
   };
 
+  // Swap / Substitute an item prior to PO generation
+  const handleSwapAlternative = async (newAltItem: InventoryItem, newQty: number) => {
+    if (!swapModalTarget) return;
+    const targetItem = swapModalTarget.item;
+    const oldName = targetItem.custom_item_name || targetItem.inventory?.name || 'Item';
+    const newCustomName = `[Alt for: ${oldName}] ${newAltItem.name}`;
+
+    try {
+      // 1. Update work_order_items in DB
+      const { error: updateErr } = await supabase
+        .from('work_order_items')
+        .update({
+          inventory_id: newAltItem.id || null,
+          custom_item_name: newCustomName,
+          requested_qty: newQty,
+          item_type: newAltItem.id ? 'Catalog' : 'Custom'
+        })
+        .eq('id', targetItem.id);
+      if (updateErr) throw updateErr;
+
+      // 2. Log swap in work_order_logs
+      await supabase.from('work_order_logs').insert({
+        work_order_id: batch.id,
+        author_id: (await supabase.auth.getUser()).data.user?.id,
+        message: `🔄 Substituted PO item: "${oldName}" replaced with "${newAltItem.name}" (Qty: ${newQty}).`
+      });
+
+      // 3. Update local state
+      setItemsList(prev => prev.map(i => {
+        if (i.id === targetItem.id) {
+          return {
+            ...i,
+            inventory_id: newAltItem.id || null,
+            inventory: newAltItem.id ? (newAltItem as any) : null,
+            custom_item_name: newCustomName,
+            requested_qty: newQty,
+            item_type: newAltItem.id ? 'Catalog' : 'Custom'
+          };
+        }
+        return i;
+      }));
+
+      setOrderQuantities(prev => ({ ...prev, [targetItem.id]: newQty }));
+
+      // Re-match vendor's contracted unit rate for the new item name
+      const currentVendorId = itemVendors[targetItem.id];
+      if (currentVendorId) {
+        const cleanName = newAltItem.name.trim();
+        const { data } = await supabase
+          .from('vendor_price_agreements')
+          .select('unit_price, tax_rate')
+          .eq('vendor_id', currentVendorId)
+          .ilike('item_name', cleanName)
+          .limit(1)
+          .maybeSingle();
+
+        if (data && Number(data.unit_price) > 0) {
+          setUnitPrices(prev => ({ ...prev, [targetItem.id]: Number(data.unit_price) }));
+          if (data.tax_rate) setTaxRate(Number(data.tax_rate));
+          showToast(`Agreed rate ₹${data.unit_price} applied for ${cleanName}`, 'success');
+        } else {
+          setUnitPrices(prev => ({ ...prev, [targetItem.id]: 0 }));
+        }
+      }
+
+      showToast(`Substituted "${oldName}" with "${newAltItem.name}"!`, 'success');
+    } catch (err: any) {
+      console.error('Swap failed:', err);
+      showToast('Failed to swap item: ' + err.message, 'error');
+    } finally {
+      setSwapModalTarget(null);
+    }
+  };
+
   // Real-time calculation of totals
   const estimatedSubtotal = pendingItems.reduce((sum, item) => {
     const qty = orderQuantities[item.id] ?? item.requested_qty ?? 1;
@@ -147,6 +227,14 @@ export default function VendorPOEngine({ batch, userEmail, onClose, onSuccess }:
     setIsProcessing(true);
 
     try {
+      // Sync adjusted order quantities to DB if changed
+      for (const item of pendingItems) {
+        const currentQty = Number(orderQuantities[item.id]) || Number(item.requested_qty) || 1;
+        if (currentQty !== item.requested_qty) {
+          await supabase.from('work_order_items').update({ requested_qty: currentQty }).eq('id', item.id);
+        }
+      }
+
       // Group items by vendor
       const vendorGroups: Record<string, typeof pendingItems> = {};
       pendingItems.forEach(item => {
@@ -301,17 +389,36 @@ export default function VendorPOEngine({ batch, userEmail, onClose, onSuccess }:
             {pendingItems.map((item, index) => {
               const currentQty = orderQuantities[item.id] ?? item.requested_qty ?? 1;
               const currentRate = unitPrices[item.id] ?? 0;
-              const lineTotal = currentQty * currentRate;
-              const displayName = item.inventory?.name || item.custom_item_name || 'Item';
+              const displayName = item.custom_item_name || item.inventory?.name || 'Item';
+              const isSubstituted = item.custom_item_name?.includes('[Alt for:');
 
               return (
                 <div key={item.id} className="bg-slate-50 p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                   <div className="flex-1 min-w-[200px]">
                     <span className="text-[9px] font-black uppercase text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100 mb-1 inline-block">Item {index + 1}</span>
                     <p className="text-xs font-bold text-slate-800">{displayName}</p>
+                    {isSubstituted && (
+                      <span className="inline-block mt-0.5 px-2 py-0.5 bg-indigo-100 text-indigo-800 text-[9px] font-black rounded-md border border-indigo-200">
+                        Substituted SKU
+                      </span>
+                    )}
                     <p className="text-[10px] text-slate-500 font-bold uppercase mt-0.5">
-                      Requested: <span className="text-brand-maroon font-black">{item.requested_qty}</span>
+                      Original Req: <span className="text-brand-maroon font-black">{item.requested_qty}</span>
                     </p>
+
+                    {/* Swap / Substitute Item Button */}
+                    <button
+                      type="button"
+                      onClick={() => setSwapModalTarget({
+                        item,
+                        name: displayName,
+                        qty: currentQty
+                      })}
+                      className="mt-1.5 text-[10px] font-black uppercase text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-2 py-0.5 rounded-lg flex items-center gap-1 transition"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      <span>Swap / Substitute Item</span>
+                    </button>
                   </div>
 
                   <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
@@ -334,12 +441,12 @@ export default function VendorPOEngine({ batch, userEmail, onClose, onSuccess }:
 
                     {/* Order Qty */}
                     <div className="w-20">
-                      <label className="block text-[9px] font-black text-slate-500 uppercase mb-1">Qty</label>
+                      <label className="block text-[9px] font-black text-slate-500 uppercase mb-1">Order Qty</label>
                       <input
                         type="number"
                         min={1}
                         value={currentQty}
-                        onChange={e => setOrderQuantities({ ...orderQuantities, [item.id]: parseInt(e.target.value) || 1 })}
+                        onChange={e => setOrderQuantities({ ...orderQuantities, [item.id]: Math.max(1, parseInt(e.target.value) || 1) })}
                         className="w-full p-2 bg-white border border-slate-300 rounded-lg text-xs font-black text-center outline-none focus:ring-2 focus:ring-indigo-500"
                       />
                     </div>
@@ -358,11 +465,11 @@ export default function VendorPOEngine({ batch, userEmail, onClose, onSuccess }:
                       />
                     </div>
 
-                    {/* Line Total */}
-                    <div className="w-24 text-right pt-2">
-                      <span className="text-[9px] text-slate-400 font-bold uppercase block">Line Total</span>
-                      <span className="text-xs font-black text-brand-maroon">
-                        ₹{lineTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {/* Calculated Line Item Subtotal */}
+                    <div className="w-24 text-right">
+                      <label className="block text-[9px] font-black text-slate-400 uppercase mb-1">Total</label>
+                      <span className="text-xs font-black text-slate-800">
+                        ₹{(currentQty * currentRate).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                       </span>
                     </div>
                   </div>
@@ -394,6 +501,18 @@ export default function VendorPOEngine({ batch, userEmail, onClose, onSuccess }:
             <FileText className="w-4 h-4" /> {isProcessing ? 'Generating Orders...' : 'Generate Split Purchase Orders'}
           </button>
         </form>
+
+        {/* Alternative Item Modal for substitution */}
+        {swapModalTarget && (
+          <AlternativeItemModal
+            isOpen={!!swapModalTarget}
+            onClose={() => setSwapModalTarget(null)}
+            requestedItemName={swapModalTarget.name}
+            requestedQty={swapModalTarget.qty}
+            fulfillmentDept={batch.department || ''}
+            onConfirmAlternative={handleSwapAlternative}
+          />
+        )}
       </div>
     </div>
   );

@@ -28,6 +28,7 @@ export default function StationeryDispatcher() {
   const [reviewBatch, setReviewBatch] = useState<WorkOrder | null>(null);
   const [itemDecisions, setItemDecisions] = useState<Record<string, { status: string; eta: number }>>({});
   const [substitutedItems, setSubstitutedItems] = useState<Record<string, { inventoryItem: AltItemInfo; qty: number; originalName: string }>>({});
+  const [approvedQtys, setApprovedQtys] = useState<Record<string, number>>({});
   
   // Alternative modal state
   const [altModalTarget, setAltModalTarget] = useState<{ id: string; name: string; qty: number; dept: string } | null>(null);
@@ -77,15 +78,17 @@ export default function StationeryDispatcher() {
     setReviewBatch(batch);
     setSubstitutedItems({});
     const initialDecisions: Record<string, { status: string; eta: number }> = {};
+    const initialQtys: Record<string, number> = {};
     const tanzeemItems = batch.items.filter((i) => i.fulfillment_dept === 'TANZEEM_HEAD');
     
     tanzeemItems.forEach((item) => {
+      initialQtys[item.id] = item.requested_qty;
       const physical = item.inventory?.physical_stock || 0;
       const freezed = item.inventory?.freezed_stock || 0;
       const available = Math.max(0, physical - freezed);
       const hasEnoughStock = item.inventory_id && available >= item.requested_qty;
 
-      const defaultStatus = item.status !== 'Pending'
+      const defaultStatus = item.status !== 'Pending' && (item.status !== 'Available' || hasEnoughStock)
         ? item.status
         : (hasEnoughStock ? 'Available' : 'Ordered');
 
@@ -95,6 +98,20 @@ export default function StationeryDispatcher() {
       };
     });
     setItemDecisions(initialDecisions);
+    setApprovedQtys(initialQtys);
+  };
+
+  const handleApprovedQtyChange = (itemId: string, newQty: number, availableStock: number, isCatalogItem: boolean) => {
+    const clamped = Math.max(1, newQty);
+    setApprovedQtys(prev => ({ ...prev, [itemId]: clamped }));
+
+    const canDispatchImmediately = isCatalogItem && availableStock > 0 && clamped <= availableStock;
+    if (!canDispatchImmediately && itemDecisions[itemId]?.status === 'Available') {
+      setItemDecisions(prev => ({
+        ...prev,
+        [itemId]: { ...prev[itemId], status: 'Ordered', eta: prev[itemId]?.eta || 7 }
+      }));
+    }
   };
 
   const handleApplyAlternative = (alternativeItem: AltItemInfo, subQty: number) => {
@@ -112,12 +129,20 @@ export default function StationeryDispatcher() {
       }
     }));
 
+    const available = Math.max(0, (alternativeItem.physical_stock || 0) - (alternativeItem.freezed_stock || 0));
+    const isEnoughStock = !!alternativeItem.id && available >= subQty;
+
     setItemDecisions(prev => ({
       ...prev,
       [targetItemId]: {
-        status: 'Available',
-        eta: 0
+        status: isEnoughStock ? 'Available' : 'Ordered',
+        eta: isEnoughStock ? 0 : 7
       }
+    }));
+
+    setApprovedQtys(prev => ({
+      ...prev,
+      [targetItemId]: subQty
     }));
 
     setReviewBatch(prev => {
@@ -128,12 +153,12 @@ export default function StationeryDispatcher() {
           if (i.id === targetItemId) {
             return {
               ...i,
-              inventory_id: alternativeItem.id,
-              inventory: alternativeItem,
-              item_type: 'Catalog',
+              inventory_id: alternativeItem.id || null,
+              inventory: alternativeItem.id ? (alternativeItem as any) : undefined,
+              item_type: alternativeItem.id ? 'Catalog' : 'Custom',
               requested_qty: subQty,
-              custom_item_name: `${alternativeItem.name} [Alt for: ${origName}]`,
-              status: 'Available'
+              custom_item_name: `[Alt for: ${origName}] ${alternativeItem.name}`,
+              status: isEnoughStock ? 'Available' : 'Ordered'
             };
           }
           return i;
@@ -141,7 +166,11 @@ export default function StationeryDispatcher() {
       };
     });
 
-    showToast(`Substituted with "${alternativeItem.name}"! Marked Available.`, 'success');
+    if (isEnoughStock) {
+      showToast(`Substituted with in-stock "${alternativeItem.name}"! Marked Available.`, 'success');
+    } else {
+      showToast(`Substituted with "${alternativeItem.name}". Marked for PO (Stock: ${available}).`, 'info');
+    }
   };
 
   const handleReviewSubmit = async (e: React.FormEvent) => {
@@ -152,22 +181,47 @@ export default function StationeryDispatcher() {
     try {
       // 1. Update substituted items in DB
       for (const [itemId, sub] of Object.entries(substitutedItems)) {
+        const available = Math.max(0, (sub.inventoryItem.physical_stock || 0) - (sub.inventoryItem.freezed_stock || 0));
+        const isStocked = !!sub.inventoryItem.id && available >= sub.qty;
+        const adjustedQty = approvedQtys[itemId] ?? sub.qty;
+
         await supabase
           .from('work_order_items')
           .update({
-            inventory_id: sub.inventoryItem.id,
-            item_type: 'Catalog',
-            custom_item_name: `${sub.inventoryItem.name} [Alt for: ${sub.originalName}]`,
-            requested_qty: sub.qty,
-            status: 'Available'
+            inventory_id: sub.inventoryItem.id || null,
+            item_type: sub.inventoryItem.id ? 'Catalog' : 'Custom',
+            custom_item_name: `[Alt for: ${sub.originalName}] ${sub.inventoryItem.name}`,
+            requested_qty: adjustedQty,
+            status: isStocked ? 'Available' : 'Ordered'
           })
           .eq('id', itemId);
 
         await supabase.from('work_order_logs').insert({
           work_order_id: reviewBatch.id,
           author_id: user?.id,
-          message: `🔄 Alternative Item Provided: In-stock "${sub.inventoryItem.name}" (Qty: ${sub.qty}) substituted in place of "${sub.originalName}".`
+          message: `🔄 Alternative Item Provided: "${sub.inventoryItem.name}" (Qty: ${adjustedQty}) substituted in place of "${sub.originalName}".`
         });
+      }
+
+      // Persist any quantity adjustments on non-substituted items
+      for (const item of reviewBatch.items) {
+        if (!substitutedItems[item.id]) {
+          const adjQty = approvedQtys[item.id];
+          if (adjQty && adjQty !== item.requested_qty) {
+            const { error: qtyErr } = await supabase
+              .from('work_order_items')
+              .update({ requested_qty: adjQty })
+              .eq('id', item.id);
+            if (qtyErr) throw qtyErr;
+
+            const itemName = item.custom_item_name || item.inventory?.name || 'Item';
+            await supabase.from('work_order_logs').insert({
+              work_order_id: reviewBatch.id,
+              author_id: user?.id,
+              message: `📝 Adjusted qty for "${itemName}" from ${item.requested_qty} to ${adjQty}`
+            });
+          }
+        }
       }
 
       // 2. Prepare payload for process_material_batch_json
@@ -467,17 +521,19 @@ export default function StationeryDispatcher() {
                 const frozenStock = item.inventory?.freezed_stock || 0;
                 const availableStock = Math.max(0, physicalStock - frozenStock);
                 const isCatalogItem = !!item.inventory_id;
-                const hasEnoughStock = isCatalogItem && availableStock >= item.requested_qty;
+                const currentApprovedQty = approvedQtys[item.id] ?? item.requested_qty;
+                const hasEnoughStock = isCatalogItem && availableStock > 0 && currentApprovedQty <= availableStock;
                 const isSubstituted = !!substitutedItems[item.id] || item.custom_item_name?.includes('[Alt for:');
 
                 return (
                   <div key={item.id} className="p-4 border border-slate-200 rounded-2xl bg-white shadow-sm grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
-                    <div className="md:col-span-5 space-y-1">
+                    <div className="md:col-span-5 space-y-1.5">
                       <div className="font-bold text-slate-800 text-sm">{itemName}</div>
-                      <div className="flex items-center gap-2 text-[11px] text-slate-500">
-                        <span>Req: <strong className="font-black text-brand-maroon">{item.requested_qty}</strong></span>
+                      <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+                        <span>Original Req: <strong className="font-black text-brand-maroon">{item.requested_qty}</strong></span>
+                        <span className="text-slate-300">•</span>
                         {isCatalogItem ? (
-                          <span className={`font-black px-1.5 py-0.5 rounded text-[10px] ${hasEnoughStock ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-700'}`}>
+                          <span className={`font-black px-1.5 py-0.5 rounded text-[10px] ${availableStock > 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-700'}`}>
                             Stock Avail: {availableStock}
                           </span>
                         ) : (
@@ -492,18 +548,30 @@ export default function StationeryDispatcher() {
                         )}
                       </div>
 
+                      {/* Editable Approve / Dispatch Qty input */}
+                      <div className="flex items-center gap-2 pt-1">
+                        <label className="text-[10px] font-black uppercase text-slate-600">Approve / Dispatch Qty:</label>
+                        <input
+                          type="number"
+                          min={1}
+                          value={currentApprovedQty}
+                          onChange={(e) => handleApprovedQtyChange(item.id, parseInt(e.target.value) || 1, availableStock, isCatalogItem)}
+                          className="w-16 p-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs font-black text-center outline-none focus:ring-2 focus:ring-brand-maroon"
+                        />
+                      </div>
+
                       <button
                         type="button"
                         onClick={() => setAltModalTarget({
                           id: item.id,
                           name: item.custom_item_name || item.inventory?.name || 'Item',
-                          qty: item.requested_qty,
+                          qty: currentApprovedQty,
                           dept: 'TANZEEM_HEAD'
                         })}
                         className="mt-1 text-[10px] font-black uppercase text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-2 py-0.5 rounded-lg flex items-center gap-1 transition"
                       >
                         <RefreshCw className="w-3 h-3" />
-                        <span>Swap Alternative</span>
+                        <span>Swap / Substitute Item</span>
                       </button>
                     </div>
 
@@ -521,14 +589,13 @@ export default function StationeryDispatcher() {
                       >
                         {hasEnoughStock ? (
                           <>
-                            <option value="Available">Available (Immediate Dispatch)</option>
-                            <option value="Ordered">Pending (Requires PO)</option>
+                            <option value="Available">In Stock (Dispatch Immediately)</option>
+                            <option value="Ordered">Not in Stock (Requires PO)</option>
                             <option value="Not Provided">Not Provided (Reject)</option>
                           </>
                         ) : (
                           <>
-                            <option value="Ordered">Pending (Requires PO)</option>
-                            <option value="Available">Force Available (Physical Override)</option>
+                            <option value="Ordered">Not in Stock (Requires PO)</option>
                             <option value="Not Provided">Not Provided (Reject)</option>
                           </>
                         )}
@@ -553,6 +620,10 @@ export default function StationeryDispatcher() {
                             className="w-full p-2 bg-white border border-slate-300 rounded-lg text-xs font-bold outline-none text-center focus:ring-2 focus:ring-amber-500"
                             placeholder="e.g. 5"
                           />
+                        </div>
+                      ) : itemDecisions[item.id]?.status === 'Not Provided' ? (
+                        <div className="text-center text-[10px] font-black text-rose-700 bg-rose-50 border border-rose-200 p-2 rounded-xl">
+                          ✕ Rejected
                         </div>
                       ) : (
                         <div className="text-center text-[10px] font-black text-emerald-700 bg-emerald-50 border border-emerald-200 p-2 rounded-xl">
